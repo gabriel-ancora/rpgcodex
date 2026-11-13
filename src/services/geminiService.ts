@@ -1,6 +1,7 @@
-import { Entity, ThreatFront, GeneratedEmergencyItem } from '../types/campaign';
+import { Entity, EntityCategory, ThreatFront, GeneratedEmergencyItem } from '../types/campaign';
 import { convexClient } from '../convexClient';
 import { api } from '../../convex/_generated/api';
+import type { Id } from '../../convex/_generated/dataModel';
 import {
   generateEmergencyLoot,
   generateEmergencyNPC,
@@ -546,5 +547,341 @@ export async function generateContextualEmergencyWithAI(
     promptUsed: systemPrompt,
     usedLiveGemini: false,
     fallbackReason,
+  };
+}
+
+export interface ExtractedWikiEntity {
+  tempId: string;
+  name: string;
+  subtitle: string;
+  category: EntityCategory;
+  tags: string[];
+  summary: string;
+  publicContent: string;
+  isPublicToPlayers: boolean;
+  secrets: { title: string; content: string }[];
+  attributes: { label: string; value: string }[];
+}
+
+export interface PdfWikiExtractionResult {
+  ok: boolean;
+  summaryNotes: string;
+  entities: ExtractedWikiEntity[];
+  modelUsed?: string;
+  errorReason?: string;
+}
+
+const VALID_CATEGORIES: EntityCategory[] = [
+  'npc',
+  'faction',
+  'location',
+  'item',
+  'monster',
+  'lore',
+];
+
+function normalizeExtractedWikiPayload(
+  raw: Record<string, unknown>
+): { summaryNotes: string; entities: ExtractedWikiEntity[] } {
+  const summaryNotes =
+    typeof raw.summaryNotes === 'string' && raw.summaryNotes.trim()
+      ? raw.summaryNotes.trim()
+      : 'Documento PDF processado com sucesso.';
+
+  const rawEntities = Array.isArray(raw.entities) ? raw.entities : [];
+  const entities: ExtractedWikiEntity[] = [];
+
+  rawEntities.forEach((item, idx) => {
+    if (!item || typeof item !== 'object') return;
+    const obj = item as Record<string, unknown>;
+    const name = typeof obj.name === 'string' ? obj.name.trim() : '';
+    if (!name) return;
+
+    const rawCat =
+      typeof obj.category === 'string' ? obj.category.toLowerCase().trim() : 'lore';
+    const category: EntityCategory = VALID_CATEGORIES.includes(
+      rawCat as EntityCategory
+    )
+      ? (rawCat as EntityCategory)
+      : 'lore';
+
+    const subtitle =
+      typeof obj.subtitle === 'string' && obj.subtitle.trim()
+        ? obj.subtitle.trim().slice(0, 80)
+        : 'Registro importado do PDF';
+
+    const tags = Array.isArray(obj.tags)
+      ? obj.tags
+          .filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
+          .map((t) => t.trim())
+          .slice(0, 5)
+      : ['PDF'];
+
+    const summary =
+      typeof obj.summary === 'string' && obj.summary.trim()
+        ? obj.summary.trim()
+        : `Informações sobre ${name}.`;
+
+    const publicContent =
+      typeof obj.publicContent === 'string' && obj.publicContent.trim()
+        ? obj.publicContent.trim()
+        : summary;
+
+    const isPublicToPlayers =
+      typeof obj.isPublicToPlayers === 'boolean' ? obj.isPublicToPlayers : true;
+
+    const secrets = Array.isArray(obj.secrets)
+      ? obj.secrets
+          .filter((s): s is Record<string, unknown> => Boolean(s && typeof s === 'object'))
+          .map((s) => ({
+            title: typeof s.title === 'string' && s.title.trim() ? s.title.trim() : 'Segredo do Mestre',
+            content: typeof s.content === 'string' ? s.content.trim() : '',
+          }))
+          .filter((s) => s.content.length > 0)
+      : [];
+
+    const attributes = Array.isArray(obj.attributes)
+      ? obj.attributes
+          .filter((a): a is Record<string, unknown> => Boolean(a && typeof a === 'object'))
+          .map((a) => ({
+            label: typeof a.label === 'string' ? a.label.trim() : '',
+            value: typeof a.value === 'string' || typeof a.value === 'number' ? String(a.value).trim() : '',
+          }))
+          .filter((a) => a.label.length > 0 && a.value.length > 0)
+      : [];
+
+    entities.push({
+      tempId: `pdf-ent-${Date.now()}-${idx}`,
+      name,
+      subtitle,
+      category,
+      tags: tags.length > 0 ? tags : ['PDF'],
+      summary,
+      publicContent,
+      isPublicToPlayers,
+      secrets,
+      attributes,
+    });
+  });
+
+  return { summaryNotes, entities };
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      const commaIdx = result.indexOf(',');
+      resolve(commaIdx >= 0 ? result.slice(commaIdx + 1) : result);
+    };
+    reader.onerror = () => reject(new Error('Falha ao ler arquivo PDF local.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function extractPdfClientFallback(params: {
+  file: File;
+  apiKey: string;
+  campaignName?: string;
+  campaignSystem?: string;
+  worldContext?: string;
+  customInstructions?: string;
+  existingEntityNames?: string[];
+}): Promise<PdfWikiExtractionResult> {
+  const cleanKey = sanitizeGeminiKey(params.apiKey);
+  if (!cleanKey || cleanKey.length < 10) {
+    return {
+      ok: false,
+      summaryNotes: '',
+      entities: [],
+      errorReason: 'no_api_key',
+    };
+  }
+
+  const pdfBase64 = await fileToBase64(params.file);
+  const existingList = (params.existingEntityNames || []).slice(0, 80);
+  const prompt = [
+    'Você é um assistente especialista em RPG de mesa e construção de Wiki de campanha (Obsidian Codex).',
+    'Analise o PDF anexado e extraia personagens (npc), locais (location), itens (item), informações/história (lore), facções (faction) e monstros (monster).',
+    params.campaignName ? `Campanha: ${params.campaignName}` : '',
+    params.campaignSystem ? `Sistema: ${params.campaignSystem}` : '',
+    params.worldContext ? `Contexto atual do mundo:\n${params.worldContext.slice(0, 1500)}` : '',
+    existingList.length > 0 ? `Entidades já existentes na Wiki: ${existingList.join(', ')}` : '',
+    params.customInstructions ? `Instrução específica do Mestre: ${params.customInstructions}` : '',
+    'Retorne JSON com { "summaryNotes": "...", "entities": [{ "name", "subtitle", "category": "npc|faction|location|item|monster|lore", "tags": [], "summary", "publicContent", "isPublicToPlayers": boolean, "secrets": [{"title", "content"}], "attributes": [{"label", "value"}] }] }.',
+    'Responda em Português do Brasil. Extraia no máximo 30 entidades.',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  const discovered = await discoverClientModels(cleanKey);
+  const modelsToTry = discovered.ok
+    ? discovered.models.slice(0, 4)
+    : PREFERRED_GEMINI_MODELS;
+
+  let lastStatus = 500;
+  for (const model of modelsToTry) {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+        model
+      )}:generateContent?key=${encodeURIComponent(cleanKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                { inlineData: { mimeType: 'application/pdf', data: pdfBase64 } },
+                { text: prompt },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.4,
+            responseMimeType: 'application/json',
+          },
+        }),
+      }
+    );
+
+    lastStatus = res.status;
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) break;
+      continue;
+    }
+
+    const data = (await res.json()) as {
+      candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[];
+    };
+    const parts = data?.candidates?.[0]?.content?.parts || [];
+    const nonThought = parts.filter((p) => !p.thought && typeof p.text === 'string');
+    const texts =
+      nonThought.length > 0
+        ? nonThought.map((p) => p.text || '')
+        : parts.map((p) => p.text || '').filter(Boolean);
+
+    for (let i = texts.length - 1; i >= 0; i--) {
+      const parsed = extractJsonObject(texts[i]);
+      if (parsed && Array.isArray(parsed.entities)) {
+        const normalized = normalizeExtractedWikiPayload(parsed);
+        return {
+          ok: true,
+          summaryNotes: normalized.summaryNotes,
+          entities: normalized.entities,
+          modelUsed: model,
+        };
+      }
+    }
+  }
+
+  return {
+    ok: false,
+    summaryNotes: '',
+    entities: [],
+    errorReason: `http_${lastStatus}`,
+  };
+}
+
+export async function extractWikiEntitiesFromPdf(params: {
+  file: File;
+  apiKey?: string;
+  campaignName?: string;
+  campaignSystem?: string;
+  worldContext?: string;
+  customInstructions?: string;
+  existingEntityNames?: string[];
+  onProgress?: (stage: string) => void;
+}): Promise<PdfWikiExtractionResult> {
+  const { file, apiKey, onProgress } = params;
+
+  if (file.size > 15 * 1024 * 1024) {
+    return {
+      ok: false,
+      summaryNotes: '',
+      entities: [],
+      errorReason: 'file_too_large',
+    };
+  }
+
+  const cleanKey = sanitizeGeminiKey(apiKey);
+
+  // 1. Tenta via Convex Storage + Action (protege chave do servidor se houver)
+  try {
+    onProgress?.('Enviando PDF para processamento seguro...');
+    const uploadUrl = await convexClient.mutation(api.files.generateUploadUrl, {});
+    const uploadRes = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': file.type || 'application/pdf' },
+      body: file,
+    });
+
+    if (uploadRes.ok) {
+      const { storageId } = (await uploadRes.json()) as { storageId: Id<'_storage'> };
+      onProgress?.('Lendo PDF e extraindo entidades com Gemini...');
+      const actionRes = await convexClient.action(api.ai.extractWikiFromPdf, {
+        storageId,
+        userApiKey: cleanKey || undefined,
+        campaignName: params.campaignName,
+        campaignSystem: params.campaignSystem,
+        worldContext: params.worldContext,
+        customInstructions: params.customInstructions,
+        existingEntityNames: params.existingEntityNames,
+      });
+
+      if (actionRes.ok && actionRes.parsed) {
+        const normalized = normalizeExtractedWikiPayload(
+          actionRes.parsed as Record<string, unknown>
+        );
+        return {
+          ok: true,
+          summaryNotes: normalized.summaryNotes,
+          entities: normalized.entities,
+          modelUsed: actionRes.modelUsed,
+        };
+      }
+
+      if (actionRes.reason === 'no_api_key' || actionRes.reason === 'file_too_large') {
+        return {
+          ok: false,
+          summaryNotes: '',
+          entities: [],
+          errorReason: actionRes.reason,
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('Falha ao processar PDF via Convex Action, tentando fallback direto:', err);
+  }
+
+  // 2. Fallback direto do navegador se o usuário tiver chave Gemini cadastrada
+  if (cleanKey && cleanKey.length >= 10) {
+    try {
+      onProgress?.('Analisando PDF diretamente com sua chave Gemini...');
+      return await extractPdfClientFallback({
+        file,
+        apiKey: cleanKey,
+        campaignName: params.campaignName,
+        campaignSystem: params.campaignSystem,
+        worldContext: params.worldContext,
+        customInstructions: params.customInstructions,
+        existingEntityNames: params.existingEntityNames,
+      });
+    } catch {
+      return {
+        ok: false,
+        summaryNotes: '',
+        entities: [],
+        errorReason: 'network_or_parse_error',
+      };
+    }
+  }
+
+  return {
+    ok: false,
+    summaryNotes: '',
+    entities: [],
+    errorReason: cleanKey ? 'network_or_parse_error' : 'no_api_key',
   };
 }

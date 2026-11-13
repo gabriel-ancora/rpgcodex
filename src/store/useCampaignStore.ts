@@ -1256,8 +1256,9 @@ export const useCampaignStore = create<CampaignState>()(
             .replace(/\s+/g, '')
             .replace(/[^a-zA-Z0-9]/g, '');
 
+        const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         const newEntity: Entity = {
-          id: `ent-${Date.now()}`,
+          id: `ent-${uniqueSuffix}`,
           handle: cleanHandle || `Entidade${Date.now()}`,
           mentionPrefix: prefix,
           name: partial.name,
@@ -1270,7 +1271,7 @@ export const useCampaignStore = create<CampaignState>()(
             `Registros públicos sobre ${prefix}${cleanHandle}. Use @Nome ou #Local para referenciar páginas na Wiki.`,
           secrets: partial.secrets || [],
           attributes: partial.attributes || [
-            { id: `attr-${Date.now()}-1`, label: 'Relevância', value: 'Alta', category: 'meta' },
+            { id: `attr-${uniqueSuffix}-1`, label: 'Relevância', value: 'Alta', category: 'meta' },
           ],
           pinnedInSession: Boolean(partial.pinnedInSession),
           isPublicToPlayers: partial.isPublicToPlayers ?? true,

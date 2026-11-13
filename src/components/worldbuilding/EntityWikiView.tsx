@@ -4,6 +4,7 @@ import { EntityCategory } from '../../types/campaign';
 import { MentionText, MentionTextarea } from '../common/MentionText';
 import { computeBacklinksForEntity } from '../../utils/backlinks';
 import { buildContextualSystemPrompt } from '../../services/geminiService';
+import { PdfWikiImportModal } from './PdfWikiImportModal';
 import {
   Search,
   Plus,
@@ -25,6 +26,7 @@ import {
   ArrowUpRight,
   X,
   FileText,
+  FileUp,
   Save,
   RefreshCw,
   Compass,
@@ -124,6 +126,7 @@ export const EntityWikiView: React.FC = () => {
   );
   const [contextPreviewMode, setContextPreviewMode] = useState<'edit' | 'read'>('edit');
   const [showCombinedPrompt, setShowCombinedPrompt] = useState(false);
+  const [showPdfImportModal, setShowPdfImportModal] = useState(false);
 
   // Sync draft when switching campaigns or loading from cloud
   useEffect(() => {
@@ -363,6 +366,14 @@ export const EntityWikiView: React.FC = () => {
             </div>
             {viewRole === 'gm' && (
               <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setShowPdfImportModal(true)}
+                  className="btn-subtle px-2 py-1 rounded-md text-xs inline-flex items-center gap-1"
+                  title="Ler um PDF com a IA cadastrada e preencher a Wiki"
+                >
+                  <FileUp className="w-3.5 h-3.5 text-amber-400" />
+                  <span>PDF</span>
+                </button>
                 <button
                   onClick={() => setSelectedEntityId(WIKI_CONTEXT_WINDOW_ID)}
                   className={`px-2 py-1 rounded-md text-xs inline-flex items-center gap-1 border transition-colors ${
@@ -1303,6 +1314,11 @@ export const EntityWikiView: React.FC = () => {
           </form>
         </div>
       )}
+
+      <PdfWikiImportModal
+        isOpen={showPdfImportModal}
+        onClose={() => setShowPdfImportModal(false)}
+      />
     </div>
   );
 };
