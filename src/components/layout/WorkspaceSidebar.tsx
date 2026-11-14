@@ -188,42 +188,6 @@ export const WorkspaceSidebar: React.FC<WorkspaceSidebarProps> = ({
           )}
         </div>
 
-        {/* Role Mode Switcher (Mesma conta: Mestre ↔ Jogador) */}
-        {!isNarrow && (
-          <div className="px-2.5 pt-2.5">
-            <div className="grid grid-cols-2 p-0.5 rounded-lg bg-[#141418] border border-white/[0.06]">
-              <button
-                type="button"
-                onClick={() => {
-                  setWorkspaceMode('dm');
-                  onCloseMobile();
-                }}
-                className={`py-1.5 rounded-md text-[11px] font-medium transition-colors ${
-                  workspaceMode === 'dm'
-                    ? 'bg-zinc-800 text-zinc-100 shadow-xs'
-                    : 'text-zinc-500 hover:text-zinc-300'
-                }`}
-              >
-                Mestre
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setWorkspaceMode('player');
-                  onCloseMobile();
-                }}
-                className={`py-1.5 rounded-md text-[11px] font-medium transition-colors ${
-                  workspaceMode === 'player'
-                    ? 'bg-zinc-800 text-emerald-300 shadow-xs'
-                    : 'text-zinc-500 hover:text-zinc-300'
-                }`}
-              >
-                Jogador
-              </button>
-            </div>
-          </div>
-        )}
-
         {/* Active Campaign Switcher */}
         {!isNarrow && (
           <div className="px-2.5 pt-2 pb-1 relative">

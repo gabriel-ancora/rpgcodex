@@ -17,7 +17,7 @@ export const TopCommandBar: React.FC<TopCommandBarProps> = ({
   const currentRoute = useCampaignStore((s) => s.currentRoute);
   const setCurrentRoute = useCampaignStore((s) => s.setCurrentRoute);
   const workspaceMode = useCampaignStore((s) => s.workspaceMode);
-  const setWorkspaceMode = useCampaignStore((s) => s.setWorkspaceMode);
+  const currentUser = useCampaignStore((s) => s.currentUser);
   const activeModule = useCampaignStore((s) => s.activeModule);
   const worldSubTab = useCampaignStore((s) => s.worldSubTab);
   const plotSubTab = useCampaignStore((s) => s.plotSubTab);
@@ -118,8 +118,8 @@ export const TopCommandBar: React.FC<TopCommandBarProps> = ({
           </span>
         )}
 
-        {/* Segmented Preview Switcher (When DM of Active Campaign in DM Mode) */}
-        {canDmActiveCamp && workspaceMode === 'dm' ? (
+        {/* Segmented Preview Switcher (Somente para conta Mestre na sua campanha) */}
+        {currentUser?.role !== 'player' && canDmActiveCamp && workspaceMode === 'dm' ? (
           <div className="flex items-center bg-[#141418] border border-white/[0.07] rounded-lg p-0.5 text-xs">
             <button
               onClick={() => {
@@ -150,16 +150,9 @@ export const TopCommandBar: React.FC<TopCommandBarProps> = ({
             </button>
           </div>
         ) : (
-          <button
-            type="button"
-            onClick={() =>
-              setWorkspaceMode(workspaceMode === 'dm' ? 'player' : 'dm')
-            }
-            className="px-2.5 py-1 rounded-lg bg-[#141418] border border-white/[0.07] text-[11px] text-zinc-300 hover:text-white transition-colors"
-            title="Alternar entre Modo Mestre e Modo Jogador na mesma conta"
-          >
-            {workspaceMode === 'player' ? 'Ir p/ Modo Mestre' : 'Ir p/ Modo Jogador'}
-          </button>
+          <span className="px-2.5 py-1 rounded-lg bg-[#141418] border border-white/[0.07] text-[11px] text-emerald-300/90 font-medium">
+            {currentUser?.role === 'player' ? 'Jogador' : 'Mestre'}
+          </span>
         )}
       </div>
     </header>

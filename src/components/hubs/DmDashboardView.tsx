@@ -27,7 +27,7 @@ export const DmDashboardView: React.FC = () => {
   const updateCampaign = useCampaignStore((s) => s.updateCampaign);
   const deleteCampaign = useCampaignStore((s) => s.deleteCampaign);
   const selectCampaign = useCampaignStore((s) => s.selectCampaign);
-  const setWorkspaceMode = useCampaignStore((s) => s.setWorkspaceMode);
+  const setCurrentRoute = useCampaignStore((s) => s.setCurrentRoute);
   const currentUser = useCampaignStore((s) => s.currentUser);
   const characterSheets = useCampaignStore((s) => s.characterSheets);
   const setIsDmPartyDrawerOpen = useCampaignStore((s) => s.setIsDmPartyDrawerOpen);
@@ -205,7 +205,7 @@ export const DmDashboardView: React.FC = () => {
           </p>
           <button
             type="button"
-            onClick={() => setWorkspaceMode('player')}
+            onClick={() => setCurrentRoute('/player-dashboard')}
             className="btn-subtle px-3 py-1.5 rounded-lg text-xs inline-flex items-center gap-1.5"
           >
             <span>Ver minhas fichas & mesas como Jogador</span>

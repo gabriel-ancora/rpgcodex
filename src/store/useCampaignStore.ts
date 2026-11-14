@@ -399,7 +399,24 @@ export const useCampaignStore = create<CampaignState>()(
       // AUTH, ROUTING & HUBS (CONVEX NATIVE AUTH + MULTI-TENANCY)
       // ======================================================================
       setCurrentRoute: (route) => {
+        const userRole = get().currentUser?.role;
         const activeCamp = get().campaigns.find((c) => c.id === get().activeCampaignId);
+
+        if (
+          userRole === 'player' &&
+          (route === '/dm-dashboard' || route === '/campaign/session')
+        ) {
+          const safeRoute: AppRoute =
+            route === '/campaign/session' ? '/campaign/player-view' : '/player-dashboard';
+          set({ currentRoute: safeRoute, viewRole: 'player', workspaceMode: 'player' });
+          try {
+            window.history.pushState({}, '', safeRoute);
+          } catch {
+            // ignore
+          }
+          return;
+        }
+
         const isCampaignPlayerOnly =
           route === '/campaign/session' && activeCamp && activeCamp.isDm === false;
 
@@ -415,14 +432,18 @@ export const useCampaignStore = create<CampaignState>()(
         }
 
         const nextMode: 'dm' | 'player' =
-          route === '/player-dashboard' || route === '/campaign/player-view'
+          userRole === 'player'
+            ? 'player'
+            : route === '/player-dashboard' || route === '/campaign/player-view'
             ? 'player'
             : route === '/dm-dashboard' || route === '/campaign/session'
             ? 'dm'
             : get().workspaceMode;
 
         const viewRole: ViewRole =
-          route === '/campaign/player-view' || route === '/player-dashboard'
+          userRole === 'player' ||
+          route === '/campaign/player-view' ||
+          route === '/player-dashboard'
             ? 'player'
             : 'gm';
         set({ currentRoute: route, viewRole, workspaceMode: nextMode });
@@ -435,6 +456,15 @@ export const useCampaignStore = create<CampaignState>()(
 
       setWorkspaceMode: (mode, targetRoute) => {
         const state = get();
+        if (state.currentUser?.role === 'player' && mode === 'dm') {
+          set({
+            workspaceMode: 'player',
+            viewRole: 'player',
+            currentRoute: '/player-dashboard',
+          });
+          get().showToast('Contas de Jogador não podem acessar o Modo Mestre.');
+          return;
+        }
         const activeCamp = state.campaigns.find((c) => c.id === state.activeCampaignId);
         let nextRoute: AppRoute =
           targetRoute || (mode === 'dm' ? '/dm-dashboard' : '/player-dashboard');
