@@ -495,9 +495,25 @@ export interface CharacterSheet {
     cha: number;
   };
   proficiencies: string[];
+  expertiseSkills?: string[];
   originFeat?: string;
   savingThrows?: string[];
   weaponMasteries?: string[];
+  size?: string;
+  initiativeBonus?: number;
+  heroicInspiration?: boolean;
+  deathSaves?: { successes: number; failures: number };
+  senses?: string[];
+  resistances?: string[];
+  languages?: string[];
+  spellcastingAbility?: 'int' | 'wis' | 'cha';
+  personality?: {
+    traits?: string;
+    ideals?: string;
+    bonds?: string;
+    flaws?: string;
+    appearance?: string;
+  };
   classFeatures?: CharacterFeature[];
   classResources?: CharacterClassResource[];
   spellSlots: CharacterSpellSlots;

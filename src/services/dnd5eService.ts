@@ -865,6 +865,24 @@ export const DND_CLASSES_CATALOG: DndClassOption[] = [
           { level: 14, name: 'Magia de Batalha', description: 'Após conjurar uma magia com ação, realiza um ataque com arma como Ação Bônus.' },
         ],
       },
+      {
+        index: 'college-of-dance',
+        name: 'Colégio da Dança',
+        features: [
+          { level: 3, name: 'Graça Deslumbrante (Dazzling Footwork)', description: 'Sem armadura/escudo, CA = 10 + Mod. DES + Mod. CAR. Ataques Desarmados usam DES, causam o dado de Inspiração de Bardo + Mod. DES e podem ser feitos como parte da ação/reação ao gastar Inspiração.' },
+          { level: 6, name: 'Movimento Inspirador & Evasão em Tandem', description: 'Reação + 1 Inspiração quando inimigo termina movimento a 1,5 m para mover você e um aliado sem ataques de oportunidade; soma Inspiração de Bardo na Iniciativa do grupo.' },
+          { level: 14, name: 'Evasão Líder', description: 'Em salvaguardas de Destreza para metade do dano, não sofre dano no sucesso e sofre apenas metade na falha (e estende o benefício a aliados a até 1,5 m).' },
+        ],
+      },
+      {
+        index: 'college-of-glamour',
+        name: 'Colégio do Glamour',
+        features: [
+          { level: 3, name: 'Mágica Sedutora & Manto da Inspiração', description: 'Enfeitiçar Pessoa e Imagem Espelhada sempre preparadas; pode impor Enfeitiçado/Amedrontado ao conjurar Encantamento ou Ilusão. Ação Bônus + Inspiração concede PV Temporários (2× dado) e movimento sem ataque de oportunidade a aliados.' },
+          { level: 6, name: 'Manto da Majestade', description: 'Comando sempre preparada; como Ação Bônus assume presença majestosa por 1 min, conjurando Comando como Ação Bônus sem gastar espaço (alvos enfeitiçados falham automaticamente).' },
+          { level: 14, name: 'Majestade Inquebrável', description: 'Como Ação Bônus assume aparência sobrenatural por 1 min; atacantes precisam passar em salvaguarda de Carisma ou erram o golpe e desperdiçam o ataque.' },
+        ],
+      },
     ],
   },
   {

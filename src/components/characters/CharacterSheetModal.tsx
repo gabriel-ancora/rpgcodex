@@ -72,6 +72,92 @@ const STAT_LABELS: Record<StatKey, string> = {
   cha: 'Carisma',
 };
 
+const STAT_SHORT: Record<StatKey, string> = {
+  str: 'FOR',
+  dex: 'DES',
+  con: 'CON',
+  int: 'INT',
+  wis: 'SAB',
+  cha: 'CAR',
+};
+
+const ALL_DND_SKILLS: { name: string; stat: StatKey }[] = [
+  { name: 'Acrobacia', stat: 'dex' },
+  { name: 'Arcanismo', stat: 'int' },
+  { name: 'Atletismo', stat: 'str' },
+  { name: 'Atuação', stat: 'cha' },
+  { name: 'Enganação', stat: 'cha' },
+  { name: 'Furtividade', stat: 'dex' },
+  { name: 'História', stat: 'int' },
+  { name: 'Intimidação', stat: 'cha' },
+  { name: 'Intuição', stat: 'wis' },
+  { name: 'Investigação', stat: 'int' },
+  { name: 'Lidar com Animais', stat: 'wis' },
+  { name: 'Medicina', stat: 'wis' },
+  { name: 'Natureza', stat: 'int' },
+  { name: 'Percepção', stat: 'wis' },
+  { name: 'Persuasão', stat: 'cha' },
+  { name: 'Prestidigitação', stat: 'dex' },
+  { name: 'Religião', stat: 'int' },
+  { name: 'Sobrevivência', stat: 'wis' },
+];
+
+function inferSpellcastingAbility(classIdx: string): 'int' | 'wis' | 'cha' | undefined {
+  if (['bard', 'sorcerer', 'warlock', 'paladin'].includes(classIdx)) return 'cha';
+  if (['cleric', 'druid', 'ranger'].includes(classIdx)) return 'wis';
+  if (['wizard'].includes(classIdx)) return 'int';
+  return undefined;
+}
+
+function deriveSpeciesMetadata(speciesIndex: string, traits: string[]): {
+  size: string;
+  senses: string[];
+  resistances: string[];
+  languages: string[];
+} {
+  const sp = DND_RACES_CATALOG.find((r) => r.index === speciesIndex);
+  const size = sp?.size || 'Médio';
+  const senses: string[] = [];
+  const resistances: string[] = [];
+  const languages = ['Comum'];
+
+  const joined = traits.join(' | ').toLowerCase();
+  if (joined.includes('36m') && joined.includes('visão no escuro')) {
+    senses.push('Visão no Escuro 36m');
+  } else if (joined.includes('visão no escuro')) {
+    senses.push('Visão no Escuro 18m');
+  }
+  if (joined.includes('sentido sísmico')) {
+    senses.push('Sentido Sísmico 18m (pedra)');
+  }
+
+  if (speciesIndex === 'dwarf') {
+    resistances.push('Veneno');
+    languages.push('Anão');
+  } else if (speciesIndex === 'elf') {
+    languages.push('Élfico');
+  } else if (speciesIndex === 'halfling') {
+    languages.push('Halfling');
+  } else if (speciesIndex === 'dragonborn') {
+    resistances.push('Elemento da Linhagem Dracônica');
+    languages.push('Dracônico');
+  } else if (speciesIndex === 'tiefling') {
+    resistances.push('Fogo / Veneno / Necrótico (Legado)');
+    languages.push('Infernal');
+  } else if (speciesIndex === 'goliath') {
+    languages.push('Gigante');
+  } else if (speciesIndex === 'orc') {
+    languages.push('Orc');
+  } else if (speciesIndex === 'gnome') {
+    languages.push('Gnômico');
+  } else if (speciesIndex === 'aasimar') {
+    resistances.push('Necrótico', 'Radiante');
+    languages.push('Celestial');
+  }
+
+  return { size, senses, resistances, languages };
+}
+
 const EMPTY_SLOTS: CharacterSpellSlots = {
   level1: { used: 0, max: 0 },
   level2: { used: 0, max: 0 },
@@ -155,6 +241,29 @@ export const CharacterSheetModal: React.FC<CharacterSheetModalProps> = ({
   const [savingThrows, setSavingThrows] = useState<string[]>([]);
   const [selectedClassSkills, setSelectedClassSkills] = useState<string[]>([]);
   const [proficiencies, setProficiencies] = useState<string[]>([]);
+  const [expertiseSkills, setExpertiseSkills] = useState<string[]>([]);
+  const [size, setSize] = useState('Médio');
+  const [initiativeBonus, setInitiativeBonus] = useState(0);
+  const [heroicInspiration, setHeroicInspiration] = useState(false);
+  const [deathSaves, setDeathSaves] = useState<{ successes: number; failures: number }>({
+    successes: 0,
+    failures: 0,
+  });
+  const [senses, setSenses] = useState<string[]>([]);
+  const [resistances, setResistances] = useState<string[]>([]);
+  const [languages, setLanguages] = useState<string[]>(['Comum']);
+  const [spellcastingAbility, setSpellcastingAbility] = useState<'int' | 'wis' | 'cha' | ''>('');
+  const [personality, setPersonality] = useState<{
+    traits: string;
+    ideals: string;
+    bonds: string;
+    flaws: string;
+    appearance: string;
+  }>({ traits: '', ideals: '', bonds: '', flaws: '', appearance: '' });
+  const [newSenseInput, setNewSenseInput] = useState('');
+  const [newResistanceInput, setNewResistanceInput] = useState('');
+  const [newLanguageInput, setNewLanguageInput] = useState('');
+  const [newProfInput, setNewProfInput] = useState('');
   const [weaponMasteries, setWeaponMasteries] = useState<string[]>([]);
   const [classFeatures, setClassFeatures] = useState<CharacterFeature[]>([]);
   const [classResources, setClassResources] = useState<CharacterClassResource[]>([]);
@@ -309,6 +418,12 @@ export const CharacterSheetModal: React.FC<CharacterSheetModalProps> = ({
           ])
         );
         setProficiencies(mergedProfs);
+        const spMeta = deriveSpeciesMetadata(opts.spIdx, nextTraits);
+        setSize(spMeta.size);
+        setSenses(spMeta.senses);
+        setResistances(spMeta.resistances);
+        setLanguages(spMeta.languages);
+        setSpellcastingAbility(inferSpellcastingAbility(opts.clIdx) || '');
         setWeaponMasteries(prog.weaponMasteries);
         setClassFeatures(prog.classFeatures);
         setClassResources(prog.classResources);
@@ -412,6 +527,30 @@ export const CharacterSheetModal: React.FC<CharacterSheetModalProps> = ({
       );
       setSavingThrows(existingSheet.savingThrows || []);
       setProficiencies(existingSheet.proficiencies);
+      setExpertiseSkills(existingSheet.expertiseSkills || []);
+      const fallbackMeta = deriveSpeciesMetadata(
+        matchedRace?.index || 'human',
+        existingSheet.racialTraits
+      );
+      setSize(existingSheet.size || fallbackMeta.size);
+      setInitiativeBonus(existingSheet.initiativeBonus ?? 0);
+      setHeroicInspiration(Boolean(existingSheet.heroicInspiration));
+      setDeathSaves(existingSheet.deathSaves || { successes: 0, failures: 0 });
+      setSenses(existingSheet.senses ?? fallbackMeta.senses);
+      setResistances(existingSheet.resistances ?? fallbackMeta.resistances);
+      setLanguages(existingSheet.languages ?? fallbackMeta.languages);
+      setSpellcastingAbility(
+        existingSheet.spellcastingAbility ||
+          inferSpellcastingAbility(matchedClass?.index || '') ||
+          ''
+      );
+      setPersonality({
+        traits: existingSheet.personality?.traits || '',
+        ideals: existingSheet.personality?.ideals || '',
+        bonds: existingSheet.personality?.bonds || '',
+        flaws: existingSheet.personality?.flaws || '',
+        appearance: existingSheet.personality?.appearance || '',
+      });
       setWeaponMasteries(existingSheet.weaponMasteries || []);
       setClassFeatures(existingSheet.classFeatures || []);
       setClassResources(existingSheet.classResources || []);
@@ -433,6 +572,11 @@ export const CharacterSheetModal: React.FC<CharacterSheetModalProps> = ({
       setCampaignId(activeCampaignId || campaigns[0]?.id || '');
       setTempHp(0);
       setHitDiceUsed(0);
+      setExpertiseSkills([]);
+      setInitiativeBonus(0);
+      setHeroicInspiration(false);
+      setDeathSaves({ successes: 0, failures: 0 });
+      setPersonality({ traits: '', ideals: '', bonds: '', flaws: '', appearance: '' });
       setNotes('');
       setStatMethod('standard');
       const stdBase = computeBaseStatsStandardArray('fighter');
@@ -800,11 +944,59 @@ export const CharacterSheetModal: React.FC<CharacterSheetModalProps> = ({
   };
 
   const wisMod = Math.floor((stats.wis - 10) / 2);
+  const dexMod = Math.floor((stats.dex - 10) / 2);
   const profBonus = Math.ceil(level / 4) + 1;
-  const hasPerceptionProf = proficiencies.some((p) =>
-    p.toLowerCase().includes('percepção')
-  );
-  const passivePerception = 10 + wisMod + (hasPerceptionProf ? profBonus : 0);
+  const isBardJack = classIndex === 'bard' && level >= 2;
+
+  const isSkillProficient = (skillName: string) =>
+    proficiencies.some((p) => p.toLowerCase() === skillName.toLowerCase());
+  const isSkillExpert = (skillName: string) =>
+    expertiseSkills.some((p) => p.toLowerCase() === skillName.toLowerCase());
+
+  const getSkillBonus = (skillName: string, statKey: StatKey): number => {
+    const baseMod = Math.floor((stats[statKey] - 10) / 2);
+    if (isSkillExpert(skillName)) return baseMod + profBonus * 2;
+    if (isSkillProficient(skillName)) return baseMod + profBonus;
+    if (isBardJack) return baseMod + Math.floor(profBonus / 2);
+    return baseMod;
+  };
+
+  const toggleSkillCycle = (skillName: string) => {
+    const lower = skillName.toLowerCase();
+    const prof = isSkillProficient(skillName);
+    const exp = isSkillExpert(skillName);
+    if (!prof && !exp) {
+      setProficiencies((prev) => [...prev, skillName]);
+    } else if (prof && !exp) {
+      setExpertiseSkills((prev) => [...prev, skillName]);
+    } else {
+      setProficiencies((prev) => prev.filter((p) => p.toLowerCase() !== lower));
+      setExpertiseSkills((prev) => prev.filter((p) => p.toLowerCase() !== lower));
+    }
+  };
+
+  const toggleSavingThrow = (statLabel: string) => {
+    const prefix = statLabel.slice(0, 3).toLowerCase();
+    const has = savingThrows.some((s) => s.toLowerCase().startsWith(prefix));
+    if (has) {
+      setSavingThrows((prev) =>
+        prev.filter((s) => !s.toLowerCase().startsWith(prefix))
+      );
+    } else {
+      setSavingThrows((prev) => [...prev, statLabel]);
+    }
+  };
+
+  const passivePerception = 10 + getSkillBonus('Percepção', 'wis');
+  const passiveInvestigation = 10 + getSkillBonus('Investigação', 'int');
+  const passiveInsight = 10 + getSkillBonus('Intuição', 'wis');
+  const initiativeTotal = dexMod + initiativeBonus;
+  const activeSpellStat = spellcastingAbility || inferSpellcastingAbility(classIndex);
+  const spellMod = activeSpellStat
+    ? Math.floor((stats[activeSpellStat] - 10) / 2)
+    : 0;
+  const spellSaveDC = 8 + profBonus + spellMod;
+  const spellAttackBonus = profBonus + spellMod;
 
   const handleSaveSheet = () => {
     const campObj = campaignId
@@ -836,9 +1028,19 @@ export const CharacterSheetModal: React.FC<CharacterSheetModalProps> = ({
       baseStats,
       stats,
       proficiencies,
+      expertiseSkills,
       originFeat,
       savingThrows,
       weaponMasteries,
+      size,
+      initiativeBonus,
+      heroicInspiration,
+      deathSaves,
+      senses,
+      resistances,
+      languages,
+      spellcastingAbility: spellcastingAbility || undefined,
+      personality,
       classFeatures,
       classResources,
       spellSlots,
@@ -1183,60 +1385,77 @@ export const CharacterSheetModal: React.FC<CharacterSheetModalProps> = ({
                 </button>
               </div>
 
-              {/* Combat Vitals Bar (Manual Edit Only for DM) */}
-              <div className="p-4 rounded-xl bg-[#0e0e11] border border-white/[0.06] grid grid-cols-2 md:grid-cols-5 gap-4">
-                <div>
-                  <span className="text-[11px] text-zinc-500 block">
-                    PV Atual / Máx
-                  </span>
-                  {canManualEdit ? (
-                    <div className="flex items-center gap-1.5 mt-1.5">
+              {/* Combat Vitals Bar (Editável para todos) */}
+              <div className="p-4 rounded-xl bg-[#0e0e11] border border-white/[0.06] space-y-3">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
+                  <div>
+                    <span className="text-[11px] text-zinc-500 block">
+                      PV Atual / Máx
+                    </span>
+                    <div className="flex items-center gap-1 mt-1.5">
                       <input
                         type="number"
                         value={hp}
                         onChange={(e) => setHp(Number(e.target.value))}
-                        className="input-clean w-16 px-2 py-1.5 rounded-lg text-sm font-mono font-semibold text-center"
+                        className="input-clean w-14 px-1.5 py-1.5 rounded-lg text-sm font-mono font-semibold text-center"
                       />
                       <span className="text-zinc-600">/</span>
                       <input
                         type="number"
                         value={maxHp}
                         onChange={(e) => setMaxHp(Number(e.target.value))}
-                        className="input-clean w-16 px-2 py-1.5 rounded-lg text-sm font-mono font-semibold text-center"
+                        className="input-clean w-14 px-1.5 py-1.5 rounded-lg text-sm font-mono font-semibold text-center"
                       />
                     </div>
-                  ) : (
-                    <div className="mt-1.5 px-3 py-1.5 rounded-lg bg-white/[0.03] border border-white/[0.06] text-sm font-mono font-semibold text-zinc-200 inline-flex items-center gap-1.5">
-                      <span>{hp} / {maxHp}</span>
-                      <Lock className="w-3 h-3 text-zinc-500" />
-                    </div>
-                  )}
-                </div>
+                  </div>
 
-                <div>
-                  <span className="text-[11px] text-zinc-500 block">
-                    Classe de Armadura
-                  </span>
-                  {canManualEdit ? (
+                  <div>
+                    <span className="text-[11px] text-zinc-500 block">
+                      PV Temporários
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={tempHp}
+                      onChange={(e) => setTempHp(Number(e.target.value))}
+                      className="input-clean w-20 mt-1.5 px-2.5 py-1.5 rounded-lg text-sm font-mono font-semibold text-center block"
+                    />
+                  </div>
+
+                  <div>
+                    <span className="text-[11px] text-zinc-500 block">
+                      Classe de Armadura
+                    </span>
                     <input
                       type="number"
                       value={armorClass}
                       onChange={(e) => setArmorClass(Number(e.target.value))}
                       className="input-clean w-20 mt-1.5 px-2.5 py-1.5 rounded-lg text-sm font-mono font-semibold text-center block"
                     />
-                  ) : (
-                    <div className="mt-1.5 px-3 py-1.5 rounded-lg bg-white/[0.03] border border-white/[0.06] text-sm font-mono font-semibold text-zinc-200 inline-flex items-center gap-1.5">
-                      <span>{armorClass}</span>
-                      <Lock className="w-3 h-3 text-zinc-500" />
-                    </div>
-                  )}
-                </div>
+                  </div>
 
-                <div>
-                  <span className="text-[11px] text-zinc-500 block">
-                    Dados de Vida
-                  </span>
-                  {canManualEdit ? (
+                  <div>
+                    <span className="text-[11px] text-zinc-500 block">
+                      Iniciativa (Mod + Extra)
+                    </span>
+                    <div className="flex items-center gap-1.5 mt-1.5">
+                      <span className="px-2 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] text-xs font-mono font-semibold text-amber-300">
+                        {initiativeTotal >= 0 ? `+${initiativeTotal}` : initiativeTotal}
+                      </span>
+                      <input
+                        type="number"
+                        value={initiativeBonus}
+                        onChange={(e) => setInitiativeBonus(Number(e.target.value))}
+                        title="Bônus extra de iniciativa (ex: Alerta)"
+                        className="input-clean w-14 px-1.5 py-1.5 rounded-lg text-xs font-mono text-center"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <span className="text-[11px] text-zinc-500 block">
+                      Dados de Vida (Total / Gastos)
+                    </span>
                     <div className="flex items-center gap-1.5 mt-1.5">
                       <input
                         type="text"
@@ -1253,38 +1472,108 @@ export const CharacterSheetModal: React.FC<CharacterSheetModalProps> = ({
                         className="input-clean w-12 px-1.5 py-1.5 rounded-lg text-xs font-mono text-center"
                       />
                     </div>
-                  ) : (
-                    <div className="mt-1.5 px-3 py-1.5 rounded-lg bg-white/[0.03] border border-white/[0.06] text-xs font-mono font-semibold text-zinc-200 inline-flex items-center gap-1.5">
-                      <span>{hitDice} ({hitDiceUsed} gastos)</span>
-                    </div>
-                  )}
-                </div>
+                  </div>
 
-                <div>
-                  <span className="text-[11px] text-zinc-500 block">
-                    Percepção Passiva
-                  </span>
-                  <div className="mt-1.5 px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] text-xs font-mono font-semibold text-zinc-200 inline-block">
-                    {passivePerception} (Prof. +{profBonus})
+                  <div>
+                    <span className="text-[11px] text-zinc-500 block">
+                      Deslocamento & Tamanho
+                    </span>
+                    <div className="flex items-center gap-1.5 mt-1.5">
+                      <input
+                        type="text"
+                        value={speed}
+                        onChange={(e) => setSpeed(e.target.value)}
+                        className="input-clean w-full px-2 py-1.5 rounded-lg text-xs"
+                      />
+                      <input
+                        type="text"
+                        value={size}
+                        onChange={(e) => setSize(e.target.value)}
+                        title="Tamanho"
+                        className="input-clean w-20 px-2 py-1.5 rounded-lg text-xs text-center"
+                      />
+                    </div>
                   </div>
                 </div>
 
-                <div>
-                  <span className="text-[11px] text-zinc-500 block">
-                    Deslocamento
-                  </span>
-                  {canManualEdit ? (
-                    <input
-                      type="text"
-                      value={speed}
-                      onChange={(e) => setSpeed(e.target.value)}
-                      className="input-clean w-full mt-1.5 px-2.5 py-1.5 rounded-lg text-xs"
-                    />
-                  ) : (
-                    <div className="mt-1.5 px-3 py-1.5 rounded-lg bg-white/[0.03] border border-white/[0.06] text-xs font-medium text-zinc-200">
-                      {speed}
+                <div className="pt-2.5 border-t border-white/[0.06] flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono">
+                    <span className="px-2.5 py-1 rounded-md bg-white/[0.04] border border-white/[0.06] text-zinc-200">
+                      Proficiência: <strong className="text-amber-300">+{profBonus}</strong>
+                    </span>
+                    <span className="px-2.5 py-1 rounded-md bg-white/[0.04] border border-white/[0.06] text-zinc-300">
+                      Perc. Passiva: <strong>{passivePerception}</strong>
+                    </span>
+                    <span className="px-2.5 py-1 rounded-md bg-white/[0.04] border border-white/[0.06] text-zinc-300">
+                      Inv. Passiva: <strong>{passiveInvestigation}</strong>
+                    </span>
+                    <span className="px-2.5 py-1 rounded-md bg-white/[0.04] border border-white/[0.06] text-zinc-300">
+                      Int. Passiva: <strong>{passiveInsight}</strong>
+                    </span>
+                    {activeSpellStat && (
+                      <span className="px-2.5 py-1 rounded-md bg-violet-500/10 border border-violet-500/25 text-violet-200">
+                        CD Magia: <strong>{spellSaveDC}</strong> · Atq: <strong>{spellAttackBonus >= 0 ? `+${spellAttackBonus}` : spellAttackBonus}</strong> ({STAT_SHORT[activeSpellStat]})
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => setHeroicInspiration((v) => !v)}
+                      className={`px-2.5 py-1 rounded-md border font-medium transition-colors ${
+                        heroicInspiration
+                          ? 'bg-amber-500/20 border-amber-400/50 text-amber-200'
+                          : 'bg-white/[0.03] border-white/[0.08] text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      {heroicInspiration ? '★ Inspiração Heroica' : '☆ Inspiração Heroica'}
+                    </button>
+
+                    <div className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-white/[0.03] border border-white/[0.06]">
+                      <span className="text-zinc-400">Morte:</span>
+                      <div className="flex items-center gap-1" title="Sucessos contra a Morte">
+                        <span className="text-[10px] text-emerald-400">S</span>
+                        {[1, 2, 3].map((n) => (
+                          <button
+                            key={n}
+                            type="button"
+                            onClick={() =>
+                              setDeathSaves((prev) => ({
+                                ...prev,
+                                successes: prev.successes === n ? n - 1 : n,
+                              }))
+                            }
+                            className={`w-3 h-3 rounded-full border ${
+                              deathSaves.successes >= n
+                                ? 'bg-emerald-400 border-emerald-300'
+                                : 'border-white/25'
+                            }`}
+                          />
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-1" title="Falhas contra a Morte">
+                        <span className="text-[10px] text-rose-400">F</span>
+                        {[1, 2, 3].map((n) => (
+                          <button
+                            key={n}
+                            type="button"
+                            onClick={() =>
+                              setDeathSaves((prev) => ({
+                                ...prev,
+                                failures: prev.failures === n ? n - 1 : n,
+                              }))
+                            }
+                            className={`w-3 h-3 rounded-full border ${
+                              deathSaves.failures >= n
+                                ? 'bg-rose-500 border-rose-400'
+                                : 'border-white/25'
+                            }`}
+                          />
+                        ))}
+                      </div>
                     </div>
-                  )}
+                  </div>
                 </div>
               </div>
 
@@ -1393,37 +1682,35 @@ export const CharacterSheetModal: React.FC<CharacterSheetModalProps> = ({
                           <span className="text-[11px] text-zinc-400 block mb-1.5">
                             {label}
                           </span>
-                          {canManualEdit ? (
-                            <input
-                              type="number"
-                              min={1}
-                              max={30}
-                              value={stats[key]}
-                              onChange={(e) => {
-                                const v = Number(e.target.value);
-                                setStats({ ...stats, [key]: v });
-                                setBaseStats({ ...baseStats, [key]: v });
-                              }}
-                              className="input-clean w-16 mx-auto px-2 py-1 rounded-lg text-base font-mono font-semibold text-center block"
-                            />
-                          ) : (
-                            <div className="w-16 mx-auto px-2 py-1 rounded-lg bg-[#141418] border border-white/[0.08] text-base font-mono font-semibold text-zinc-100 text-center">
-                              {stats[key]}
-                            </div>
-                          )}
+                          <input
+                            type="number"
+                            min={1}
+                            max={30}
+                            value={stats[key]}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              setStats({ ...stats, [key]: v });
+                              setBaseStats({ ...baseStats, [key]: v });
+                            }}
+                            className="input-clean w-16 mx-auto px-2 py-1 rounded-lg text-base font-mono font-semibold text-center block"
+                          />
 
                           <div className="mt-1.5 flex items-center justify-center gap-2 text-[11px] font-mono">
                             <span className="text-zinc-200 font-semibold">
                               {calcMod(stats[key])}
                             </span>
-                            <span
-                              className={
-                                isSaveProf ? 'text-amber-300' : 'text-zinc-500'
-                              }
-                              title="Salvaguarda"
+                            <button
+                              type="button"
+                              onClick={() => toggleSavingThrow(label)}
+                              className={`px-1.5 py-0.5 rounded border transition-colors ${
+                                isSaveProf
+                                  ? 'text-amber-300 border-amber-500/35 bg-amber-500/10'
+                                  : 'text-zinc-500 border-transparent hover:border-white/15 hover:text-zinc-300'
+                              }`}
+                              title="Clique para alternar proficiência nesta Salvaguarda"
                             >
                               SG {saveVal >= 0 ? `+${saveVal}` : saveVal}
-                            </span>
+                            </button>
                           </div>
 
                           <div className="text-[10px] font-mono text-zinc-500 mt-1">
@@ -1479,6 +1766,238 @@ export const CharacterSheetModal: React.FC<CharacterSheetModalProps> = ({
                 </div>
               </div>
 
+              {/* 18 Perícias Oficiais D&D 5.5e (Proficiente / Especialização / Versatilidade) */}
+              <div className="p-4 rounded-xl bg-[#0e0e11] border border-white/[0.06] space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h4 className="text-xs font-semibold text-zinc-200">
+                      Perícias Completas (18 Perícias D&D 5.5e)
+                    </h4>
+                    <p className="text-[11px] text-zinc-500">
+                      Clique para alternar: Normal → Proficiente (+{profBonus}) → Especialização (+{profBonus * 2})
+                      {isBardJack ? ` · Versatilidade de Bardo ativa (+${Math.floor(profBonus / 2)} nas demais)` : ''}.
+                    </p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
+                  {ALL_DND_SKILLS.map((sk) => {
+                    const prof = isSkillProficient(sk.name);
+                    const exp = isSkillExpert(sk.name);
+                    const total = getSkillBonus(sk.name, sk.stat);
+                    return (
+                      <button
+                        key={sk.name}
+                        type="button"
+                        onClick={() => toggleSkillCycle(sk.name)}
+                        className={`px-2.5 py-1.5 rounded-lg border text-left flex items-center justify-between gap-2 transition-colors ${
+                          exp
+                            ? 'bg-amber-500/15 border-amber-400/45 text-amber-100'
+                            : prof
+                            ? 'bg-emerald-500/10 border-emerald-500/30 text-zinc-100'
+                            : 'bg-[#141418] border-white/[0.05] text-zinc-400 hover:border-white/[0.15] hover:text-zinc-200'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span
+                            className={`w-2.5 h-2.5 rounded-full border shrink-0 ${
+                              exp
+                                ? 'bg-amber-400 border-amber-300 ring-2 ring-amber-400/30'
+                                : prof
+                                ? 'bg-emerald-400 border-emerald-300'
+                                : isBardJack
+                                ? 'bg-sky-400/40 border-sky-400/60'
+                                : 'border-white/25'
+                            }`}
+                          />
+                          <span className="text-xs truncate">{sk.name}</span>
+                          <span className="text-[10px] font-mono text-zinc-500 shrink-0">
+                            ({STAT_SHORT[sk.stat]})
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {exp && (
+                            <span className="text-[9px] font-mono uppercase px-1 py-0.2 rounded bg-amber-500/20 text-amber-300">
+                              2×
+                            </span>
+                          )}
+                          <span className="text-xs font-mono font-semibold tabular-nums">
+                            {total >= 0 ? `+${total}` : total}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Sentidos, Resistências & Idiomas (Específicos de Espécie/Classe) */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {/* Sentidos */}
+                <div className="p-3.5 rounded-xl bg-[#0e0e11] border border-white/[0.06] space-y-2">
+                  <h4 className="text-xs font-semibold text-zinc-300">
+                    Sentidos Especiais
+                  </h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {senses.length === 0 && (
+                      <span className="text-[11px] text-zinc-500">Visão normal</span>
+                    )}
+                    {senses.map((s, idx) => (
+                      <span
+                        key={idx}
+                        className="px-2 py-0.5 rounded bg-sky-500/10 border border-sky-500/25 text-[11px] text-sky-200 inline-flex items-center gap-1"
+                      >
+                        <span>{s}</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSenses((prev) => prev.filter((_, i) => i !== idx))
+                          }
+                          className="text-sky-300/70 hover:text-rose-300"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  <div className="flex gap-1.5 pt-1">
+                    <input
+                      type="text"
+                      value={newSenseInput}
+                      onChange={(e) => setNewSenseInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && newSenseInput.trim()) {
+                          e.preventDefault();
+                          setSenses((prev) => [...prev, newSenseInput.trim()]);
+                          setNewSenseInput('');
+                        }
+                      }}
+                      placeholder="Ex: Visão no Escuro 18m"
+                      className="input-clean flex-1 px-2 py-1 rounded text-[11px]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!newSenseInput.trim()) return;
+                        setSenses((prev) => [...prev, newSenseInput.trim()]);
+                        setNewSenseInput('');
+                      }}
+                      className="btn-subtle px-2 py-1 rounded text-[11px]"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+
+                {/* Resistências & Imunidades */}
+                <div className="p-3.5 rounded-xl bg-[#0e0e11] border border-white/[0.06] space-y-2">
+                  <h4 className="text-xs font-semibold text-zinc-300">
+                    Resistências & Imunidades
+                  </h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {resistances.length === 0 && (
+                      <span className="text-[11px] text-zinc-500">Nenhuma</span>
+                    )}
+                    {resistances.map((r, idx) => (
+                      <span
+                        key={idx}
+                        className="px-2 py-0.5 rounded bg-rose-500/10 border border-rose-500/25 text-[11px] text-rose-200 inline-flex items-center gap-1"
+                      >
+                        <span>{r}</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setResistances((prev) => prev.filter((_, i) => i !== idx))
+                          }
+                          className="text-rose-300/70 hover:text-rose-100"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  <div className="flex gap-1.5 pt-1">
+                    <input
+                      type="text"
+                      value={newResistanceInput}
+                      onChange={(e) => setNewResistanceInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && newResistanceInput.trim()) {
+                          e.preventDefault();
+                          setResistances((prev) => [...prev, newResistanceInput.trim()]);
+                          setNewResistanceInput('');
+                        }
+                      }}
+                      placeholder="Ex: Fogo, Veneno"
+                      className="input-clean flex-1 px-2 py-1 rounded text-[11px]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!newResistanceInput.trim()) return;
+                        setResistances((prev) => [...prev, newResistanceInput.trim()]);
+                        setNewResistanceInput('');
+                      }}
+                      className="btn-subtle px-2 py-1 rounded text-[11px]"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+
+                {/* Idiomas */}
+                <div className="p-3.5 rounded-xl bg-[#0e0e11] border border-white/[0.06] space-y-2">
+                  <h4 className="text-xs font-semibold text-zinc-300">
+                    Idiomas Conhecidos
+                  </h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {languages.map((lang, idx) => (
+                      <span
+                        key={idx}
+                        className="px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/25 text-[11px] text-amber-200 inline-flex items-center gap-1"
+                      >
+                        <span>{lang}</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setLanguages((prev) => prev.filter((_, i) => i !== idx))
+                          }
+                          className="text-amber-300/70 hover:text-rose-300"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  <div className="flex gap-1.5 pt-1">
+                    <input
+                      type="text"
+                      value={newLanguageInput}
+                      onChange={(e) => setNewLanguageInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && newLanguageInput.trim()) {
+                          e.preventDefault();
+                          setLanguages((prev) => [...prev, newLanguageInput.trim()]);
+                          setNewLanguageInput('');
+                        }
+                      }}
+                      placeholder="Ex: Élfico, Silvestre"
+                      className="input-clean flex-1 px-2 py-1 rounded text-[11px]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!newLanguageInput.trim()) return;
+                        setLanguages((prev) => [...prev, newLanguageInput.trim()]);
+                        setNewLanguageInput('');
+                      }}
+                      className="btn-subtle px-2 py-1 rounded text-[11px]"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               {/* Class Resources Scaled to Level */}
               {classResources.length > 0 && (
                 <div className="p-4 rounded-xl bg-[#0e0e11] border border-white/[0.06] space-y-2.5">
@@ -1528,19 +2047,55 @@ export const CharacterSheetModal: React.FC<CharacterSheetModalProps> = ({
                   </div>
                 </div>
 
-                <div className="p-4 rounded-xl bg-[#0e0e11] border border-white/[0.06]">
-                  <h4 className="text-xs font-semibold text-zinc-300 mb-2.5">
+                <div className="p-4 rounded-xl bg-[#0e0e11] border border-white/[0.06] space-y-2.5">
+                  <h4 className="text-xs font-semibold text-zinc-300">
                     Proficiências ({classLabel} + {background})
                   </h4>
                   <div className="flex flex-wrap gap-1.5">
                     {proficiencies.map((pr, i) => (
                       <span
                         key={i}
-                        className="px-2.5 py-1 rounded-md bg-white/[0.04] border border-white/[0.06] text-xs text-zinc-300"
+                        className="px-2.5 py-1 rounded-md bg-white/[0.04] border border-white/[0.06] text-xs text-zinc-300 inline-flex items-center gap-1.5"
                       >
-                        {pr}
+                        <span>{pr}</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setProficiencies((prev) => prev.filter((_, idx) => idx !== i))
+                          }
+                          className="text-zinc-500 hover:text-rose-300"
+                        >
+                          ×
+                        </button>
                       </span>
                     ))}
+                  </div>
+                  <div className="flex gap-1.5 pt-1">
+                    <input
+                      type="text"
+                      value={newProfInput}
+                      onChange={(e) => setNewProfInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && newProfInput.trim()) {
+                          e.preventDefault();
+                          setProficiencies((prev) => [...prev, newProfInput.trim()]);
+                          setNewProfInput('');
+                        }
+                      }}
+                      placeholder="Adicionar armadura, arma, ferramenta..."
+                      className="input-clean flex-1 px-2.5 py-1 rounded text-xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!newProfInput.trim()) return;
+                        setProficiencies((prev) => [...prev, newProfInput.trim()]);
+                        setNewProfInput('');
+                      }}
+                      className="btn-subtle px-2.5 py-1 rounded text-xs"
+                    >
+                      +
+                    </button>
                   </div>
                 </div>
               </div>
@@ -2207,9 +2762,62 @@ export const CharacterSheetModal: React.FC<CharacterSheetModalProps> = ({
                     </div>
                   )}
 
+                  <div className="pt-2 space-y-2.5">
+                    <div className="text-xs font-semibold text-zinc-300">
+                      Personalidade & Aparência
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        value={personality.appearance}
+                        onChange={(e) =>
+                          setPersonality((p) => ({ ...p, appearance: e.target.value }))
+                        }
+                        placeholder="Aparência (idade, altura, olhos, vestes...)"
+                        className="input-clean w-full px-2.5 py-1.5 rounded-lg text-xs"
+                      />
+                      <input
+                        type="text"
+                        value={personality.traits}
+                        onChange={(e) =>
+                          setPersonality((p) => ({ ...p, traits: e.target.value }))
+                        }
+                        placeholder="Traços de Personalidade"
+                        className="input-clean w-full px-2.5 py-1.5 rounded-lg text-xs"
+                      />
+                      <input
+                        type="text"
+                        value={personality.ideals}
+                        onChange={(e) =>
+                          setPersonality((p) => ({ ...p, ideals: e.target.value }))
+                        }
+                        placeholder="Ideais"
+                        className="input-clean w-full px-2.5 py-1.5 rounded-lg text-xs"
+                      />
+                      <input
+                        type="text"
+                        value={personality.bonds}
+                        onChange={(e) =>
+                          setPersonality((p) => ({ ...p, bonds: e.target.value }))
+                        }
+                        placeholder="Vínculos"
+                        className="input-clean w-full px-2.5 py-1.5 rounded-lg text-xs"
+                      />
+                    </div>
+                    <input
+                      type="text"
+                      value={personality.flaws}
+                      onChange={(e) =>
+                        setPersonality((p) => ({ ...p, flaws: e.target.value }))
+                      }
+                      placeholder="Defeitos / Fraquezas"
+                      className="input-clean w-full px-2.5 py-1.5 rounded-lg text-xs"
+                    />
+                  </div>
+
                   <div className="pt-2">
                     <label className="block text-xs font-medium text-zinc-400 mb-1.5">
-                      Notas, vínculos & histórico pessoal
+                      Notas, juramentos & histórico pessoal
                     </label>
                     <textarea
                       rows={3}

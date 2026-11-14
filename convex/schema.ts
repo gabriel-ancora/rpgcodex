@@ -537,9 +537,34 @@ export default defineSchema({
       cha: v.number(),
     }),
     proficiencies: v.array(v.string()),
+    expertiseSkills: v.optional(v.array(v.string())),
     originFeat: v.optional(v.string()),
     savingThrows: v.optional(v.array(v.string())),
     weaponMasteries: v.optional(v.array(v.string())),
+    size: v.optional(v.string()),
+    initiativeBonus: v.optional(v.number()),
+    heroicInspiration: v.optional(v.boolean()),
+    deathSaves: v.optional(
+      v.object({
+        successes: v.number(),
+        failures: v.number(),
+      })
+    ),
+    senses: v.optional(v.array(v.string())),
+    resistances: v.optional(v.array(v.string())),
+    languages: v.optional(v.array(v.string())),
+    spellcastingAbility: v.optional(
+      v.union(v.literal("int"), v.literal("wis"), v.literal("cha"))
+    ),
+    personality: v.optional(
+      v.object({
+        traits: v.optional(v.string()),
+        ideals: v.optional(v.string()),
+        bonds: v.optional(v.string()),
+        flaws: v.optional(v.string()),
+        appearance: v.optional(v.string()),
+      })
+    ),
     classFeatures: v.optional(
       v.array(
         v.object({

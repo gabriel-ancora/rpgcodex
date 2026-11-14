@@ -680,6 +680,69 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
+type ClientPdfPart =
+  | { inlineData: { mimeType: 'application/pdf'; data: string } }
+  | { fileData: { mimeType: 'application/pdf'; fileUri: string } };
+
+async function uploadPdfClientToGeminiFiles(
+  apiKey: string,
+  file: File
+): Promise<{ fileUri: string; fileName: string } | null> {
+  const startRes = await fetch(
+    `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${encodeURIComponent(
+      apiKey
+    )}`,
+    {
+      method: 'POST',
+      headers: {
+        'X-Goog-Upload-Protocol': 'resumable',
+        'X-Goog-Upload-Command': 'start',
+        'X-Goog-Upload-Header-Content-Length': String(file.size),
+        'X-Goog-Upload-Header-Content-Type': 'application/pdf',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ file: { display_name: file.name } }),
+    }
+  );
+  if (!startRes.ok) return null;
+  const uploadUrl = startRes.headers.get('x-goog-upload-url');
+  if (!uploadUrl) return null;
+
+  const uploadRes = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Length': String(file.size),
+      'X-Goog-Upload-Offset': '0',
+      'X-Goog-Upload-Command': 'upload, finalize',
+    },
+    body: file,
+  });
+  if (!uploadRes.ok) return null;
+  const info = (await uploadRes.json()) as {
+    file?: { uri?: string; name?: string; state?: string };
+  };
+  let fileUri = info?.file?.uri;
+  const fileName = info?.file?.name;
+  let state = info?.file?.state;
+  if (!fileUri || !fileName) return null;
+
+  for (let i = 0; i < 10 && state === 'PROCESSING'; i++) {
+    await new Promise((r) => setTimeout(r, 1500));
+    const checkRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/${fileName}?key=${encodeURIComponent(
+        apiKey
+      )}`
+    );
+    if (!checkRes.ok) break;
+    const checkData = (await checkRes.json()) as { uri?: string; state?: string };
+    state = checkData.state;
+    if (checkData.uri) fileUri = checkData.uri;
+  }
+
+  if (state === 'FAILED') return null;
+  return { fileUri, fileName };
+}
+
 async function extractPdfClientFallback(params: {
   file: File;
   apiKey: string;
@@ -699,7 +762,25 @@ async function extractPdfClientFallback(params: {
     };
   }
 
-  const pdfBase64 = await fileToBase64(params.file);
+  let pdfPart: ClientPdfPart;
+  let uploadedFileName: string | null = null;
+
+  if (params.file.size <= 12 * 1024 * 1024) {
+    const pdfBase64 = await fileToBase64(params.file);
+    pdfPart = { inlineData: { mimeType: 'application/pdf', data: pdfBase64 } };
+  } else {
+    const uploaded = await uploadPdfClientToGeminiFiles(cleanKey, params.file);
+    if (!uploaded) {
+      return {
+        ok: false,
+        summaryNotes: '',
+        entities: [],
+        errorReason: 'network_or_parse_error',
+      };
+    }
+    uploadedFileName = uploaded.fileName;
+    pdfPart = { fileData: { mimeType: 'application/pdf', fileUri: uploaded.fileUri } };
+  }
   const existingList = (params.existingEntityNames || []).slice(0, 80);
   const prompt = [
     'Você é um assistente especialista em RPG de mesa e construção de Wiki de campanha (Obsidian Codex).',
@@ -721,23 +802,21 @@ async function extractPdfClientFallback(params: {
     : PREFERRED_GEMINI_MODELS;
 
   let lastStatus = 500;
-  for (const model of modelsToTry) {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-        model
-      )}:generateContent?key=${encodeURIComponent(cleanKey)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                { inlineData: { mimeType: 'application/pdf', data: pdfBase64 } },
-                { text: prompt },
-              ],
-            },
-          ],
+  try {
+    for (const model of modelsToTry) {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+          model
+        )}:generateContent?key=${encodeURIComponent(cleanKey)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [pdfPart, { text: prompt }],
+              },
+            ],
           generationConfig: {
             temperature: 0.4,
             responseMimeType: 'application/json',
@@ -762,17 +841,27 @@ async function extractPdfClientFallback(params: {
         ? nonThought.map((p) => p.text || '')
         : parts.map((p) => p.text || '').filter(Boolean);
 
-    for (let i = texts.length - 1; i >= 0; i--) {
-      const parsed = extractJsonObject(texts[i]);
-      if (parsed && Array.isArray(parsed.entities)) {
-        const normalized = normalizeExtractedWikiPayload(parsed);
-        return {
-          ok: true,
-          summaryNotes: normalized.summaryNotes,
-          entities: normalized.entities,
-          modelUsed: model,
-        };
-      }
+        for (let i = texts.length - 1; i >= 0; i--) {
+          const parsed = extractJsonObject(texts[i]);
+          if (parsed && Array.isArray(parsed.entities)) {
+            const normalized = normalizeExtractedWikiPayload(parsed);
+            return {
+              ok: true,
+              summaryNotes: normalized.summaryNotes,
+              entities: normalized.entities,
+              modelUsed: model,
+            };
+          }
+        }
+    }
+  } finally {
+    if (uploadedFileName) {
+      await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/${uploadedFileName}?key=${encodeURIComponent(
+          cleanKey
+        )}`,
+        { method: 'DELETE' }
+      ).catch(() => {});
     }
   }
 
@@ -796,7 +885,7 @@ export async function extractWikiEntitiesFromPdf(params: {
 }): Promise<PdfWikiExtractionResult> {
   const { file, apiKey, onProgress } = params;
 
-  if (file.size > 15 * 1024 * 1024) {
+  if (file.size > 50 * 1024 * 1024) {
     return {
       ok: false,
       summaryNotes: '',

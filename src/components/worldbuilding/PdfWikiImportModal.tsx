@@ -133,9 +133,9 @@ export const PdfWikiImportModal: React.FC<PdfWikiImportModalProps> = ({
       setErrorMessage('Selecione um arquivo no formato .pdf.');
       return;
     }
-    if (file.size > 15 * 1024 * 1024) {
+    if (file.size > 50 * 1024 * 1024) {
       setErrorMessage(
-        'O PDF excede o limite de 15 MB. Tente dividir em capítulos ou comprimir o arquivo.'
+        'O PDF excede o limite de 50 MB da API Gemini. Tente dividir o arquivo em partes menores.'
       );
       return;
     }
@@ -170,7 +170,7 @@ export const PdfWikiImportModal: React.FC<PdfWikiImportModalProps> = ({
           'Nenhuma chave da API Google Gemini está cadastrada. Configure sua chave nas Configurações.'
         );
       } else if (res.errorReason === 'file_too_large') {
-        setErrorMessage('O arquivo PDF excede 15 MB.');
+        setErrorMessage('O arquivo PDF excede o limite de 50 MB.');
       } else if (res.errorReason === 'http_401' || res.errorReason === 'http_403') {
         setNeedsApiKey(true);
         setErrorMessage('A chave Gemini cadastrada é inválida ou não tem permissão.');
@@ -363,7 +363,7 @@ export const PdfWikiImportModal: React.FC<PdfWikiImportModalProps> = ({
                       Arraste um PDF aqui ou clique para selecionar
                     </p>
                     <p className="text-xs text-zinc-500">
-                      Aventuras, fichas de campanha, compêndios ou notas do mestre (máx. 15 MB)
+                      Aventuras, fichas de campanha, compêndios ou notas do mestre (máx. 50 MB)
                     </p>
                   </div>
                 )}

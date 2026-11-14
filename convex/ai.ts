@@ -436,11 +436,91 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(chunks.join(""));
 }
 
+type PdfPart =
+  | { inlineData: { mimeType: "application/pdf"; data: string } }
+  | { fileData: { mimeType: "application/pdf"; fileUri: string } };
+
+async function uploadPdfToGeminiFilesApi(
+  apiKey: string,
+  fileBlob: Blob,
+  displayName: string
+): Promise<{ fileUri: string; fileName: string } | null> {
+  const startRes = await fetch(
+    `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${encodeURIComponent(
+      apiKey
+    )}`,
+    {
+      method: "POST",
+      headers: {
+        "X-Goog-Upload-Protocol": "resumable",
+        "X-Goog-Upload-Command": "start",
+        "X-Goog-Upload-Header-Content-Length": String(fileBlob.size),
+        "X-Goog-Upload-Header-Content-Type": "application/pdf",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ file: { display_name: displayName } }),
+    }
+  );
+
+  if (!startRes.ok) return null;
+  const uploadUrl = startRes.headers.get("x-goog-upload-url");
+  if (!uploadUrl) return null;
+
+  const uploadRes = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      "Content-Length": String(fileBlob.size),
+      "X-Goog-Upload-Offset": "0",
+      "X-Goog-Upload-Command": "upload, finalize",
+    },
+    body: fileBlob,
+  });
+
+  if (!uploadRes.ok) return null;
+  const info = (await uploadRes.json()) as {
+    file?: { uri?: string; name?: string; state?: string };
+  };
+  let fileUri = info?.file?.uri;
+  const fileName = info?.file?.name;
+  let state = info?.file?.state;
+
+  if (!fileUri || !fileName) return null;
+
+  // Aguarda processamento se necessário
+  for (let i = 0; i < 10 && state === "PROCESSING"; i++) {
+    await new Promise((r) => setTimeout(r, 1500));
+    const checkRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/${fileName}?key=${encodeURIComponent(
+        apiKey
+      )}`
+    );
+    if (!checkRes.ok) break;
+    const checkData = (await checkRes.json()) as {
+      uri?: string;
+      state?: string;
+    };
+    state = checkData.state;
+    if (checkData.uri) fileUri = checkData.uri;
+  }
+
+  if (state === "FAILED") return null;
+  return { fileUri, fileName };
+}
+
+async function deleteGeminiFile(apiKey: string, fileName: string) {
+  await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/${fileName}?key=${encodeURIComponent(
+      apiKey
+    )}`,
+    { method: "DELETE" }
+  ).catch(() => {});
+}
+
 async function callGeminiWithPdf(
   apiKey: string,
   model: string,
   prompt: string,
-  pdfBase64: string,
+  pdfPart: PdfPart,
   useSchema = true
 ): Promise<{ status: number; parsed: Record<string, unknown> | null }> {
   const res = await fetch(
@@ -453,15 +533,7 @@ async function callGeminiWithPdf(
       body: JSON.stringify({
         contents: [
           {
-            parts: [
-              {
-                inlineData: {
-                  mimeType: "application/pdf",
-                  data: pdfBase64,
-                },
-              },
-              { text: prompt },
-            ],
+            parts: [pdfPart, { text: prompt }],
           },
         ],
         generationConfig: useSchema
@@ -479,7 +551,7 @@ async function callGeminiWithPdf(
   );
 
   if (res.status === 400 && useSchema) {
-    return callGeminiWithPdf(apiKey, model, prompt, pdfBase64, false);
+    return callGeminiWithPdf(apiKey, model, prompt, pdfPart, false);
   }
 
   if (!res.ok) {
@@ -553,16 +625,44 @@ export const extractWikiFromPdf = action({
         return { ok: false as const, reason: "file_not_found" };
       }
 
-      // Limite seguro para inlineData em Convex Action (~15 MB)
-      if (fileBlob.size > 15 * 1024 * 1024) {
+      // Limite máximo suportado pela API Gemini para PDF (50 MB)
+      if (fileBlob.size > 50 * 1024 * 1024) {
         await ctx.storage.delete(args.storageId).catch(() => {});
         return { ok: false as const, reason: "file_too_large" };
       }
 
-      const buffer = await fileBlob.arrayBuffer();
-      const pdfBase64 = arrayBufferToBase64(buffer);
+      let pdfPart: PdfPart;
+      let uploadedGeminiFileName: string | null = null;
 
-      // Remove arquivo temporário do storage após carregar em memória
+      if (fileBlob.size <= 12 * 1024 * 1024) {
+        const buffer = await fileBlob.arrayBuffer();
+        const pdfBase64 = arrayBufferToBase64(buffer);
+        pdfPart = {
+          inlineData: {
+            mimeType: "application/pdf",
+            data: pdfBase64,
+          },
+        };
+      } else {
+        const uploaded = await uploadPdfToGeminiFilesApi(
+          effectiveKey,
+          fileBlob,
+          args.campaignName ? `${args.campaignName}.pdf` : "campanha.pdf"
+        );
+        if (!uploaded) {
+          await ctx.storage.delete(args.storageId).catch(() => {});
+          return { ok: false as const, reason: "upload_to_gemini_failed" };
+        }
+        uploadedGeminiFileName = uploaded.fileName;
+        pdfPart = {
+          fileData: {
+            mimeType: "application/pdf",
+            fileUri: uploaded.fileUri,
+          },
+        };
+      }
+
+      // Remove arquivo temporário do storage após carregar/enviar
       await ctx.storage.delete(args.storageId).catch(() => {});
 
       const existingList = (args.existingEntityNames || []).slice(0, 80);
@@ -597,26 +697,32 @@ export const extractWikiFromPdf = action({
 
       let lastStatus = discovered.status || 500;
 
-      for (const model of modelsToTry) {
-        const attempt = await callGeminiWithPdf(
-          effectiveKey,
-          model,
-          prompt,
-          pdfBase64,
-          true
-        );
-        lastStatus = attempt.status;
+      try {
+        for (const model of modelsToTry) {
+          const attempt = await callGeminiWithPdf(
+            effectiveKey,
+            model,
+            prompt,
+            pdfPart,
+            true
+          );
+          lastStatus = attempt.status;
 
-        if (attempt.parsed) {
-          return {
-            ok: true as const,
-            parsed: attempt.parsed,
-            modelUsed: model,
-          };
+          if (attempt.parsed) {
+            return {
+              ok: true as const,
+              parsed: attempt.parsed,
+              modelUsed: model,
+            };
+          }
+
+          if (attempt.status === 401 || attempt.status === 403) {
+            break;
+          }
         }
-
-        if (attempt.status === 401 || attempt.status === 403) {
-          break;
+      } finally {
+        if (uploadedGeminiFileName) {
+          await deleteGeminiFile(effectiveKey, uploadedGeminiFileName);
         }
       }
 
