@@ -52,7 +52,6 @@ export const WorkspaceSidebar: React.FC<WorkspaceSidebarProps> = ({
 
   const currentUser = useCampaignStore((s) => s.currentUser);
   const workspaceMode = useCampaignStore((s) => s.workspaceMode);
-  const setWorkspaceMode = useCampaignStore((s) => s.setWorkspaceMode);
   const logoutUser = useCampaignStore((s) => s.logoutUser);
   const campaigns = useCampaignStore((s) => s.campaigns);
   const activeCampaignId = useCampaignStore((s) => s.activeCampaignId);
@@ -338,34 +337,58 @@ export const WorkspaceSidebar: React.FC<WorkspaceSidebarProps> = ({
               </button>
             )}
 
-            <button
-              onClick={() => {
-                setCurrentRoute('/player-dashboard');
-                onCloseMobile();
-              }}
-              className={navItemClass(currentRoute === '/player-dashboard')}
-              title="Personagens"
-            >
-              <span className="flex items-center gap-2.5 truncate">
-                <UserCheck className="w-4 h-4 shrink-0 opacity-80" />
-                {!isNarrow && <span>Personagens</span>}
-              </span>
-            </button>
+            {isPlayerMode ? (
+              <>
+                <button
+                  onClick={() => {
+                    setCurrentRoute('/player-dashboard');
+                    onCloseMobile();
+                  }}
+                  className={navItemClass(currentRoute === '/player-dashboard')}
+                  title="Personagens"
+                >
+                  <span className="flex items-center gap-2.5 truncate">
+                    <UserCheck className="w-4 h-4 shrink-0 opacity-80" />
+                    {!isNarrow && <span>Personagens</span>}
+                  </span>
+                </button>
 
-            <button
-              onClick={() => {
-                setCurrentRoute('/campaign/player-view');
-                setViewRole('player');
-                onCloseMobile();
-              }}
-              className={navItemClass(currentRoute === '/campaign/player-view')}
-              title="Visão da Mesa"
-            >
-              <span className="flex items-center gap-2.5 truncate">
-                <Eye className="w-4 h-4 shrink-0 opacity-80" />
-                {!isNarrow && <span>Visão da mesa</span>}
-              </span>
-            </button>
+                <button
+                  onClick={() => {
+                    setCurrentRoute('/campaign/player-view');
+                    setViewRole('player');
+                    onCloseMobile();
+                  }}
+                  className={navItemClass(currentRoute === '/campaign/player-view')}
+                  title="Visão da Mesa"
+                >
+                  <span className="flex items-center gap-2.5 truncate">
+                    <Eye className="w-4 h-4 shrink-0 opacity-80" />
+                    {!isNarrow && <span>Visão da mesa</span>}
+                  </span>
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => {
+                  if (!requireCampaignOrRedirect()) return;
+                  setIsDmPartyDrawerOpen(true);
+                  onCloseMobile();
+                }}
+                className={navItemClass(false)}
+                title="Ver todas as fichas dos jogadores desta campanha"
+              >
+                <span className="flex items-center gap-2.5 truncate">
+                  <UserCheck className="w-4 h-4 shrink-0 opacity-80" />
+                  {!isNarrow && <span>Personagens</span>}
+                </span>
+                {!isNarrow && (
+                  <span className="text-[11px] font-mono text-zinc-500 tabular-nums">
+                    {characterSheets.length}
+                  </span>
+                )}
+              </button>
+            )}
           </div>
 
           {/* Estúdio do Mestre */}

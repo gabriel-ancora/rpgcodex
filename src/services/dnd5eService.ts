@@ -23,7 +23,10 @@ async function fetch2024Json<T>(path: string): Promise<T | null> {
   }
 
   try {
-    const res = await fetch(url);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4500);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
     if (!res.ok) return null;
     const data = (await res.json()) as T;
     apiCache.set(url, data);
@@ -2222,7 +2225,8 @@ function buildClassResources55e(
   cls: DndClassOption,
   level: number,
   apiClassSpecific?: Record<string, unknown>,
-  apiSpellcasting?: Record<string, number>
+  apiSpellcasting?: Record<string, number>,
+  stats?: Record<StatKey, number>
 ): CharacterClassResource[] {
   const res: CharacterClassResource[] = [];
 
@@ -2289,7 +2293,10 @@ function buildClassResources55e(
 
   if (cls.index === 'bard') {
     const die = level >= 15 ? '1d12' : level >= 10 ? '1d10' : level >= 5 ? '1d8' : '1d6';
-    res.push({ label: 'Inspiração de Bardo', value: die });
+    const chaMod = Math.floor(((stats?.cha ?? 10) - 10) / 2);
+    const uses = Math.max(1, chaMod);
+    const recharge = level >= 5 ? 'Desc. Curto/Longo' : 'Desc. Longo';
+    res.push({ label: 'Inspiração de Bardo', value: `${uses}× ${die} (${recharge})` });
   }
 
   if (cls.index === 'sorcerer' && level >= 2) {
@@ -2625,7 +2632,8 @@ export async function fetchCharacterProgression55e(params: {
     cls,
     level,
     currentApiLevelObj?.class_specific,
-    currentApiLevelObj?.spellcasting
+    currentApiLevelObj?.spellcasting,
+    stats
   );
 
   const apiSpeedFt = apiSpecies?.speed;

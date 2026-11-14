@@ -92,7 +92,7 @@ const ALL_DND_SKILLS: { name: string; stat: StatKey }[] = [
   { name: 'Intimidação', stat: 'cha' },
   { name: 'Intuição', stat: 'wis' },
   { name: 'Investigação', stat: 'int' },
-  { name: 'Lidar com Animais', stat: 'wis' },
+  { name: 'Adestrar Animais', stat: 'wis' },
   { name: 'Medicina', stat: 'wis' },
   { name: 'Natureza', stat: 'int' },
   { name: 'Percepção', stat: 'wis' },
@@ -1691,6 +1691,19 @@ export const CharacterSheetModal: React.FC<CharacterSheetModalProps> = ({
                               const v = Number(e.target.value);
                               setStats({ ...stats, [key]: v });
                               setBaseStats({ ...baseStats, [key]: v });
+                              if (key === 'cha' && classIndex === 'bard') {
+                                const die =
+                                  level >= 15 ? '1d12' : level >= 10 ? '1d10' : level >= 5 ? '1d8' : '1d6';
+                                const uses = Math.max(1, Math.floor((v - 10) / 2));
+                                const recharge = level >= 5 ? 'Desc. Curto/Longo' : 'Desc. Longo';
+                                setClassResources((prev) =>
+                                  prev.map((r) =>
+                                    r.label === 'Inspiração de Bardo'
+                                      ? { ...r, value: `${uses}× ${die} (${recharge})` }
+                                      : r
+                                  )
+                                );
+                              }
                             }}
                             className="input-clean w-16 mx-auto px-2 py-1 rounded-lg text-base font-mono font-semibold text-center block"
                           />

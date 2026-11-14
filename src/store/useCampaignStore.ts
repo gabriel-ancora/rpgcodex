@@ -1184,11 +1184,16 @@ export const useCampaignStore = create<CampaignState>()(
                   cs.id === tempId ? { ...cs, id: cloudId } : cs
                 ),
               }));
+              get().showToast(`Ficha de "${newSheet.name}" salva na nuvem!`);
             }
           })
-          .catch(() => {});
+          .catch((err) => {
+            console.error('Erro ao criar ficha no Convex:', err);
+            get().showToast(
+              'Erro ao salvar ficha na nuvem. Verifique sua conexão ou sessão.'
+            );
+          });
 
-        get().showToast(`Ficha de "${newSheet.name}" (${newSheet.className}) sincronizada!`);
         return newSheet;
       },
 
@@ -1199,20 +1204,73 @@ export const useCampaignStore = create<CampaignState>()(
           ),
         }));
 
-        const {
-          id: _ignoreId,
-          playerId: _ignorePlayer,
-          playerName: _ignorePlayerName,
-          updatedAt: _ignoreUpd,
-          ...patchFields
-        } = updates as Partial<CharacterSheet>;
+        if (id.startsWith('char-')) {
+          return;
+        }
+
+        const ALLOWED_UPDATE_KEYS: (keyof CharacterSheet)[] = [
+          'campaignId',
+          'campaignTitle',
+          'name',
+          'avatarUrl',
+          'race',
+          'racialTraits',
+          'className',
+          'subclass',
+          'level',
+          'background',
+          'alignment',
+          'hp',
+          'maxHp',
+          'tempHp',
+          'armorClass',
+          'speed',
+          'hitDice',
+          'hitDiceUsed',
+          'proficiencyBonus',
+          'passivePerception',
+          'statGenerationMethod',
+          'baseStats',
+          'stats',
+          'proficiencies',
+          'expertiseSkills',
+          'originFeat',
+          'savingThrows',
+          'weaponMasteries',
+          'size',
+          'initiativeBonus',
+          'heroicInspiration',
+          'deathSaves',
+          'senses',
+          'resistances',
+          'languages',
+          'spellcastingAbility',
+          'personality',
+          'classFeatures',
+          'classResources',
+          'spellSlots',
+          'spells',
+          'equipment',
+          'notes',
+        ];
+
+        const cleanPatch: Record<string, unknown> = {};
+        for (const key of ALLOWED_UPDATE_KEYS) {
+          if (key in updates && updates[key] !== undefined) {
+            cleanPatch[key] = updates[key];
+          }
+        }
+
         convexClient
           .mutation(api.characters.update, {
             sessionToken: get().sessionToken || undefined,
             id,
-            ...patchFields,
+            ...cleanPatch,
           })
-          .catch(() => {});
+          .catch((err) => {
+            console.error('Erro ao atualizar ficha no Convex:', err);
+            get().showToast('Erro ao sincronizar alteração da ficha na nuvem.');
+          });
       },
 
       deleteCharacterSheet: (id) => {
@@ -1224,12 +1282,17 @@ export const useCampaignStore = create<CampaignState>()(
               state.activeCharacterId === id ? remaining[0]?.id || '' : state.activeCharacterId,
           };
         });
-        convexClient
-          .mutation(api.characters.remove, {
-            id,
-            sessionToken: get().sessionToken || undefined,
-          })
-          .catch(() => {});
+        if (!id.startsWith('char-')) {
+          convexClient
+            .mutation(api.characters.remove, {
+              id,
+              sessionToken: get().sessionToken || undefined,
+            })
+            .catch((err) => {
+              console.error('Erro ao remover ficha no Convex:', err);
+              get().showToast('Erro ao remover ficha na nuvem.');
+            });
+        }
         get().showToast('Ficha de personagem removida.');
       },
 

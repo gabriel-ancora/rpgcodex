@@ -7,10 +7,10 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['"Plus Jakarta Sans"', 'system-ui', '-apple-system', 'sans-serif'],
-        display: ['"Plus Jakarta Sans"', 'system-ui', '-apple-system', 'sans-serif'],
+        sans: ['"Roboto"', 'system-ui', '-apple-system', 'sans-serif'],
+        display: ['"Roboto"', 'system-ui', '-apple-system', 'sans-serif'],
         serif: ['"Newsreader"', 'Georgia', 'serif'],
-        mono: ['"JetBrains Mono"', 'monospace'],
+        mono: ['"Roboto Mono"', 'monospace'],
       },
       colors: {
         obsidian: {
