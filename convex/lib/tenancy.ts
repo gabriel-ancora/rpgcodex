@@ -46,7 +46,18 @@ export async function getSessionUser(
   };
 }
 
-async function findCampaignByAnyId(
+export async function requireSessionUser(
+  ctx: QueryCtx | MutationCtx,
+  sessionToken?: string
+) {
+  const user = await getSessionUser(ctx, sessionToken);
+  if (!user) {
+    throw new Error("Sessão expirada ou não autenticada. Faça login novamente.");
+  }
+  return user;
+}
+
+export async function findCampaignByAnyId(
   ctx: QueryCtx | MutationCtx,
   campaignId?: string
 ) {
@@ -86,16 +97,57 @@ export async function resolveEffectiveRole(
 
   if (opts.campaignId) {
     const camp = await findCampaignByAnyId(ctx, opts.campaignId);
-    if (camp && camp.dmUserId) {
+    if (!camp) {
+      return "player";
+    }
+    if (camp.dmUserId) {
       if (camp.dmUserId === user.id) {
         return opts.viewerRole ?? "gm";
       }
       // Mesmo se user.role === "dm", em campanha de outro Mestre ele vê estritamente como jogador
       return "player";
     }
+    const isMember =
+      !camp.memberUserIds?.length || camp.memberUserIds.includes(user.id);
+    if (user.role === "dm" && isMember) {
+      return opts.viewerRole ?? "gm";
+    }
+    return "player";
   }
 
   return user.role === "dm" ? (opts.viewerRole ?? "gm") : "player";
+}
+
+/**
+ * Garante que apenas um membro autenticado (Mestre ou jogador participante) da campanha execute a mutação.
+ */
+export async function assertCampaignMember(
+  ctx: MutationCtx,
+  sessionToken?: string,
+  campaignId?: string
+) {
+  const user = await requireSessionUser(ctx, sessionToken);
+  const norm = normalizeCampaignId(campaignId);
+  if (!norm) {
+    throw new Error("Campanha não especificada.");
+  }
+
+  const camp = await findCampaignByAnyId(ctx, norm);
+  if (!camp) {
+    throw new Error("Campanha não encontrada.");
+  }
+
+  const isDm = camp.dmUserId
+    ? camp.dmUserId === user.id
+    : user.role === "dm" &&
+      (!camp.memberUserIds?.length || camp.memberUserIds.includes(user.id));
+  const isMember = isDm || Boolean(camp.memberUserIds?.includes(user.id));
+
+  if (!isMember) {
+    throw new Error("Acesso negado: você não participa desta campanha.");
+  }
+
+  return { user, camp, isDm };
 }
 
 /**
@@ -106,19 +158,25 @@ export async function assertDmPermission(
   sessionToken?: string,
   campaignId?: string
 ) {
-  const user = await getSessionUser(ctx, sessionToken);
-  if (!user) {
-    throw new Error("Sessão expirada ou não autenticada. Faça login novamente.");
-  }
+  const user = await requireSessionUser(ctx, sessionToken);
 
   if (campaignId) {
     const camp = await findCampaignByAnyId(ctx, campaignId);
-    if (camp && camp.dmUserId) {
+    if (!camp) {
+      throw new Error("Campanha não encontrada.");
+    }
+    if (camp.dmUserId) {
       if (camp.dmUserId === user.id) return user;
       throw new Error(
         "Acesso negado: apenas o Mestre desta campanha pode realizar esta ação."
       );
     }
+    const isMember =
+      !camp.memberUserIds?.length || camp.memberUserIds.includes(user.id);
+    if (user.role === "dm" && isMember) return user;
+    throw new Error(
+      "Acesso negado: apenas o Mestre desta campanha pode realizar esta ação."
+    );
   }
 
   if (user.role === "dm") return user;

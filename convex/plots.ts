@@ -14,19 +14,21 @@ export const listFronts = query({
     sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const normId = normalizeCampaignId(args.campaignId);
+    if (!normId) return [];
+
     const role = await resolveEffectiveRole(ctx, {
       sessionToken: args.sessionToken,
       viewerRole: args.viewerRole,
-      campaignId: args.campaignId,
+      campaignId: normId,
     });
 
-    const allFronts = await ctx.db.query("threatFronts").collect();
-    return allFronts
-      .filter((f) => {
-        if (!matchesCampaign(f.campaignId, args.campaignId)) return false;
-        if (role === "player" && f.isSecret) return false;
-        return true;
-      })
+    const fronts = await ctx.db
+      .query("threatFronts")
+      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
+      .collect();
+    return fronts
+      .filter((f) => !(role === "player" && f.isSecret))
       .map((f) => ({
         ...f,
         id: f._id,
@@ -223,20 +225,22 @@ export const listScenes = query({
     sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const normId = normalizeCampaignId(args.campaignId);
+    if (!normId) return [];
+
     const role = await resolveEffectiveRole(ctx, {
       sessionToken: args.sessionToken,
       viewerRole: args.viewerRole,
-      campaignId: args.campaignId,
+      campaignId: normId,
     });
 
     // O Fluxograma Investigativo do Mestre contém cenas futuras/secretas; para jogadores exibimos apenas cenas visitadas e pistas descobertas
-    const allScenes = await ctx.db.query("mysteryScenes").collect();
-    return allScenes
-      .filter((s) => {
-        if (!matchesCampaign(s.campaignId, args.campaignId)) return false;
-        if (role === "player" && s.status !== "visited") return false;
-        return true;
-      })
+    const scenes = await ctx.db
+      .query("mysteryScenes")
+      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
+      .collect();
+    return scenes
+      .filter((s) => !(role === "player" && s.status !== "visited"))
       .map((s) => ({
         ...s,
         id: s._id,
@@ -279,10 +283,14 @@ export const updateScenePosition = mutation({
     sceneId: v.string(),
     x: v.number(),
     y: v.number(),
+    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const sceneId = ctx.db.normalizeId("mysteryScenes", args.sceneId);
     if (!sceneId) return;
+    const scene = await ctx.db.get(sceneId);
+    if (!scene) return;
+    await assertDmPermission(ctx, args.sessionToken, scene.campaignId);
     await ctx.db.patch(sceneId, { x: args.x, y: args.y });
   },
 });

@@ -66,17 +66,19 @@ export const list = query({
     sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const normId = normalizeCampaignId(args.campaignId);
+    if (!normId) return [];
+
     const role = await resolveEffectiveRole(ctx, {
       sessionToken: args.sessionToken,
       viewerRole: args.viewerRole,
-      campaignId: args.campaignId,
+      campaignId: normId,
     });
 
-    const allMaps = await ctx.db.query("campaignMaps").collect();
-    const maps = allMaps.filter((m) =>
-      matchesCampaign(m.campaignId, args.campaignId)
-    );
-    const pins = await ctx.db.query("mapPins").collect();
+    const maps = await ctx.db
+      .query("campaignMaps")
+      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
+      .collect();
 
     const results = [];
     for (const m of maps) {
@@ -91,17 +93,18 @@ export const list = query({
         return true;
       });
 
+      const pins = await ctx.db
+        .query("mapPins")
+        .withIndex("by_map", (q) => q.eq("mapId", m._id))
+        .collect();
+
       results.push({
         ...m,
         id: m._id,
         customImageUrl: resolvedUrl,
         shapes: mapShapes,
         pins: pins
-          .filter((p) => {
-            if (p.mapId !== m._id) return false;
-            if (role === "player" && p.isSecret && !p.isRevealed) return false;
-            return true;
-          })
+          .filter((p) => !(role === "player" && p.isSecret && !p.isRevealed))
           .map((p) => ({
             ...p,
             id: p._id,
@@ -148,9 +151,10 @@ export const updateShapes = mutation({
   },
   handler: async (ctx, args) => {
     const mapId = ctx.db.normalizeId("campaignMaps", args.mapId);
-    if (!mapId) return;
+    if (!mapId) throw new Error("Mapa ainda não sincronizado na nuvem.");
     const map = await ctx.db.get(mapId);
-    await assertDmPermission(ctx, args.sessionToken, map?.campaignId);
+    if (!map) return;
+    await assertDmPermission(ctx, args.sessionToken, map.campaignId);
 
     await ctx.db.patch(mapId, { shapes: args.shapes });
   },
@@ -165,9 +169,10 @@ export const remove = mutation({
     const mapId = ctx.db.normalizeId("campaignMaps", args.id);
     if (!mapId) return;
     const map = await ctx.db.get(mapId);
-    await assertDmPermission(ctx, args.sessionToken, map?.campaignId);
+    if (!map) return;
+    await assertDmPermission(ctx, args.sessionToken, map.campaignId);
 
-    if (map?.storageId) {
+    if (map.storageId) {
       await ctx.storage.delete(map.storageId);
     }
 
@@ -204,8 +209,10 @@ export const addPin = mutation({
   },
   handler: async (ctx, args) => {
     const mapDocId = ctx.db.normalizeId("campaignMaps", args.mapId);
-    const mapDoc = mapDocId ? await ctx.db.get(mapDocId) : null;
-    await assertDmPermission(ctx, args.sessionToken, mapDoc?.campaignId);
+    if (!mapDocId) throw new Error("Mapa ainda não sincronizado na nuvem.");
+    const mapDoc = await ctx.db.get(mapDocId);
+    if (!mapDoc) throw new Error("Mapa não encontrado.");
+    await assertDmPermission(ctx, args.sessionToken, mapDoc.campaignId);
     const { sessionToken: _, ...data } = args;
     return await ctx.db.insert("mapPins", data);
   },
@@ -235,9 +242,11 @@ export const updatePin = mutation({
     const pinId = ctx.db.normalizeId("mapPins", args.pinId);
     if (!pinId) return;
     const pin = await ctx.db.get(pinId);
-    const mapDocId = pin ? ctx.db.normalizeId("campaignMaps", pin.mapId) : null;
+    if (!pin) return;
+    const mapDocId = ctx.db.normalizeId("campaignMaps", pin.mapId);
     const mapDoc = mapDocId ? await ctx.db.get(mapDocId) : null;
-    await assertDmPermission(ctx, args.sessionToken, mapDoc?.campaignId);
+    if (!mapDoc) return;
+    await assertDmPermission(ctx, args.sessionToken, mapDoc.campaignId);
     const { pinId: _, sessionToken: __, ...updates } = args;
     const cleanUpdates = Object.fromEntries(
       Object.entries(updates).filter(([, val]) => val !== undefined)
@@ -255,9 +264,11 @@ export const removePin = mutation({
     const pinId = ctx.db.normalizeId("mapPins", args.pinId);
     if (!pinId) return;
     const pin = await ctx.db.get(pinId);
-    const mapDocId = pin ? ctx.db.normalizeId("campaignMaps", pin.mapId) : null;
+    if (!pin) return;
+    const mapDocId = ctx.db.normalizeId("campaignMaps", pin.mapId);
     const mapDoc = mapDocId ? await ctx.db.get(mapDocId) : null;
-    await assertDmPermission(ctx, args.sessionToken, mapDoc?.campaignId);
+    if (!mapDoc) return;
+    await assertDmPermission(ctx, args.sessionToken, mapDoc.campaignId);
     await ctx.db.delete(pinId);
   },
 });
@@ -274,7 +285,8 @@ export const toggleRevealPin = mutation({
     if (!pin) return;
     const mapDocId = ctx.db.normalizeId("campaignMaps", pin.mapId);
     const mapDoc = mapDocId ? await ctx.db.get(mapDocId) : null;
-    await assertDmPermission(ctx, args.sessionToken, mapDoc?.campaignId);
+    if (!mapDoc) return;
+    await assertDmPermission(ctx, args.sessionToken, mapDoc.campaignId);
     await ctx.db.patch(pinId, {
       isRevealed: !pin.isRevealed,
       isSecret: pin.isRevealed,

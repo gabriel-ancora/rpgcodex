@@ -1,9 +1,10 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import {
+  findCampaignByAnyId,
   getSessionUser,
-  matchesCampaign,
   normalizeCampaignId,
+  requireSessionUser,
 } from "./lib/tenancy";
 
 const spellValidator = v.object({
@@ -71,27 +72,59 @@ const classResourceValidator = v.object({
 
 export const list = query({
   args: {
+    sessionToken: v.optional(v.string()),
     campaignId: v.optional(v.string()),
     playerId: v.optional(v.string()),
     includeAllPlayerSheets: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const all = await ctx.db.query("characterSheets").collect();
-    const filtered = all.filter((sheet) => {
-      if (
-        args.includeAllPlayerSheets &&
-        args.playerId &&
-        sheet.playerId === args.playerId
-      ) {
-        return true;
-      }
-      if (args.campaignId) {
-        return matchesCampaign(sheet.campaignId, args.campaignId);
-      }
-      return false;
-    });
+    const user = args.sessionToken
+      ? await getSessionUser(ctx, args.sessionToken)
+      : null;
+    if (args.sessionToken && !user) return [];
 
-    return filtered.map((s) => ({
+    const targetPlayerId = user?.id || args.playerId;
+    const normCampId = normalizeCampaignId(args.campaignId);
+    const byId = new Map<string, any>();
+
+    if (args.includeAllPlayerSheets && targetPlayerId) {
+      const ownSheets = await ctx.db
+        .query("characterSheets")
+        .withIndex("by_player", (q) => q.eq("playerId", targetPlayerId))
+        .collect();
+      for (const s of ownSheets) {
+        byId.set(s._id, s);
+      }
+    }
+
+    if (normCampId) {
+      if (user) {
+        const camp = await findCampaignByAnyId(ctx, normCampId);
+        const isMember =
+          camp &&
+          (camp.dmUserId === user.id ||
+            Boolean(camp.memberUserIds?.includes(user.id)));
+        if (isMember) {
+          const campSheets = await ctx.db
+            .query("characterSheets")
+            .withIndex("by_campaign", (q) => q.eq("campaignId", normCampId))
+            .collect();
+          for (const s of campSheets) {
+            byId.set(s._id, s);
+          }
+        }
+      } else {
+        const campSheets = await ctx.db
+          .query("characterSheets")
+          .withIndex("by_campaign", (q) => q.eq("campaignId", normCampId))
+          .collect();
+        for (const s of campSheets) {
+          byId.set(s._id, s);
+        }
+      }
+    }
+
+    return Array.from(byId.values()).map((s) => ({
       ...s,
       id: s._id,
     }));
@@ -181,15 +214,27 @@ export const create = mutation({
     notes: v.string(),
   },
   handler: async (ctx, args) => {
-    const user = await getSessionUser(ctx, args.sessionToken);
-    if (args.sessionToken && !user) {
-      throw new Error("Sessão expirada. Faça login novamente.");
+    const user = await requireSessionUser(ctx, args.sessionToken);
+    const normCampId = normalizeCampaignId(args.campaignId);
+    if (normCampId) {
+      const camp = await findCampaignByAnyId(ctx, normCampId);
+      const isMember =
+        camp &&
+        (camp.dmUserId === user.id ||
+          Boolean(camp.memberUserIds?.includes(user.id)));
+      if (!isMember) {
+        throw new Error(
+          "Sem permissão para vincular ficha a uma campanha da qual você não participa."
+        );
+      }
     }
+
     const { sessionToken: _, ...data } = args;
     const sheetId = await ctx.db.insert("characterSheets", {
       ...data,
-      playerId: user?.id || args.playerId,
-      campaignId: normalizeCampaignId(args.campaignId),
+      playerId: user.id,
+      playerName: user.name || args.playerName,
+      campaignId: normCampId,
       updatedAt: new Date().toISOString(),
     });
     return sheetId;
@@ -280,25 +325,34 @@ export const update = mutation({
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const user = await requireSessionUser(ctx, args.sessionToken);
     const sheetId = ctx.db.normalizeId("characterSheets", args.id);
-    if (!sheetId) return;
+    if (!sheetId) {
+      throw new Error("Ficha ainda não sincronizada na nuvem.");
+    }
     const existing = await ctx.db.get(sheetId);
     if (!existing) return;
 
-    if (args.sessionToken) {
-      const user = await getSessionUser(ctx, args.sessionToken);
-      if (!user) throw new Error("Sessão expirada.");
-      const isOwner = existing.playerId === user.id;
-      let isCampaignDm = false;
-      if (existing.campaignId) {
-        const camp = await ctx.db
-          .query("campaigns")
-          .withIndex("by_slug", (q) => q.eq("slugId", existing.campaignId))
-          .first();
-        isCampaignDm = camp?.dmUserId === user.id;
-      }
-      if (!isOwner && !isCampaignDm) {
-        throw new Error("Sem permissão para alterar esta ficha.");
+    const isOwner = existing.playerId === user.id;
+    let isCampaignDm = false;
+    if (existing.campaignId) {
+      const camp = await findCampaignByAnyId(ctx, existing.campaignId);
+      isCampaignDm = camp?.dmUserId === user.id;
+    }
+    if (!isOwner && !isCampaignDm) {
+      throw new Error("Sem permissão para alterar esta ficha.");
+    }
+
+    if (args.campaignId && args.campaignId !== existing.campaignId) {
+      const targetCamp = await findCampaignByAnyId(ctx, args.campaignId);
+      const canLink =
+        targetCamp &&
+        (targetCamp.dmUserId === user.id ||
+          Boolean(targetCamp.memberUserIds?.includes(user.id)));
+      if (!canLink) {
+        throw new Error(
+          "Você precisa ingressar na campanha antes de vincular esta ficha."
+        );
       }
     }
 
@@ -319,26 +373,20 @@ export const remove = mutation({
     sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const user = await requireSessionUser(ctx, args.sessionToken);
     const sheetId = ctx.db.normalizeId("characterSheets", args.id);
     if (!sheetId) return;
     const existing = await ctx.db.get(sheetId);
     if (!existing) return;
 
-    if (args.sessionToken) {
-      const user = await getSessionUser(ctx, args.sessionToken);
-      if (!user) throw new Error("Sessão expirada.");
-      const isOwner = existing.playerId === user.id;
-      let isCampaignDm = false;
-      if (existing.campaignId) {
-        const camp = await ctx.db
-          .query("campaigns")
-          .withIndex("by_slug", (q) => q.eq("slugId", existing.campaignId))
-          .first();
-        isCampaignDm = camp?.dmUserId === user.id;
-      }
-      if (!isOwner && !isCampaignDm) {
-        throw new Error("Sem permissão para excluir esta ficha.");
-      }
+    const isOwner = existing.playerId === user.id;
+    let isCampaignDm = false;
+    if (existing.campaignId) {
+      const camp = await findCampaignByAnyId(ctx, existing.campaignId);
+      isCampaignDm = camp?.dmUserId === user.id;
+    }
+    if (!isOwner && !isCampaignDm) {
+      throw new Error("Sem permissão para excluir esta ficha.");
     }
 
     await ctx.db.delete(sheetId);

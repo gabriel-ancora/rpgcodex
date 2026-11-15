@@ -170,7 +170,14 @@ export const switchRole = mutation({
     if (!user) {
       throw new Error("Sessão expirada ou inválida.");
     }
-    await ctx.db.patch(user.id, { role: args.role });
+    if (user.role === "player" && args.role === "dm") {
+      throw new Error(
+        "Contas de Jogador não podem se promover para o Modo Mestre."
+      );
+    }
+    if (user.role !== args.role) {
+      await ctx.db.patch(user.id, { role: args.role });
+    }
     return {
       id: user.id,
       name: user.name,

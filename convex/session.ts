@@ -1,10 +1,10 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import {
-  matchesCampaign,
   normalizeCampaignId,
   resolveEffectiveRole,
   assertDmPermission,
+  assertCampaignMember,
 } from "./lib/tenancy";
 
 export const listCombatants = query({
@@ -14,15 +14,20 @@ export const listCombatants = query({
     sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const normId = normalizeCampaignId(args.campaignId);
+    if (!normId) return [];
+
     const role = await resolveEffectiveRole(ctx, {
       sessionToken: args.sessionToken,
       viewerRole: args.viewerRole,
-      campaignId: args.campaignId,
+      campaignId: normId,
     });
 
-    const list = await ctx.db.query("combatants").collect();
+    const list = await ctx.db
+      .query("combatants")
+      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
+      .collect();
     return list
-      .filter((c) => matchesCampaign(c.campaignId, args.campaignId))
       .sort((a, b) => b.initiative - a.initiative)
       .map((c) => ({
         ...c,
@@ -60,10 +65,11 @@ export const nextTurn = mutation({
   handler: async (ctx, args) => {
     await assertDmPermission(ctx, args.sessionToken, args.campaignId);
     const normId = normalizeCampaignId(args.campaignId);
-    const allCombatants = await ctx.db.query("combatants").collect();
-    const count = allCombatants.filter((c) =>
-      matchesCampaign(c.campaignId, normId)
-    ).length;
+    const campaignCombatants = await ctx.db
+      .query("combatants")
+      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
+      .collect();
+    const count = campaignCombatants.length;
     if (count === 0) return;
 
     const existing = await ctx.db
@@ -101,10 +107,10 @@ export const rollAllInitiatives = mutation({
   handler: async (ctx, args) => {
     await assertDmPermission(ctx, args.sessionToken, args.campaignId);
     const normId = normalizeCampaignId(args.campaignId);
-    const all = await ctx.db.query("combatants").collect();
-    const campaignCombatants = all.filter((c) =>
-      matchesCampaign(c.campaignId, normId)
-    );
+    const campaignCombatants = await ctx.db
+      .query("combatants")
+      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
+      .collect();
 
     for (const c of campaignCombatants) {
       const bonus = c.type === "pc" ? 3 : 2;
@@ -137,6 +143,7 @@ export const rollAllInitiatives = mutation({
 export const addCombatant = mutation({
   args: {
     campaignId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
     name: v.string(),
     type: v.union(v.literal("pc"), v.literal("npc"), v.literal("monster")),
     initiative: v.number(),
@@ -148,8 +155,10 @@ export const addCombatant = mutation({
     entityId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    await assertDmPermission(ctx, args.sessionToken, args.campaignId);
+    const { sessionToken: _, ...data } = args;
     return await ctx.db.insert("combatants", {
-      ...args,
+      ...data,
       campaignId: normalizeCampaignId(args.campaignId),
     });
   },
@@ -159,12 +168,16 @@ export const adjustHp = mutation({
   args: {
     id: v.string(),
     delta: v.number(),
+    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const combId = ctx.db.normalizeId("combatants", args.id);
-    if (!combId) return;
+    if (!combId) {
+      throw new Error("Combatente ainda não sincronizado na nuvem.");
+    }
     const comb = await ctx.db.get(combId);
     if (!comb) return;
+    await assertDmPermission(ctx, args.sessionToken, comb.campaignId);
 
     const nextHp = Math.max(0, Math.min(comb.maxHp, comb.hp + args.delta));
     await ctx.db.patch(combId, { hp: nextHp });
@@ -175,12 +188,16 @@ export const toggleCondition = mutation({
   args: {
     id: v.string(),
     condition: v.string(),
+    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const combId = ctx.db.normalizeId("combatants", args.id);
-    if (!combId) return;
+    if (!combId) {
+      throw new Error("Combatente ainda não sincronizado na nuvem.");
+    }
     const comb = await ctx.db.get(combId);
     if (!comb) return;
+    await assertDmPermission(ctx, args.sessionToken, comb.campaignId);
 
     const has = comb.conditions.includes(args.condition);
     const updated = has
@@ -192,10 +209,16 @@ export const toggleCondition = mutation({
 });
 
 export const removeCombatant = mutation({
-  args: { id: v.string() },
+  args: {
+    id: v.string(),
+    sessionToken: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     const combId = ctx.db.normalizeId("combatants", args.id);
     if (!combId) return;
+    const comb = await ctx.db.get(combId);
+    if (!comb) return;
+    await assertDmPermission(ctx, args.sessionToken, comb.campaignId);
     await ctx.db.delete(combId);
   },
 });
@@ -208,11 +231,12 @@ export const clearCombatants = mutation({
   handler: async (ctx, args) => {
     await assertDmPermission(ctx, args.sessionToken, args.campaignId);
     const normId = normalizeCampaignId(args.campaignId);
-    const list = await ctx.db.query("combatants").collect();
+    const list = await ctx.db
+      .query("combatants")
+      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
+      .collect();
     for (const c of list) {
-      if (matchesCampaign(c.campaignId, normId)) {
-        await ctx.db.delete(c._id);
-      }
+      await ctx.db.delete(c._id);
     }
 
     const existingState = await ctx.db
@@ -253,6 +277,7 @@ export const listDiceRolls = query({
 export const addDiceRoll = mutation({
   args: {
     campaignId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
     rollerName: v.optional(v.string()),
     formula: v.string(),
     rolls: v.array(v.number()),
@@ -266,8 +291,10 @@ export const addDiceRoll = mutation({
   handler: async (ctx, args) => {
     const normId = normalizeCampaignId(args.campaignId);
     if (!normId) return null;
+    await assertCampaignMember(ctx, args.sessionToken, normId);
+    const { sessionToken: _, ...rollData } = args;
     const insertedId = await ctx.db.insert("diceRolls", {
-      ...args,
+      ...rollData,
       campaignId: normId,
     });
 
@@ -288,8 +315,12 @@ export const addDiceRoll = mutation({
 });
 
 export const clearDiceRolls = mutation({
-  args: { campaignId: v.optional(v.string()) },
+  args: {
+    campaignId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
+    await assertDmPermission(ctx, args.sessionToken, args.campaignId);
     const normId = normalizeCampaignId(args.campaignId);
     const all = await ctx.db
       .query("diceRolls")
@@ -311,20 +342,23 @@ export const listScratchpad = query({
     sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const normId = normalizeCampaignId(args.campaignId);
+    if (!normId) return [];
     const role = await resolveEffectiveRole(ctx, {
       sessionToken: args.sessionToken,
       viewerRole: args.viewerRole,
-      campaignId: args.campaignId,
+      campaignId: normId,
     });
     if (role === "player") return [];
 
-    const list = await ctx.db.query("scratchpadNotes").collect();
-    return list
-      .filter((s) => matchesCampaign(s.campaignId, args.campaignId))
-      .map((s) => ({
-        ...s,
-        id: s._id,
-      }));
+    const list = await ctx.db
+      .query("scratchpadNotes")
+      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
+      .collect();
+    return list.map((s) => ({
+      ...s,
+      id: s._id,
+    }));
   },
 });
 

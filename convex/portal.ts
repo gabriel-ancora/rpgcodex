@@ -1,10 +1,12 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import {
-  matchesCampaign,
   normalizeCampaignId,
   resolveEffectiveRole,
   assertDmPermission,
+  assertCampaignMember,
+  getSessionUser,
+  requireSessionUser,
 } from "./lib/tenancy";
 
 export const listQuests = query({
@@ -14,19 +16,21 @@ export const listQuests = query({
     sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const normId = normalizeCampaignId(args.campaignId);
+    if (!normId) return [];
+
     const role = await resolveEffectiveRole(ctx, {
       sessionToken: args.sessionToken,
       viewerRole: args.viewerRole,
-      campaignId: args.campaignId,
+      campaignId: normId,
     });
 
-    const list = await ctx.db.query("quests").collect();
+    const list = await ctx.db
+      .query("quests")
+      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
+      .collect();
     return list
-      .filter((q) => {
-        if (!matchesCampaign(q.campaignId, args.campaignId)) return false;
-        if (role === "player" && !q.isPublic) return false;
-        return true;
-      })
+      .filter((q) => !(role === "player" && !q.isPublic))
       .map((q) => ({
         ...q,
         id: q._id,
@@ -99,12 +103,21 @@ export const toggleObjective = mutation({
   args: {
     questId: v.string(),
     objectiveId: v.string(),
+    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const questId = ctx.db.normalizeId("quests", args.questId);
     if (!questId) return;
     const quest = await ctx.db.get(questId);
     if (!quest) return;
+    const { isDm } = await assertCampaignMember(
+      ctx,
+      args.sessionToken,
+      quest.campaignId
+    );
+    if (!isDm && !quest.isPublic) {
+      throw new Error("Apenas o Mestre pode alterar missões privadas.");
+    }
 
     const updated = quest.objectives.map((o) =>
       o.id === args.objectiveId ? { ...o, completed: !o.completed } : o
@@ -135,19 +148,21 @@ export const listJournal = query({
     sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const normId = normalizeCampaignId(args.campaignId);
+    if (!normId) return [];
+
     const role = await resolveEffectiveRole(ctx, {
       sessionToken: args.sessionToken,
       viewerRole: args.viewerRole,
-      campaignId: args.campaignId,
+      campaignId: normId,
     });
 
-    const list = await ctx.db.query("journalEntries").collect();
+    const list = await ctx.db
+      .query("journalEntries")
+      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
+      .collect();
     return list
-      .filter((j) => {
-        if (!matchesCampaign(j.campaignId, args.campaignId)) return false;
-        if (role === "player" && !j.isPublic) return false;
-        return true;
-      })
+      .filter((j) => !(role === "player" && !j.isPublic))
       .map((j) => ({
         ...j,
         id: j._id,
@@ -158,6 +173,7 @@ export const listJournal = query({
 export const addJournal = mutation({
   args: {
     campaignId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
     sessionNumber: v.number(),
     title: v.string(),
     inGameDate: v.string(),
@@ -166,8 +182,15 @@ export const addJournal = mutation({
     isPublic: v.boolean(),
   },
   handler: async (ctx, args) => {
+    const { isDm } = await assertCampaignMember(
+      ctx,
+      args.sessionToken,
+      args.campaignId
+    );
+    const { sessionToken: _, ...data } = args;
     return await ctx.db.insert("journalEntries", {
-      ...args,
+      ...data,
+      isPublic: isDm ? args.isPublic : true,
       campaignId: normalizeCampaignId(args.campaignId),
     });
   },
@@ -176,6 +199,7 @@ export const addJournal = mutation({
 export const updateJournal = mutation({
   args: {
     journalId: v.string(),
+    sessionToken: v.optional(v.string()),
     title: v.optional(v.string()),
     content: v.optional(v.string()),
     isPublic: v.optional(v.boolean()),
@@ -183,16 +207,32 @@ export const updateJournal = mutation({
   handler: async (ctx, args) => {
     const journalId = ctx.db.normalizeId("journalEntries", args.journalId);
     if (!journalId) return;
-    const { journalId: _, ...updates } = args;
+    const entry = await ctx.db.get(journalId);
+    if (!entry) return;
+    const { isDm } = await assertCampaignMember(
+      ctx,
+      args.sessionToken,
+      entry.campaignId
+    );
+    if (!isDm && !entry.isPublic) {
+      throw new Error("Apenas o Mestre pode editar registros secretos.");
+    }
+    const { journalId: _, sessionToken: __, ...updates } = args;
     await ctx.db.patch(journalId, updates);
   },
 });
 
 export const removeJournal = mutation({
-  args: { journalId: v.string() },
+  args: {
+    journalId: v.string(),
+    sessionToken: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     const journalId = ctx.db.normalizeId("journalEntries", args.journalId);
     if (!journalId) return;
+    const entry = await ctx.db.get(journalId);
+    if (!entry) return;
+    await assertDmPermission(ctx, args.sessionToken, entry.campaignId);
     await ctx.db.delete(journalId);
   },
 });
@@ -208,6 +248,9 @@ export const listPersonalNotes = query({
     sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const user = await getSessionUser(ctx, args.sessionToken);
+    if (!user) return [];
+
     const role = await resolveEffectiveRole(ctx, {
       sessionToken: args.sessionToken,
       viewerRole: args.viewerRole,
@@ -224,12 +267,9 @@ export const listPersonalNotes = query({
     return list
       .filter((note) => {
         if (role === "gm") {
-          return note.sharedWithDm || Boolean(args.playerId && note.playerId === args.playerId);
+          return note.sharedWithDm || note.playerId === user.id;
         }
-        if (args.playerId) {
-          return note.playerId === args.playerId;
-        }
-        return false;
+        return note.playerId === user.id;
       })
       .map((n) => ({
         ...n,
@@ -241,6 +281,7 @@ export const listPersonalNotes = query({
 export const addPersonalNote = mutation({
   args: {
     campaignId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
     playerId: v.string(),
     playerName: v.string(),
     characterName: v.string(),
@@ -255,8 +296,16 @@ export const addPersonalNote = mutation({
     sharedWithDm: v.boolean(),
   },
   handler: async (ctx, args) => {
+    const { user } = await assertCampaignMember(
+      ctx,
+      args.sessionToken,
+      args.campaignId
+    );
+    const { sessionToken: _, ...data } = args;
     return await ctx.db.insert("personalJournalNotes", {
-      ...args,
+      ...data,
+      playerId: user.id,
+      playerName: user.name || args.playerName,
       campaignId: normalizeCampaignId(args.campaignId),
       updatedAt: new Date().toLocaleTimeString("pt-BR", {
         hour: "2-digit",
@@ -269,6 +318,7 @@ export const addPersonalNote = mutation({
 export const updatePersonalNote = mutation({
   args: {
     id: v.string(),
+    sessionToken: v.optional(v.string()),
     title: v.optional(v.string()),
     content: v.optional(v.string()),
     category: v.optional(
@@ -282,9 +332,15 @@ export const updatePersonalNote = mutation({
     sharedWithDm: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
+    const user = await requireSessionUser(ctx, args.sessionToken);
     const noteId = ctx.db.normalizeId("personalJournalNotes", args.id);
     if (!noteId) return;
-    const { id: _, ...updates } = args;
+    const note = await ctx.db.get(noteId);
+    if (!note) return;
+    if (note.playerId !== user.id) {
+      throw new Error("Sem permissão para alterar anotação pessoal de outro jogador.");
+    }
+    const { id: _, sessionToken: __, ...updates } = args;
     await ctx.db.patch(noteId, {
       ...updates,
       updatedAt: new Date().toLocaleTimeString("pt-BR", {
@@ -296,10 +352,19 @@ export const updatePersonalNote = mutation({
 });
 
 export const removePersonalNote = mutation({
-  args: { id: v.string() },
+  args: {
+    id: v.string(),
+    sessionToken: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
+    const user = await requireSessionUser(ctx, args.sessionToken);
     const noteId = ctx.db.normalizeId("personalJournalNotes", args.id);
     if (!noteId) return;
+    const note = await ctx.db.get(noteId);
+    if (!note) return;
+    if (note.playerId !== user.id) {
+      throw new Error("Sem permissão para excluir anotação pessoal de outro jogador.");
+    }
     await ctx.db.delete(noteId);
   },
 });
@@ -310,8 +375,10 @@ export const removePersonalNote = mutation({
 async function getOrCreateCampaignResources(ctx: any, campaignId?: string) {
   const normId = normalizeCampaignId(campaignId);
   if (!normId) return null;
-  const all = await ctx.db.query("partyResources").collect();
-  let res = all.find((r: any) => matchesCampaign(r.campaignId, normId));
+  let res = await ctx.db
+    .query("partyResources")
+    .withIndex("by_campaign", (q: any) => q.eq("campaignId", normId))
+    .first();
   if (!res) {
     const id = await ctx.db.insert("partyResources", {
       campaignId: normId,
@@ -341,16 +408,19 @@ async function getOrCreateCampaignResources(ctx: any, campaignId?: string) {
 export const getResources = query({
   args: { campaignId: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    const all = await ctx.db.query("partyResources").collect();
-    return (
-      all.find((r) => matchesCampaign(r.campaignId, args.campaignId)) ?? null
-    );
+    const normId = normalizeCampaignId(args.campaignId);
+    if (!normId) return null;
+    return await ctx.db
+      .query("partyResources")
+      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
+      .first();
   },
 });
 
 export const updateCurrency = mutation({
   args: {
     campaignId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
     field: v.union(
       v.literal("gold"),
       v.literal("silver"),
@@ -362,6 +432,7 @@ export const updateCurrency = mutation({
     delta: v.number(),
   },
   handler: async (ctx, args) => {
+    await assertCampaignMember(ctx, args.sessionToken, args.campaignId);
     const res = await getOrCreateCampaignResources(ctx, args.campaignId);
     if (!res) return;
 
@@ -377,6 +448,7 @@ export const updateCurrency = mutation({
 export const addInventoryItem = mutation({
   args: {
     campaignId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
     name: v.string(),
     quantity: v.number(),
     holder: v.string(),
@@ -390,6 +462,7 @@ export const addInventoryItem = mutation({
     notes: v.string(),
   },
   handler: async (ctx, args) => {
+    await assertCampaignMember(ctx, args.sessionToken, args.campaignId);
     const res = await getOrCreateCampaignResources(ctx, args.campaignId);
     if (!res) return;
 
@@ -406,15 +479,18 @@ export const addInventoryItem = mutation({
       campaignId: normalizeCampaignId(args.campaignId),
       items: [...res.items, newItem],
     });
+    return newItem.id;
   },
 });
 
 export const removeInventoryItem = mutation({
   args: {
     campaignId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
     itemId: v.string(),
   },
   handler: async (ctx, args) => {
+    await assertCampaignMember(ctx, args.sessionToken, args.campaignId);
     const res = await getOrCreateCampaignResources(ctx, args.campaignId);
     if (!res) return;
 
@@ -426,9 +502,11 @@ export const removeInventoryItem = mutation({
 export const toggleStrongholdUpgrade = mutation({
   args: {
     campaignId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
     upgradeId: v.string(),
   },
   handler: async (ctx, args) => {
+    await assertCampaignMember(ctx, args.sessionToken, args.campaignId);
     const res = await getOrCreateCampaignResources(ctx, args.campaignId);
     if (!res) return;
 
@@ -448,6 +526,7 @@ export const toggleStrongholdUpgrade = mutation({
 export const updateStronghold = mutation({
   args: {
     campaignId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
     name: v.optional(v.string()),
     type: v.optional(v.string()),
     locationHandle: v.optional(v.string()),
@@ -457,10 +536,11 @@ export const updateStronghold = mutation({
     description: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    await assertCampaignMember(ctx, args.sessionToken, args.campaignId);
     const res = await getOrCreateCampaignResources(ctx, args.campaignId);
     if (!res) return;
 
-    const { campaignId: _, ...updates } = args;
+    const { campaignId: _, sessionToken: __, ...updates } = args;
     const nextMax = updates.maxIntegrity !== undefined ? Math.max(1, updates.maxIntegrity) : res.stronghold.maxIntegrity;
     const rawIntegrity = updates.integrity !== undefined ? updates.integrity : res.stronghold.integrity;
     const nextIntegrity = Math.max(0, Math.min(nextMax, rawIntegrity));
@@ -483,11 +563,13 @@ export const updateStronghold = mutation({
 export const addStrongholdUpgrade = mutation({
   args: {
     campaignId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
     name: v.string(),
     cost: v.string(),
     benefit: v.string(),
   },
   handler: async (ctx, args) => {
+    await assertCampaignMember(ctx, args.sessionToken, args.campaignId);
     const res = await getOrCreateCampaignResources(ctx, args.campaignId);
     if (!res) return;
 
@@ -505,15 +587,18 @@ export const addStrongholdUpgrade = mutation({
         upgrades: [...res.stronghold.upgrades, newUpgrade],
       },
     });
+    return newUpgrade.id;
   },
 });
 
 export const removeStrongholdUpgrade = mutation({
   args: {
     campaignId: v.optional(v.string()),
+    sessionToken: v.optional(v.string()),
     upgradeId: v.string(),
   },
   handler: async (ctx, args) => {
+    await assertCampaignMember(ctx, args.sessionToken, args.campaignId);
     const res = await getOrCreateCampaignResources(ctx, args.campaignId);
     if (!res) return;
 
@@ -529,6 +614,7 @@ export const removeStrongholdUpgrade = mutation({
 export const replaceResources = mutation({
   args: {
     campaignId: v.string(),
+    sessionToken: v.optional(v.string()),
     gold: v.number(),
     silver: v.number(),
     copper: v.number(),
@@ -573,9 +659,10 @@ export const replaceResources = mutation({
   handler: async (ctx, args) => {
     const normId = normalizeCampaignId(args.campaignId);
     if (!normId) return;
+    await assertDmPermission(ctx, args.sessionToken, normId);
     const res = await getOrCreateCampaignResources(ctx, normId);
     if (!res) return;
-    const { campaignId: _, ...payload } = args;
+    const { campaignId: _, sessionToken: __, ...payload } = args;
     await ctx.db.patch(res._id, {
       ...payload,
       campaignId: normId,

@@ -14,49 +14,58 @@ export const list = query({
     sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const normId = normalizeCampaignId(args.campaignId);
+    if (!normId) return [];
+
     const role = await resolveEffectiveRole(ctx, {
       sessionToken: args.sessionToken,
       viewerRole: args.viewerRole,
-      campaignId: args.campaignId,
+      campaignId: normId,
     });
 
-    const allEntities = await ctx.db.query("entities").collect();
-    const entities = allEntities.filter((e) => {
-      if (!matchesCampaign(e.campaignId, args.campaignId)) return false;
+    const campaignEntities = await ctx.db
+      .query("entities")
+      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
+      .collect();
+    const entities = campaignEntities.filter((e) => {
       if (role === "player" && !e.isPublicToPlayers) return false;
       return true;
     });
 
-    const secrets = await ctx.db.query("entitySecrets").collect();
-    const attributes = await ctx.db.query("entityAttributes").collect();
+    const results = [];
+    for (const ent of entities) {
+      const entSecrets = await ctx.db
+        .query("entitySecrets")
+        .withIndex("by_entity", (q) => q.eq("entityId", ent._id))
+        .collect();
+      const entAttrs = await ctx.db
+        .query("entityAttributes")
+        .withIndex("by_entity", (q) => q.eq("entityId", ent._id))
+        .collect();
 
-    return entities.map((ent) => ({
-      ...ent,
-      id: ent._id,
-      secrets: secrets
-        .filter((s) => {
-          if (s.entityId !== ent._id) return false;
-          // Névoa de Guerra no servidor: jogadores só recebem segredos revelados
-          if (role === "player" && !s.isRevealed) return false;
-          return true;
-        })
-        .map((s) => ({
-          id: s._id,
-          title: s.title,
-          content: s.content,
-          isRevealed: s.isRevealed,
-          revealedAt: s.revealedAt,
-        })),
-      attributes: attributes
-        .filter((a) => a.entityId === ent._id)
-        .map((a) => ({
+      results.push({
+        ...ent,
+        id: ent._id,
+        secrets: entSecrets
+          .filter((s) => !(role === "player" && !s.isRevealed))
+          .map((s) => ({
+            id: s._id,
+            title: s.title,
+            content: s.content,
+            isRevealed: s.isRevealed,
+            revealedAt: s.revealedAt,
+          })),
+        attributes: entAttrs.map((a) => ({
           id: a._id,
           label: a.label,
           value: a.value,
           max: a.max,
           category: a.category,
         })),
-    }));
+      });
+    }
+
+    return results;
   },
 });
 
@@ -168,7 +177,8 @@ export const update = mutation({
     const entityId = ctx.db.normalizeId("entities", args.id);
     if (!entityId) return;
     const existing = await ctx.db.get(entityId);
-    await assertDmPermission(ctx, args.sessionToken, existing?.campaignId);
+    if (!existing) return;
+    await assertDmPermission(ctx, args.sessionToken, existing.campaignId);
 
     const { id: _, sessionToken: __, ...updates } = args;
     await ctx.db.patch(entityId, updates);
@@ -184,7 +194,8 @@ export const remove = mutation({
     const entityId = ctx.db.normalizeId("entities", args.id);
     if (!entityId) return;
     const existing = await ctx.db.get(entityId);
-    await assertDmPermission(ctx, args.sessionToken, existing?.campaignId);
+    if (!existing) return;
+    await assertDmPermission(ctx, args.sessionToken, existing.campaignId);
 
     const secrets = await ctx.db
       .query("entitySecrets")
@@ -258,8 +269,10 @@ export const addSecret = mutation({
   },
   handler: async (ctx, args) => {
     const entId = ctx.db.normalizeId("entities", args.entityId);
-    const ent = entId ? await ctx.db.get(entId) : null;
-    await assertDmPermission(ctx, args.sessionToken, ent?.campaignId);
+    if (!entId) throw new Error("Entidade ainda não sincronizada na nuvem.");
+    const ent = await ctx.db.get(entId);
+    if (!ent) throw new Error("Entidade não encontrada.");
+    await assertDmPermission(ctx, args.sessionToken, ent.campaignId);
     return await ctx.db.insert("entitySecrets", {
       entityId: args.entityId,
       title: args.title,
@@ -280,9 +293,11 @@ export const revealSecret = mutation({
     const secId = ctx.db.normalizeId("entitySecrets", args.secretId);
     if (!secId) return;
     const sec = await ctx.db.get(secId);
-    const entId = sec ? ctx.db.normalizeId("entities", sec.entityId) : null;
+    if (!sec) return;
+    const entId = ctx.db.normalizeId("entities", sec.entityId);
     const ent = entId ? await ctx.db.get(entId) : null;
-    await assertDmPermission(ctx, args.sessionToken, ent?.campaignId);
+    if (!ent) return;
+    await assertDmPermission(ctx, args.sessionToken, ent.campaignId);
     await ctx.db.patch(secId, {
       isRevealed: args.isRevealed,
       revealedAt: args.revealedAt,
@@ -299,9 +314,11 @@ export const removeSecret = mutation({
     const secId = ctx.db.normalizeId("entitySecrets", args.secretId);
     if (!secId) return;
     const sec = await ctx.db.get(secId);
-    const entId = sec ? ctx.db.normalizeId("entities", sec.entityId) : null;
+    if (!sec) return;
+    const entId = ctx.db.normalizeId("entities", sec.entityId);
     const ent = entId ? await ctx.db.get(entId) : null;
-    await assertDmPermission(ctx, args.sessionToken, ent?.campaignId);
+    if (!ent) return;
+    await assertDmPermission(ctx, args.sessionToken, ent.campaignId);
     await ctx.db.delete(secId);
   },
 });
@@ -315,8 +332,14 @@ export const addAttribute = mutation({
     category: v.optional(
       v.union(v.literal("stat"), v.literal("resource"), v.literal("meta"))
     ),
+    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const entId = ctx.db.normalizeId("entities", args.entityId);
+    if (!entId) throw new Error("Entidade ainda não sincronizada na nuvem.");
+    const ent = await ctx.db.get(entId);
+    if (!ent) throw new Error("Entidade não encontrada.");
+    await assertDmPermission(ctx, args.sessionToken, ent.campaignId);
     return await ctx.db.insert("entityAttributes", {
       entityId: args.entityId,
       label: args.label,
@@ -331,19 +354,35 @@ export const updateAttribute = mutation({
   args: {
     attributeId: v.string(),
     value: v.union(v.string(), v.number()),
+    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const attrId = ctx.db.normalizeId("entityAttributes", args.attributeId);
     if (!attrId) return;
+    const attr = await ctx.db.get(attrId);
+    if (!attr) return;
+    const entId = ctx.db.normalizeId("entities", attr.entityId);
+    const ent = entId ? await ctx.db.get(entId) : null;
+    if (!ent) return;
+    await assertDmPermission(ctx, args.sessionToken, ent.campaignId);
     await ctx.db.patch(attrId, { value: args.value });
   },
 });
 
 export const removeAttribute = mutation({
-  args: { attributeId: v.string() },
+  args: {
+    attributeId: v.string(),
+    sessionToken: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     const attrId = ctx.db.normalizeId("entityAttributes", args.attributeId);
     if (!attrId) return;
+    const attr = await ctx.db.get(attrId);
+    if (!attr) return;
+    const entId = ctx.db.normalizeId("entities", attr.entityId);
+    const ent = entId ? await ctx.db.get(entId) : null;
+    if (!ent) return;
+    await assertDmPermission(ctx, args.sessionToken, ent.campaignId);
     await ctx.db.delete(attrId);
   },
 });

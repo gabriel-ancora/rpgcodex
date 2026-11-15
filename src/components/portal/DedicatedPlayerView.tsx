@@ -47,13 +47,14 @@ export const DedicatedPlayerView: React.FC = () => {
 
   const activeCampaign =
     campaigns.find((c) => c.id === activeCampaignId) || campaigns[0];
-  const myCampaignSheets = characterSheets.filter(
-    (c) =>
-      (!c.playerId || c.playerId === currentUser?.id) &&
-      (!activeCampaign || !c.campaignId || c.campaignId === activeCampaign.id)
+  const myOwnSheets = characterSheets.filter(
+    (c) => !c.playerId || c.playerId === currentUser?.id
+  );
+  const myCampaignSheets = myOwnSheets.filter(
+    (c) => !activeCampaign || !c.campaignId || c.campaignId === activeCampaign.id
   );
   const selectableSheets =
-    myCampaignSheets.length > 0 ? myCampaignSheets : characterSheets;
+    myCampaignSheets.length > 0 ? myCampaignSheets : myOwnSheets;
   const activeChar =
     selectableSheets.find((c) => c.id === activeCharacterId) ||
     selectableSheets[0];

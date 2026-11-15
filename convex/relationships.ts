@@ -25,17 +25,17 @@ export const list = query({
       campaignId: normId,
     });
 
-    const allRelationships = await ctx.db.query("relationships").collect();
-    const relationships = allRelationships.filter((r) => {
-      if (!matchesCampaign(r.campaignId, normId)) return false;
-      if (role === "player" && r.isSecret && !r.isRevealed) return false;
-      return true;
-    });
+    const relationships = (
+      await ctx.db
+        .query("relationships")
+        .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
+        .collect()
+    ).filter((r) => !(role === "player" && r.isSecret && !r.isRevealed));
 
-    const allPositions = await ctx.db.query("graphPositions").collect();
-    const positions = allPositions.filter((p) =>
-      matchesCampaign(p.campaignId, normId)
-    );
+    const positions = await ctx.db
+      .query("graphPositions")
+      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
+      .collect();
 
     const manualNodes = await ctx.db
       .query("manualGraphNodes")
@@ -162,10 +162,12 @@ export const updatePosition = mutation({
     entityId: v.string(),
     x: v.number(),
     y: v.number(),
+    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const normId = normalizeCampaignId(args.campaignId);
     if (!normId) return;
+    await assertDmPermission(ctx, args.sessionToken, normId);
 
     // Se for um nó manual, atualiza direto em manualGraphNodes
     const manualId = ctx.db.normalizeId("manualGraphNodes", args.entityId);

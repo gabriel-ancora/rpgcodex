@@ -78,6 +78,7 @@ export const ConvexSyncBridge: React.FC = () => {
     api.characters.list,
     hasSession && (shouldIncludeOwnSheets || Boolean(activeCampaignId))
       ? {
+          sessionToken: sessionToken || undefined,
           campaignId: activeCampaignId || undefined,
           playerId: currentUser?.id,
           includeAllPlayerSheets: shouldIncludeOwnSheets,

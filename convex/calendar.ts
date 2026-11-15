@@ -12,8 +12,10 @@ export const get = query({
   handler: async (ctx, args) => {
     const normId = normalizeCampaignId(args.campaignId);
     if (!normId) return null;
-    const all = await ctx.db.query("calendars").collect();
-    const matched = all.find((c) => matchesCampaign(c.campaignId, normId));
+    const matched = await ctx.db
+      .query("calendars")
+      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
+      .first();
     return matched ?? null;
   },
 });
@@ -117,10 +119,13 @@ export const advanceDays = mutation({
   },
   handler: async (ctx, args) => {
     await assertDmPermission(ctx, args.sessionToken, args.campaignId);
-    const all = await ctx.db.query("calendars").collect();
-    const cal = all.find((c) =>
-      matchesCampaign(c.campaignId, args.campaignId)
-    );
+    const normId = normalizeCampaignId(args.campaignId);
+    const cal = normId
+      ? await ctx.db
+          .query("calendars")
+          .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
+          .first()
+      : null;
     if (!cal) return;
 
     let day = cal.currentDay + args.days;
@@ -168,13 +173,12 @@ export const listEvents = query({
       campaignId: normId,
     });
 
-    const allEvents = await ctx.db.query("timelineEvents").collect();
-    return allEvents
-      .filter((e) => {
-        if (!matchesCampaign(e.campaignId, normId)) return false;
-        if (role === "player" && e.isSecret && !e.isRevealed) return false;
-        return true;
-      })
+    const events = await ctx.db
+      .query("timelineEvents")
+      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
+      .collect();
+    return events
+      .filter((e) => !(role === "player" && e.isSecret && !e.isRevealed))
       .sort((a, b) => {
         if (a.sortOrder !== undefined && b.sortOrder !== undefined) {
           return a.sortOrder - b.sortOrder;

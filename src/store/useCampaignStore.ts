@@ -341,6 +341,9 @@ interface CampaignState {
   removeStrongholdUpgrade: (upgradeId: string) => void;
 }
 
+const formatCloudError = (err: unknown, fallback: string) =>
+  err instanceof Error && err.message ? err.message : fallback;
+
 const getEmptyCampaignScopedState = () => ({
   selectedEntityId: '',
   quickInspectEntityId: null as string | null,
@@ -473,19 +476,11 @@ export const useCampaignStore = create<CampaignState>()(
           nextRoute = '/dm-dashboard';
         }
 
-        const token = state.sessionToken;
-        if (token) {
-          convexClient
-            .mutation(api.auth.switchRole, { sessionToken: token, role: mode })
-            .catch(() => {});
-        }
-
-        set((s) => ({
+        set({
           workspaceMode: mode,
           currentRoute: nextRoute,
           viewRole: mode === 'dm' ? 'gm' : 'player',
-          currentUser: s.currentUser ? { ...s.currentUser, role: mode } : s.currentUser,
-        }));
+        });
 
         try {
           window.history.pushState({}, '', nextRoute);
@@ -1022,6 +1017,7 @@ export const useCampaignStore = create<CampaignState>()(
           for (const j of backup.journal || []) {
             await convexClient.mutation(api.portal.addJournal, {
               campaignId: restoredCampId,
+              sessionToken: token,
               sessionNumber: j.sessionNumber,
               title: j.title,
               inGameDate: j.inGameDate,
@@ -1034,6 +1030,7 @@ export const useCampaignStore = create<CampaignState>()(
           if (backup.partyResources) {
             await convexClient.mutation(api.portal.replaceResources, {
               campaignId: restoredCampId,
+              sessionToken: token,
               gold: backup.partyResources.gold,
               silver: backup.partyResources.silver,
               copper: backup.partyResources.copper,
@@ -1047,6 +1044,7 @@ export const useCampaignStore = create<CampaignState>()(
 
           for (const cs of backup.characterSheets || []) {
             await convexClient.mutation(api.characters.create, {
+              sessionToken: token,
               campaignId: restoredCampId,
               playerId: cs.playerId || get().currentUser?.id || '',
               playerName: cs.playerName,
@@ -1451,14 +1449,19 @@ export const useCampaignStore = create<CampaignState>()(
               convexClient
                 .mutation(api.relationships.updatePosition, {
                   campaignId: get().activeCampaignId,
+                  sessionToken: get().sessionToken || undefined,
                   entityId: convexId,
                   x: initX,
                   y: initY,
                 })
-                .catch(() => {});
+                .catch((err) =>
+                  get().showToast(formatCloudError(err, 'Erro ao salvar posição no grafo.'))
+                );
             }
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao salvar entidade na nuvem.'))
+          );
 
         get().showToast(`Entidade ${prefix}${newEntity.handle} salva no Códice!`);
         return newEntity;
@@ -1485,7 +1488,9 @@ export const useCampaignStore = create<CampaignState>()(
             imageUrl: updates.imageUrl,
             updatedAt: new Date().toISOString(),
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar entidade na nuvem.'))
+          );
       },
 
       deleteEntity: (id) => {
@@ -1508,7 +1513,9 @@ export const useCampaignStore = create<CampaignState>()(
             id,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao excluir entidade na nuvem.'))
+          );
       },
 
       togglePinEntity: (id) => {
@@ -1526,7 +1533,9 @@ export const useCampaignStore = create<CampaignState>()(
             id,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao fixar entrada na nuvem.'))
+          );
 
         get().showToast(
           nextPinned
@@ -1561,7 +1570,9 @@ export const useCampaignStore = create<CampaignState>()(
             revealedAt: reveal ? stamp : undefined,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao alterar segredo na nuvem.'))
+          );
 
         get().showToast(
           reveal
@@ -1598,7 +1609,25 @@ export const useCampaignStore = create<CampaignState>()(
             content,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .then((cloudId) => {
+            if (cloudId) {
+              set((s) => ({
+                entities: s.entities.map((e) =>
+                  e.id === entityId
+                    ? {
+                        ...e,
+                        secrets: e.secrets.map((sec) =>
+                          sec.id === tempId ? { ...sec, id: cloudId } : sec
+                        ),
+                      }
+                    : e
+                ),
+              }));
+            }
+          })
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao adicionar segredo na nuvem.'))
+          );
       },
 
       deleteEntitySecret: (entityId, secretId) => {
@@ -1615,10 +1644,13 @@ export const useCampaignStore = create<CampaignState>()(
             secretId,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao remover segredo na nuvem.'))
+          );
       },
 
       addEntityAttribute: (entityId, label, value) => {
+        const tempId = `attr-${Date.now()}`;
         set((state) => ({
           entities: state.entities.map((e) =>
             e.id === entityId
@@ -1626,7 +1658,7 @@ export const useCampaignStore = create<CampaignState>()(
                   ...e,
                   attributes: [
                     ...e.attributes,
-                    { id: `attr-${Date.now()}`, label, value, category: 'stat' },
+                    { id: tempId, label, value, category: 'stat' },
                   ],
                 }
               : e
@@ -1634,8 +1666,32 @@ export const useCampaignStore = create<CampaignState>()(
         }));
 
         convexClient
-          .mutation(api.entities.addAttribute, { entityId, label, value, category: 'stat' })
-          .catch(() => {});
+          .mutation(api.entities.addAttribute, {
+            entityId,
+            label,
+            value,
+            category: 'stat',
+            sessionToken: get().sessionToken || undefined,
+          })
+          .then((cloudId) => {
+            if (cloudId) {
+              set((s) => ({
+                entities: s.entities.map((e) =>
+                  e.id === entityId
+                    ? {
+                        ...e,
+                        attributes: e.attributes.map((a) =>
+                          a.id === tempId ? { ...a, id: cloudId } : a
+                        ),
+                      }
+                    : e
+                ),
+              }));
+            }
+          })
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao adicionar atributo na nuvem.'))
+          );
       },
 
       updateEntityAttribute: (entityId, attrId, value) => {
@@ -1653,8 +1709,14 @@ export const useCampaignStore = create<CampaignState>()(
         }));
 
         convexClient
-          .mutation(api.entities.updateAttribute, { attributeId: attrId, value })
-          .catch(() => {});
+          .mutation(api.entities.updateAttribute, {
+            attributeId: attrId,
+            value,
+            sessionToken: get().sessionToken || undefined,
+          })
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar atributo na nuvem.'))
+          );
       },
 
       deleteEntityAttribute: (entityId, attrId) => {
@@ -1669,7 +1731,14 @@ export const useCampaignStore = create<CampaignState>()(
           ),
         }));
 
-        convexClient.mutation(api.entities.removeAttribute, { attributeId: attrId }).catch(() => {});
+        convexClient
+          .mutation(api.entities.removeAttribute, {
+            attributeId: attrId,
+            sessionToken: get().sessionToken || undefined,
+          })
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao remover atributo na nuvem.'))
+          );
       },
 
       // ======================================================================
@@ -1701,11 +1770,14 @@ export const useCampaignStore = create<CampaignState>()(
         convexClient
           .mutation(api.relationships.updatePosition, {
             campaignId: get().activeCampaignId,
+            sessionToken: get().sessionToken || undefined,
             entityId,
             x,
             y,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao salvar posição no grafo na nuvem.'))
+          );
       },
 
       addManualGraphNode: (node) => {
@@ -1738,7 +1810,9 @@ export const useCampaignStore = create<CampaignState>()(
               }));
             }
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao salvar nó no grafo na nuvem.'))
+          );
 
         get().showToast(`Nó "${node.label}" sincronizado no Grafo!`);
       },
@@ -1756,7 +1830,9 @@ export const useCampaignStore = create<CampaignState>()(
             id,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao remover nó do grafo na nuvem.'))
+          );
 
         get().showToast('Nó removido do Grafo.');
       },
@@ -1779,7 +1855,18 @@ export const useCampaignStore = create<CampaignState>()(
             isSecret: Boolean(edge.isSecret),
             isRevealed: edge.isRevealed,
           })
-          .catch(() => {});
+          .then((cloudId) => {
+            if (cloudId) {
+              set((s) => ({
+                relationships: s.relationships.map((r) =>
+                  r.id === tempId ? { ...r, id: cloudId } : r
+                ),
+              }));
+            }
+          })
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao criar conexão no grafo na nuvem.'))
+          );
 
         get().showToast(`Conexão "${edge.label}" criada no Grafo!`);
       },
@@ -1798,7 +1885,9 @@ export const useCampaignStore = create<CampaignState>()(
             type,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar conexão na nuvem.'))
+          );
 
         get().showToast('Rótulo da conexão atualizado!');
       },
@@ -1813,7 +1902,9 @@ export const useCampaignStore = create<CampaignState>()(
             id,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao remover conexão na nuvem.'))
+          );
         get().showToast('Conexão removida.');
       },
 
@@ -1829,7 +1920,9 @@ export const useCampaignStore = create<CampaignState>()(
             id,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar visibilidade da conexão na nuvem.'))
+          );
       },
 
       // ======================================================================
@@ -1883,7 +1976,9 @@ export const useCampaignStore = create<CampaignState>()(
               }));
             }
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao criar mapa na nuvem.'))
+          );
 
         get().showToast(`Mapa "${name}" salvo na nuvem!`);
       },
@@ -1902,7 +1997,9 @@ export const useCampaignStore = create<CampaignState>()(
             id,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao remover mapa na nuvem.'))
+          );
         get().showToast('Mapa removido.');
       },
 
@@ -1952,7 +2049,9 @@ export const useCampaignStore = create<CampaignState>()(
               }));
             }
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao adicionar marcador no mapa na nuvem.'))
+          );
 
         get().showToast(`Marcador "${pin.label}" fixado no mapa!`);
       },
@@ -1989,7 +2088,9 @@ export const useCampaignStore = create<CampaignState>()(
             isSecret: updates.isSecret,
             isRevealed: updates.isRevealed,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar marcador no mapa na nuvem.'))
+          );
       },
 
       deleteMapPin: (mapId, pinId) => {
@@ -2006,7 +2107,9 @@ export const useCampaignStore = create<CampaignState>()(
             pinId,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao remover marcador do mapa na nuvem.'))
+          );
       },
 
       toggleRevealMapPin: (mapId, pinId) => {
@@ -2030,7 +2133,9 @@ export const useCampaignStore = create<CampaignState>()(
             pinId,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao alterar visibilidade do pin na nuvem.'))
+          );
         get().showToast('Visibilidade do Pin atualizada para os jogadores!');
       },
 
@@ -2053,7 +2158,9 @@ export const useCampaignStore = create<CampaignState>()(
             shapes: nextShapes,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao salvar camada vetorial na nuvem.'))
+          );
         get().showToast(`Camada vetorial "${shape.label}" sincronizada no mapa!`);
       },
 
@@ -2074,7 +2181,9 @@ export const useCampaignStore = create<CampaignState>()(
             shapes: nextShapes,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar camada vetorial na nuvem.'))
+          );
       },
 
       deleteMapShape: (mapId, shapeId) => {
@@ -2092,7 +2201,9 @@ export const useCampaignStore = create<CampaignState>()(
             shapes: nextShapes,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao remover camada vetorial na nuvem.'))
+          );
         get().showToast('Desenho/Território removido do mapa.');
       },
 
@@ -2139,7 +2250,9 @@ export const useCampaignStore = create<CampaignState>()(
             sessionToken: get().sessionToken || undefined,
             days,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao avançar calendário na nuvem.'))
+          );
       },
 
       updateCalendarConfig: (updates) => {
@@ -2173,7 +2286,9 @@ export const useCampaignStore = create<CampaignState>()(
             })),
             availableEras: updates.availableEras,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar calendário na nuvem.'))
+          );
       },
 
       addTimelineEvent: (ev) => {
@@ -2207,7 +2322,18 @@ export const useCampaignStore = create<CampaignState>()(
             isSecret: Boolean(ev.isSecret),
             isRevealed: Boolean(ev.isRevealed),
           })
-          .catch(() => {});
+          .then((cloudId) => {
+            if (cloudId) {
+              set((s) => ({
+                timeline: s.timeline.map((item) =>
+                  item.id === tempId ? { ...item, id: cloudId } : item
+                ),
+              }));
+            }
+          })
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao criar evento histórico na nuvem.'))
+          );
 
         get().showToast(`Marco histórico "${ev.title}" registrado!`);
       },
@@ -2236,7 +2362,9 @@ export const useCampaignStore = create<CampaignState>()(
             isSecret: updates.isSecret,
             isRevealed: updates.isRevealed,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar evento histórico na nuvem.'))
+          );
 
         get().showToast('Evento da Linha do Tempo atualizado!');
       },
@@ -2262,7 +2390,9 @@ export const useCampaignStore = create<CampaignState>()(
               sessionToken: get().sessionToken || undefined,
               orderedIds,
             })
-            .catch(() => {});
+            .catch((err) =>
+              get().showToast(formatCloudError(err, 'Erro ao reordenar linha do tempo na nuvem.'))
+            );
         }
       },
 
@@ -2278,7 +2408,9 @@ export const useCampaignStore = create<CampaignState>()(
             eventId: id,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao alterar visibilidade do evento na nuvem.'))
+          );
       },
 
       deleteTimelineEvent: (id) => {
@@ -2291,7 +2423,9 @@ export const useCampaignStore = create<CampaignState>()(
             eventId: id,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao remover evento histórico na nuvem.'))
+          );
       },
 
       // ======================================================================
@@ -2320,7 +2454,9 @@ export const useCampaignStore = create<CampaignState>()(
             clockFilled: filled,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar relógio da frente na nuvem.'))
+          );
       },
 
       advanceIgnoredFronts: () => {
@@ -2345,7 +2481,9 @@ export const useCampaignStore = create<CampaignState>()(
             campaignId: get().activeCampaignId,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao avançar frentes na nuvem.'))
+          );
         get().showToast('Todas as Frentes Ativas avançaram +1 segmento!');
       },
 
@@ -2369,7 +2507,9 @@ export const useCampaignStore = create<CampaignState>()(
             portentId,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar presságio na nuvem.'))
+          );
       },
 
       addThreatFront: (front) => {
@@ -2394,7 +2534,16 @@ export const useCampaignStore = create<CampaignState>()(
             status: front.status,
             isSecret: Boolean(front.isSecret),
           })
-          .catch(() => {});
+          .then((cloudId) => {
+            if (cloudId) {
+              set((s) => ({
+                fronts: s.fronts.map((f) => (f.id === tempId ? { ...f, id: cloudId } : f)),
+              }));
+            }
+          })
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao criar frente de ameaça na nuvem.'))
+          );
 
         get().showToast(`Nova Frente de Ameaça "${front.name}" criada!`);
       },
@@ -2422,7 +2571,9 @@ export const useCampaignStore = create<CampaignState>()(
             status: updates.status,
             isSecret: updates.isSecret,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar frente de ameaça na nuvem.'))
+          );
 
         get().showToast('Frente de Ameaça atualizada!');
       },
@@ -2437,7 +2588,9 @@ export const useCampaignStore = create<CampaignState>()(
             frontId,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao remover frente de ameaça na nuvem.'))
+          );
       },
 
       // ======================================================================
@@ -2451,8 +2604,15 @@ export const useCampaignStore = create<CampaignState>()(
         }));
 
         convexClient
-          .mutation(api.plots.updateScenePosition, { sceneId: nodeId, x, y })
-          .catch(() => {});
+          .mutation(api.plots.updateScenePosition, {
+            sceneId: nodeId,
+            x,
+            y,
+            sessionToken: get().sessionToken || undefined,
+          })
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao salvar posição da cena na nuvem.'))
+          );
       },
 
       updateMysteryNodeStatus: (nodeId, status) => {
@@ -2468,7 +2628,9 @@ export const useCampaignStore = create<CampaignState>()(
             status,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar status da cena na nuvem.'))
+          );
       },
 
       toggleMysteryClue: (nodeId, clueId) => {
@@ -2491,7 +2653,9 @@ export const useCampaignStore = create<CampaignState>()(
             clueId,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar pista na nuvem.'))
+          );
       },
 
       addMysteryNode: (title, subtitle, locationHandle, description) => {
@@ -2528,7 +2692,21 @@ export const useCampaignStore = create<CampaignState>()(
             y,
             description,
           })
-          .catch(() => {});
+          .then((cloudId) => {
+            if (cloudId) {
+              set((s) => ({
+                mysteryNodes: s.mysteryNodes.map((n) => ({
+                  ...(n.id === tempId ? { ...n, id: cloudId } : n),
+                  clues: n.clues.map((c) =>
+                    c.targetSceneId === tempId ? { ...c, targetSceneId: cloudId } : c
+                  ),
+                })),
+              }));
+            }
+          })
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao criar nó de mistério na nuvem.'))
+          );
       },
 
       addMysteryClue: (nodeId, name, description, targetSceneId, type) => {
@@ -2562,7 +2740,9 @@ export const useCampaignStore = create<CampaignState>()(
             type,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao adicionar pista na nuvem.'))
+          );
       },
 
       deleteMysteryNode: (nodeId) => {
@@ -2575,7 +2755,9 @@ export const useCampaignStore = create<CampaignState>()(
             sceneId: nodeId,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao remover nó de mistério na nuvem.'))
+          );
       },
 
       recordGeneratedItem: (item) =>
@@ -2642,7 +2824,18 @@ export const useCampaignStore = create<CampaignState>()(
             text,
             timestamp,
           })
-          .catch(() => {});
+          .then((cloudId) => {
+            if (cloudId) {
+              set((s) => ({
+                scratchpad: s.scratchpad.map((line) =>
+                  line.id === tempId ? { ...line, id: cloudId } : line
+                ),
+              }));
+            }
+          })
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao salvar anotação rápida na nuvem.'))
+          );
       },
 
       deleteScratchpadLine: (id) => {
@@ -2655,7 +2848,9 @@ export const useCampaignStore = create<CampaignState>()(
             id,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao remover anotação rápida na nuvem.'))
+          );
       },
 
       convertScratchpadLineToEntity: (lineId, category) => {
@@ -2691,7 +2886,9 @@ export const useCampaignStore = create<CampaignState>()(
             convertedEntityHandle: handleString,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao marcar nota convertida na nuvem.'))
+          );
       },
 
       adjustCombatantHp: (id, delta) => {
@@ -2703,7 +2900,15 @@ export const useCampaignStore = create<CampaignState>()(
           ),
         }));
 
-        convexClient.mutation(api.session.adjustHp, { id, delta }).catch(() => {});
+        convexClient
+          .mutation(api.session.adjustHp, {
+            id,
+            delta,
+            sessionToken: get().sessionToken || undefined,
+          })
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar PV do combatente na nuvem.'))
+          );
       },
 
       toggleCombatantCondition: (id, condition) => {
@@ -2720,7 +2925,15 @@ export const useCampaignStore = create<CampaignState>()(
           }),
         }));
 
-        convexClient.mutation(api.session.toggleCondition, { id, condition }).catch(() => {});
+        convexClient
+          .mutation(api.session.toggleCondition, {
+            id,
+            condition,
+            sessionToken: get().sessionToken || undefined,
+          })
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar condição na nuvem.'))
+          );
       },
 
       nextCombatTurn: () => {
@@ -2738,7 +2951,9 @@ export const useCampaignStore = create<CampaignState>()(
             campaignId: get().activeCampaignId,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao avançar turno na nuvem.'))
+          );
       },
 
       rollAllInitiatives: () => {
@@ -2761,7 +2976,9 @@ export const useCampaignStore = create<CampaignState>()(
             campaignId: get().activeCampaignId,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao rolar iniciativas na nuvem.'))
+          );
 
         get().showToast('Iniciativas roladas e sincronizadas para toda a mesa!');
       },
@@ -2777,6 +2994,7 @@ export const useCampaignStore = create<CampaignState>()(
         convexClient
           .mutation(api.session.addCombatant, {
             campaignId: get().activeCampaignId,
+            sessionToken: get().sessionToken || undefined,
             name: c.name,
             type: c.type,
             initiative: c.initiative,
@@ -2787,7 +3005,18 @@ export const useCampaignStore = create<CampaignState>()(
             notes: c.notes,
             entityId: c.entityId,
           })
-          .catch(() => {});
+          .then((cloudId) => {
+            if (cloudId) {
+              set((s) => ({
+                combatants: s.combatants.map((item) =>
+                  item.id === tempId ? { ...item, id: cloudId } : item
+                ),
+              }));
+            }
+          })
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao adicionar combatente na nuvem.'))
+          );
       },
 
       removeCombatant: (id) => {
@@ -2796,7 +3025,14 @@ export const useCampaignStore = create<CampaignState>()(
           activeCombatTurnIndex: 0,
         }));
 
-        convexClient.mutation(api.session.removeCombatant, { id }).catch(() => {});
+        convexClient
+          .mutation(api.session.removeCombatant, {
+            id,
+            sessionToken: get().sessionToken || undefined,
+          })
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao remover combatente na nuvem.'))
+          );
       },
 
       clearCombatants: () => {
@@ -2811,7 +3047,9 @@ export const useCampaignStore = create<CampaignState>()(
             campaignId: get().activeCampaignId,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao limpar combate na nuvem.'))
+          );
         get().showToast('Encontro de combate limpo.');
       },
 
@@ -2850,6 +3088,7 @@ export const useCampaignStore = create<CampaignState>()(
           convexClient
             .mutation(api.session.addDiceRoll, {
               campaignId: get().activeCampaignId,
+              sessionToken: get().sessionToken || undefined,
               rollerName: entry.rollerName,
               formula: entry.formula,
               rolls: entry.rolls,
@@ -2860,7 +3099,9 @@ export const useCampaignStore = create<CampaignState>()(
               isCrit: entry.isCrit,
               isFumble: entry.isFumble,
             })
-            .catch(() => {});
+            .catch((err) =>
+              get().showToast(formatCloudError(err, 'Erro ao sincronizar rolagem de dados na nuvem.'))
+            );
         }
 
         return entry;
@@ -2872,8 +3113,11 @@ export const useCampaignStore = create<CampaignState>()(
           convexClient
             .mutation(api.session.clearDiceRolls, {
               campaignId: get().activeCampaignId,
+              sessionToken: get().sessionToken || undefined,
             })
-            .catch(() => {});
+            .catch((err) =>
+              get().showToast(formatCloudError(err, 'Erro ao limpar histórico de dados na nuvem.'))
+            );
         }
       },
 
@@ -2894,7 +3138,15 @@ export const useCampaignStore = create<CampaignState>()(
           ),
         }));
 
-        convexClient.mutation(api.portal.toggleObjective, { questId, objectiveId }).catch(() => {});
+        convexClient
+          .mutation(api.portal.toggleObjective, {
+            questId,
+            objectiveId,
+            sessionToken: get().sessionToken || undefined,
+          })
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar objetivo da missão na nuvem.'))
+          );
       },
 
       updateQuestStatus: (questId, status) => {
@@ -2910,7 +3162,9 @@ export const useCampaignStore = create<CampaignState>()(
             status,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar status da missão na nuvem.'))
+          );
       },
 
       addQuest: (q) => {
@@ -2934,7 +3188,18 @@ export const useCampaignStore = create<CampaignState>()(
             reward: q.reward,
             objectives: q.objectives,
           })
-          .catch(() => {});
+          .then((cloudId) => {
+            if (cloudId) {
+              set((s) => ({
+                quests: s.quests.map((item) =>
+                  item.id === tempId ? { ...item, id: cloudId } : item
+                ),
+              }));
+            }
+          })
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao criar missão na nuvem.'))
+          );
 
         get().showToast(`Missão "${q.title}" adicionada ao Mural!`);
       },
@@ -2949,7 +3214,9 @@ export const useCampaignStore = create<CampaignState>()(
             questId,
             sessionToken: get().sessionToken || undefined,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao remover missão na nuvem.'))
+          );
         get().showToast('Missão removida do mural.');
       },
 
@@ -2962,6 +3229,7 @@ export const useCampaignStore = create<CampaignState>()(
         convexClient
           .mutation(api.portal.addJournal, {
             campaignId: get().activeCampaignId,
+            sessionToken: get().sessionToken || undefined,
             sessionNumber: entry.sessionNumber,
             title: entry.title,
             inGameDate: entry.inGameDate,
@@ -2969,7 +3237,18 @@ export const useCampaignStore = create<CampaignState>()(
             content: entry.content,
             isPublic: Boolean(entry.isPublic),
           })
-          .catch(() => {});
+          .then((cloudId) => {
+            if (cloudId) {
+              set((s) => ({
+                journal: s.journal.map((item) =>
+                  item.id === tempId ? { ...item, id: cloudId } : item
+                ),
+              }));
+            }
+          })
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao salvar crônica no diário na nuvem.'))
+          );
 
         get().showToast(`Crônica da Sessão #${entry.sessionNumber} salva no Diário Coletivo!`);
       },
@@ -2982,11 +3261,14 @@ export const useCampaignStore = create<CampaignState>()(
         convexClient
           .mutation(api.portal.updateJournal, {
             journalId: id,
+            sessionToken: get().sessionToken || undefined,
             title: updates.title,
             content: updates.content,
             isPublic: updates.isPublic,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar crônica na nuvem.'))
+          );
 
         get().showToast('Crônica atualizada no Diário Coletivo!');
       },
@@ -2996,7 +3278,14 @@ export const useCampaignStore = create<CampaignState>()(
           journal: state.journal.filter((j) => j.id !== journalId),
         }));
 
-        convexClient.mutation(api.portal.removeJournal, { journalId }).catch(() => {});
+        convexClient
+          .mutation(api.portal.removeJournal, {
+            journalId,
+            sessionToken: get().sessionToken || undefined,
+          })
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao remover crônica na nuvem.'))
+          );
         get().showToast('Crônica removida do diário.');
       },
 
@@ -3018,6 +3307,7 @@ export const useCampaignStore = create<CampaignState>()(
         convexClient
           .mutation(api.portal.addPersonalNote, {
             campaignId: get().activeCampaignId,
+            sessionToken: get().sessionToken || undefined,
             playerId: newNote.playerId,
             playerName: newNote.playerName,
             characterName: newNote.characterName,
@@ -3035,7 +3325,9 @@ export const useCampaignStore = create<CampaignState>()(
               }));
             }
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao salvar anotação pessoal na nuvem.'))
+          );
 
         get().showToast('Anotação sincronizada no Diário Pessoal!');
       },
@@ -3050,12 +3342,15 @@ export const useCampaignStore = create<CampaignState>()(
         convexClient
           .mutation(api.portal.updatePersonalNote, {
             id,
+            sessionToken: get().sessionToken || undefined,
             title: updates.title,
             content: updates.content,
             category: updates.category,
             sharedWithDm: updates.sharedWithDm,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar anotação pessoal na nuvem.'))
+          );
 
         get().showToast('Nota pessoal atualizada.');
       },
@@ -3065,7 +3360,14 @@ export const useCampaignStore = create<CampaignState>()(
           personalJournalNotes: state.personalJournalNotes.filter((n) => n.id !== id),
         }));
 
-        convexClient.mutation(api.portal.removePersonalNote, { id }).catch(() => {});
+        convexClient
+          .mutation(api.portal.removePersonalNote, {
+            id,
+            sessionToken: get().sessionToken || undefined,
+          })
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao remover anotação pessoal na nuvem.'))
+          );
         get().showToast('Nota pessoal excluída.');
       },
 
@@ -3081,9 +3383,12 @@ export const useCampaignStore = create<CampaignState>()(
         convexClient
           .mutation(api.portal.updatePersonalNote, {
             id,
+            sessionToken: get().sessionToken || undefined,
             sharedWithDm: nextShared,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar acesso do Mestre na nuvem.'))
+          );
 
         get().showToast('Permissão de leitura do Mestre atualizada para esta nota!');
       },
@@ -3099,10 +3404,13 @@ export const useCampaignStore = create<CampaignState>()(
         convexClient
           .mutation(api.portal.updateCurrency, {
             campaignId: get().activeCampaignId,
+            sessionToken: get().sessionToken || undefined,
             field: type,
             delta,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar tesouro do grupo na nuvem.'))
+          );
       },
 
       addPartyInventoryItem: (name, quantity, holder, category, notes) => {
@@ -3120,13 +3428,28 @@ export const useCampaignStore = create<CampaignState>()(
         convexClient
           .mutation(api.portal.addInventoryItem, {
             campaignId: get().activeCampaignId,
+            sessionToken: get().sessionToken || undefined,
             name,
             quantity,
             holder,
             category,
             notes,
           })
-          .catch(() => {});
+          .then((cloudId) => {
+            if (cloudId) {
+              set((s) => ({
+                partyResources: {
+                  ...s.partyResources,
+                  items: s.partyResources.items.map((item) =>
+                    item.id === tempId ? { ...item, id: cloudId } : item
+                  ),
+                },
+              }));
+            }
+          })
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao adicionar item no inventário do grupo na nuvem.'))
+          );
       },
 
       removePartyInventoryItem: (id) => {
@@ -3140,9 +3463,12 @@ export const useCampaignStore = create<CampaignState>()(
         convexClient
           .mutation(api.portal.removeInventoryItem, {
             campaignId: get().activeCampaignId,
+            sessionToken: get().sessionToken || undefined,
             itemId: id,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao remover item do inventário na nuvem.'))
+          );
       },
 
       toggleStrongholdUpgrade: (upgradeId) => {
@@ -3161,9 +3487,12 @@ export const useCampaignStore = create<CampaignState>()(
         convexClient
           .mutation(api.portal.toggleStrongholdUpgrade, {
             campaignId: get().activeCampaignId,
+            sessionToken: get().sessionToken || undefined,
             upgradeId,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao alternar melhoria da base na nuvem.'))
+          );
       },
 
       updateStronghold: (updates) => {
@@ -3180,9 +3509,12 @@ export const useCampaignStore = create<CampaignState>()(
         convexClient
           .mutation(api.portal.updateStronghold, {
             campaignId: get().activeCampaignId,
+            sessionToken: get().sessionToken || undefined,
             ...updates,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar base do grupo na nuvem.'))
+          );
 
         get().showToast('Base do grupo atualizada!');
       },
@@ -3205,11 +3537,29 @@ export const useCampaignStore = create<CampaignState>()(
         convexClient
           .mutation(api.portal.addStrongholdUpgrade, {
             campaignId: get().activeCampaignId,
+            sessionToken: get().sessionToken || undefined,
             name,
             cost,
             benefit,
           })
-          .catch(() => {});
+          .then((cloudId) => {
+            if (cloudId) {
+              set((s) => ({
+                partyResources: {
+                  ...s.partyResources,
+                  stronghold: {
+                    ...s.partyResources.stronghold,
+                    upgrades: s.partyResources.stronghold.upgrades.map((u) =>
+                      u.id === tempId ? { ...u, id: cloudId } : u
+                    ),
+                  },
+                },
+              }));
+            }
+          })
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao adicionar melhoria da base na nuvem.'))
+          );
 
         get().showToast(`Melhoria "${name}" adicionada à Base!`);
       },
@@ -3228,9 +3578,12 @@ export const useCampaignStore = create<CampaignState>()(
         convexClient
           .mutation(api.portal.removeStrongholdUpgrade, {
             campaignId: get().activeCampaignId,
+            sessionToken: get().sessionToken || undefined,
             upgradeId,
           })
-          .catch(() => {});
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao remover melhoria da base na nuvem.'))
+          );
       },
     }),
     {
