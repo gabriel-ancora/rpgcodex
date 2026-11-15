@@ -355,8 +355,8 @@ export const EntityWikiView: React.FC = () => {
       {/* Left Pane: Codex Directory */}
       <aside className="lg:col-span-4 xl:col-span-3 flex flex-col surface-panel rounded-xl overflow-hidden">
         <div className="p-3.5 border-b border-white/[0.06] space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-baseline gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-baseline gap-2 shrink-0">
               <h2 className="text-sm font-semibold text-zinc-100 tracking-tight">
                 Códice
               </h2>
@@ -365,10 +365,10 @@ export const EntityWikiView: React.FC = () => {
               </span>
             </div>
             {viewRole === 'gm' && (
-              <div className="flex items-center gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <button
                   onClick={() => setShowPdfImportModal(true)}
-                  className="btn-subtle px-2 py-1 rounded-md text-xs inline-flex items-center gap-1"
+                  className="btn-subtle px-2 py-1 rounded-md text-xs inline-flex items-center gap-1 shrink-0"
                   title="Ler um PDF com a IA cadastrada e preencher a Wiki"
                 >
                   <FileUp className="w-3.5 h-3.5 text-amber-400" />
@@ -376,7 +376,7 @@ export const EntityWikiView: React.FC = () => {
                 </button>
                 <button
                   onClick={() => setSelectedEntityId(WIKI_CONTEXT_WINDOW_ID)}
-                  className={`px-2 py-1 rounded-md text-xs inline-flex items-center gap-1 border transition-colors ${
+                  className={`px-2 py-1 rounded-md text-xs inline-flex items-center gap-1 border transition-colors shrink-0 ${
                     isContextWindowOpen
                       ? 'bg-amber-500/15 text-amber-200 border-amber-500/35'
                       : 'btn-subtle'
@@ -388,7 +388,7 @@ export const EntityWikiView: React.FC = () => {
                 </button>
                 <button
                   onClick={() => setShowNewModal(true)}
-                  className="btn-solid px-2.5 py-1 rounded-md text-xs inline-flex items-center gap-1"
+                  className="btn-solid px-2.5 py-1 rounded-md text-xs inline-flex items-center gap-1 shrink-0"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>Nova</span>
