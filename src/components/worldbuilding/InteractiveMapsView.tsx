@@ -207,6 +207,13 @@ const MapVectorLayer: React.FC<MapVectorLayerProps> = React.memo(
                   e.stopPropagation();
                   onSelectShape(shape.id);
                 },
+                onPointerUp: (e: React.PointerEvent<SVGGElement>) => {
+                  if (e.button !== 0) return;
+                  e.stopPropagation();
+                },
+                onClick: (e: React.MouseEvent<SVGGElement>) => {
+                  e.stopPropagation();
+                },
               }
             : {};
           const linkedEntity = shape.entityId
@@ -508,7 +515,7 @@ const MapFogLayer: React.FC<MapFogLayerProps> = React.memo(
         viewBox="0 0 100 100"
         preserveAspectRatio="none"
         className={`absolute inset-0 w-full h-full pointer-events-none ${
-          viewRole === 'player' ? 'z-[25]' : 'z-[15]'
+          viewRole === 'player' ? 'z-[40]' : 'z-[15]'
         }`}
       >
         {fogShapes.map((shape) => {
@@ -518,7 +525,7 @@ const MapFogLayer: React.FC<MapFogLayerProps> = React.memo(
           const h = shape.height || 18;
           const isSelected = shape.id === selectedShapeId;
           const fillOp =
-            viewRole === 'player' ? 0.99 : shape.isRevealed ? 0.14 : 0.62;
+            viewRole === 'player' ? 1 : shape.isRevealed ? 0.14 : 0.62;
 
           return (
             <g
@@ -529,14 +536,22 @@ const MapFogLayer: React.FC<MapFogLayerProps> = React.memo(
                 e.stopPropagation();
                 onSelectShape(shape.id);
               }}
+              onPointerUp={(e) => {
+                if (!canSelectShape || e.button !== 0) return;
+                e.stopPropagation();
+              }}
+              onClick={(e) => {
+                if (!canSelectShape) return;
+                e.stopPropagation();
+              }}
             >
               <rect
                 x={p.x}
                 y={p.y}
                 width={w}
                 height={h}
-                rx={0.5}
-                fill="#070709"
+                rx={viewRole === 'player' ? 0 : 0.5}
+                fill={viewRole === 'player' ? '#030305' : '#070709'}
                 fillOpacity={fillOp}
                 stroke={
                   viewRole === 'gm'
@@ -971,13 +986,34 @@ export const InteractiveMapsView: React.FC = () => {
   );
 
   // Visible Pins & Shapes
+  const activePlayerFogs = useMemo(() => {
+    if (viewRole !== 'player') return [];
+    return (currentMap?.shapes || []).filter(
+      (s) => s.type === 'fog' && !s.isRevealed && s.points[0]
+    );
+  }, [currentMap?.shapes, viewRole]);
+
   const visiblePins = useMemo(() => {
     return (currentMap?.pins || []).filter((p) => {
       if (!activeLayers[p.layer]) return false;
-      if (viewRole === 'player' && p.isSecret && !p.isRevealed) return false;
+      if (viewRole === 'player') {
+        if (p.isSecret && !p.isRevealed) return false;
+        const hiddenByFog = activePlayerFogs.some((fog) => {
+          const origin = fog.points[0];
+          const w = fog.width || 22;
+          const h = fog.height || 18;
+          return (
+            p.x >= origin.x &&
+            p.x <= origin.x + w &&
+            p.y >= origin.y &&
+            p.y <= origin.y + h
+          );
+        });
+        if (hiddenByFog) return false;
+      }
       return true;
     });
-  }, [currentMap?.pins, activeLayers, viewRole]);
+  }, [currentMap?.pins, activeLayers, viewRole, activePlayerFogs]);
 
   const visibleShapes = useMemo(() => {
     return (currentMap?.shapes || []).filter((s) => {
