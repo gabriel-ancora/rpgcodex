@@ -1,4 +1,4 @@
-import { Entity, EntityCategory, ThreatFront, GeneratedEmergencyItem } from '../types/campaign';
+import { Entity, EntityCategory, ThreatFront, GeneratedEmergencyItem, RelationType } from '../types/campaign';
 import { convexClient } from '../convexClient';
 import { api } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
@@ -563,13 +563,31 @@ export interface ExtractedWikiEntity {
   attributes: { label: string; value: string }[];
 }
 
+export interface ExtractedWikiRelationship {
+  sourceName: string;
+  targetName: string;
+  label: string;
+  type: RelationType;
+  isSecret: boolean;
+}
+
 export interface PdfWikiExtractionResult {
   ok: boolean;
   summaryNotes: string;
   entities: ExtractedWikiEntity[];
+  relationships: ExtractedWikiRelationship[];
   modelUsed?: string;
   errorReason?: string;
 }
+
+const VALID_RELATION_TYPES: RelationType[] = [
+  'hostile',
+  'allied',
+  'secret',
+  'patron',
+  'neutral',
+  'blood',
+];
 
 const VALID_CATEGORIES: EntityCategory[] = [
   'npc',
@@ -582,7 +600,11 @@ const VALID_CATEGORIES: EntityCategory[] = [
 
 function normalizeExtractedWikiPayload(
   raw: Record<string, unknown>
-): { summaryNotes: string; entities: ExtractedWikiEntity[] } {
+): {
+  summaryNotes: string;
+  entities: ExtractedWikiEntity[];
+  relationships: ExtractedWikiRelationship[];
+} {
   const summaryNotes =
     typeof raw.summaryNotes === 'string' && raw.summaryNotes.trim()
       ? raw.summaryNotes.trim()
@@ -664,7 +686,30 @@ function normalizeExtractedWikiPayload(
     });
   });
 
-  return { summaryNotes, entities };
+  const rawRels = Array.isArray(raw.relationships) ? raw.relationships : [];
+  const relationships: ExtractedWikiRelationship[] = [];
+  rawRels.forEach((r) => {
+    if (!r || typeof r !== 'object') return;
+    const obj = r as Record<string, unknown>;
+    const sourceName = typeof obj.sourceName === 'string' ? obj.sourceName.trim() : '';
+    const targetName = typeof obj.targetName === 'string' ? obj.targetName.trim() : '';
+    const label = typeof obj.label === 'string' ? obj.label.trim() : '';
+    if (!sourceName || !targetName || !label) return;
+    if (sourceName.toLowerCase() === targetName.toLowerCase()) return;
+    const rawType = typeof obj.type === 'string' ? obj.type.toLowerCase().trim() : 'neutral';
+    const type: RelationType = VALID_RELATION_TYPES.includes(rawType as RelationType)
+      ? (rawType as RelationType)
+      : 'neutral';
+    relationships.push({
+      sourceName,
+      targetName,
+      label: label.slice(0, 60),
+      type,
+      isSecret: typeof obj.isSecret === 'boolean' ? obj.isSecret : type === 'secret',
+    });
+  });
+
+  return { summaryNotes, entities, relationships };
 }
 
 function fileToBase64(file: File): Promise<string> {
@@ -758,6 +803,7 @@ async function extractPdfClientFallback(params: {
       ok: false,
       summaryNotes: '',
       entities: [],
+      relationships: [],
       errorReason: 'no_api_key',
     };
   }
@@ -775,6 +821,7 @@ async function extractPdfClientFallback(params: {
         ok: false,
         summaryNotes: '',
         entities: [],
+        relationships: [],
         errorReason: 'network_or_parse_error',
       };
     }
@@ -790,8 +837,8 @@ async function extractPdfClientFallback(params: {
     params.worldContext ? `Contexto atual do mundo:\n${params.worldContext.slice(0, 1500)}` : '',
     existingList.length > 0 ? `Entidades já existentes na Wiki: ${existingList.join(', ')}` : '',
     params.customInstructions ? `Instrução específica do Mestre: ${params.customInstructions}` : '',
-    'Retorne JSON com { "summaryNotes": "...", "entities": [{ "name", "subtitle", "category": "npc|faction|location|item|monster|lore", "tags": [], "summary", "publicContent", "isPublicToPlayers": boolean, "secrets": [{"title", "content"}], "attributes": [{"label", "value"}] }] }.',
-    'Responda em Português do Brasil. Extraia no máximo 30 entidades.',
+    'Retorne JSON com { "summaryNotes": "...", "entities": [{ "name", "subtitle", "category": "npc|faction|location|item|monster|lore", "tags": [], "summary", "publicContent", "isPublicToPlayers": boolean, "secrets": [{"title", "content"}], "attributes": [{"label", "value"}] }], "relationships": [{ "sourceName", "targetName", "label", "type": "hostile|allied|secret|patron|neutral|blood", "isSecret": boolean }] }.',
+    'Responda em Português do Brasil. Extraia no máximo 30 entidades separadas corretamente por categoria e conecte-as em `relationships`.',
   ]
     .filter(Boolean)
     .join('\n\n');
@@ -849,6 +896,7 @@ async function extractPdfClientFallback(params: {
               ok: true,
               summaryNotes: normalized.summaryNotes,
               entities: normalized.entities,
+              relationships: normalized.relationships,
               modelUsed: model,
             };
           }
@@ -869,6 +917,7 @@ async function extractPdfClientFallback(params: {
     ok: false,
     summaryNotes: '',
     entities: [],
+    relationships: [],
     errorReason: `http_${lastStatus}`,
   };
 }
@@ -890,6 +939,7 @@ export async function extractWikiEntitiesFromPdf(params: {
       ok: false,
       summaryNotes: '',
       entities: [],
+      relationships: [],
       errorReason: 'file_too_large',
     };
   }
@@ -927,6 +977,7 @@ export async function extractWikiEntitiesFromPdf(params: {
           ok: true,
           summaryNotes: normalized.summaryNotes,
           entities: normalized.entities,
+          relationships: normalized.relationships,
           modelUsed: actionRes.modelUsed,
         };
       }
@@ -936,6 +987,7 @@ export async function extractWikiEntitiesFromPdf(params: {
           ok: false,
           summaryNotes: '',
           entities: [],
+          relationships: [],
           errorReason: actionRes.reason,
         };
       }
@@ -962,6 +1014,7 @@ export async function extractWikiEntitiesFromPdf(params: {
         ok: false,
         summaryNotes: '',
         entities: [],
+        relationships: [],
         errorReason: 'network_or_parse_error',
       };
     }
@@ -971,6 +1024,164 @@ export async function extractWikiEntitiesFromPdf(params: {
     ok: false,
     summaryNotes: '',
     entities: [],
+    relationships: [],
     errorReason: cleanKey ? 'network_or_parse_error' : 'no_api_key',
   };
+}
+
+export interface GraphOrganizeNodeInput {
+  id: string;
+  name: string;
+  category: string;
+  summary: string;
+  publicContent?: string;
+  secrets?: string[];
+}
+
+export interface GraphOrganizeEdgeInput {
+  sourceId: string;
+  targetId: string;
+  label: string;
+  type: RelationType;
+}
+
+export interface GraphOrganizeResult {
+  ok: boolean;
+  summaryNotes: string;
+  newRelationships: {
+    sourceId: string;
+    targetId: string;
+    label: string;
+    type: RelationType;
+    isSecret: boolean;
+  }[];
+  positions: { entityId: string; x: number; y: number }[];
+  modelUsed?: string;
+  errorReason?: string;
+}
+
+function deOverlapPositions(
+  positions: { entityId: string; x: number; y: number }[]
+): { entityId: string; x: number; y: number }[] {
+  const result = positions.map((p) => ({
+    entityId: p.entityId,
+    x: Math.max(85, Math.min(875, Math.round(p.x))),
+    y: Math.max(65, Math.min(535, Math.round(p.y))),
+  }));
+
+  // Repulsion passes so no two nodes sit on top of each other
+  const minDx = 125;
+  const minDy = 68;
+  for (let pass = 0; pass < 14; pass++) {
+    for (let i = 0; i < result.length; i++) {
+      for (let j = i + 1; j < result.length; j++) {
+        const dx = result[j].x - result[i].x;
+        const dy = result[j].y - result[i].y;
+        if (Math.abs(dx) < minDx && Math.abs(dy) < minDy) {
+          const pushX = (dx >= 0 ? 1 : -1) * Math.max(12, (minDx - Math.abs(dx)) * 0.35);
+          const pushY = (dy >= 0 ? 1 : -1) * Math.max(8, (minDy - Math.abs(dy)) * 0.35);
+          result[i].x = Math.max(85, Math.min(875, Math.round(result[i].x - pushX)));
+          result[i].y = Math.max(65, Math.min(535, Math.round(result[i].y - pushY)));
+          result[j].x = Math.max(85, Math.min(875, Math.round(result[j].x + pushX)));
+          result[j].y = Math.max(65, Math.min(535, Math.round(result[j].y + pushY)));
+        }
+      }
+    }
+  }
+  return result;
+}
+
+export async function organizeGraphWithAI(params: {
+  apiKey?: string;
+  campaignName?: string;
+  campaignSystem?: string;
+  worldContext?: string;
+  nodes: GraphOrganizeNodeInput[];
+  existingEdges: GraphOrganizeEdgeInput[];
+}): Promise<GraphOrganizeResult> {
+  const cleanKey = sanitizeGeminiKey(params.apiKey);
+  const validNodeIds = new Set(params.nodes.map((n) => n.id));
+
+  try {
+    const res = await convexClient.action(api.ai.organizeAndConnectGraph, {
+      userApiKey: cleanKey || undefined,
+      campaignName: params.campaignName,
+      campaignSystem: params.campaignSystem,
+      worldContext: params.worldContext,
+      nodes: params.nodes,
+      existingEdges: params.existingEdges,
+    });
+
+    if (res.ok && res.parsed) {
+      const raw = res.parsed as Record<string, unknown>;
+      const rawRels = Array.isArray(raw.newRelationships) ? raw.newRelationships : [];
+      const newRelationships: GraphOrganizeResult['newRelationships'] = [];
+      const seenPairs = new Set(
+        params.existingEdges.map((e) => `${e.sourceId}::${e.targetId}::${e.label.toLowerCase()}`)
+      );
+
+      for (const r of rawRels) {
+        if (!r || typeof r !== 'object') continue;
+        const obj = r as Record<string, unknown>;
+        const sourceId = typeof obj.sourceId === 'string' ? obj.sourceId.trim() : '';
+        const targetId = typeof obj.targetId === 'string' ? obj.targetId.trim() : '';
+        const label = typeof obj.label === 'string' ? obj.label.trim() : '';
+        if (!sourceId || !targetId || !label || sourceId === targetId) continue;
+        if (!validNodeIds.has(sourceId) || !validNodeIds.has(targetId)) continue;
+        const rawType = typeof obj.type === 'string' ? obj.type.toLowerCase().trim() : 'neutral';
+        const type: RelationType = VALID_RELATION_TYPES.includes(rawType as RelationType)
+          ? (rawType as RelationType)
+          : 'neutral';
+        const key = `${sourceId}::${targetId}::${label.toLowerCase()}`;
+        if (seenPairs.has(key)) continue;
+        seenPairs.add(key);
+        newRelationships.push({
+          sourceId,
+          targetId,
+          label: label.slice(0, 60),
+          type,
+          isSecret: typeof obj.isSecret === 'boolean' ? obj.isSecret : type === 'secret',
+        });
+      }
+
+      const rawPos = Array.isArray(raw.positions) ? raw.positions : [];
+      const parsedPos: { entityId: string; x: number; y: number }[] = [];
+      for (const p of rawPos) {
+        if (!p || typeof p !== 'object') continue;
+        const obj = p as Record<string, unknown>;
+        const id = typeof obj.id === 'string' ? obj.id.trim() : '';
+        const x = Number(obj.x);
+        const y = Number(obj.y);
+        if (!id || !validNodeIds.has(id) || Number.isNaN(x) || Number.isNaN(y)) continue;
+        parsedPos.push({ entityId: id, x, y });
+      }
+
+      return {
+        ok: true,
+        summaryNotes:
+          typeof raw.summaryNotes === 'string'
+            ? raw.summaryNotes
+            : 'Grafo organizado e conectado com sucesso.',
+        newRelationships,
+        positions: deOverlapPositions(parsedPos),
+        modelUsed: res.modelUsed,
+      };
+    }
+
+    return {
+      ok: false,
+      summaryNotes: '',
+      newRelationships: [],
+      positions: [],
+      errorReason: res.reason || 'ai_failed',
+    };
+  } catch {
+    return {
+      ok: false,
+      summaryNotes: '',
+      newRelationships: [],
+      positions: [],
+      errorReason: 'network_or_parse_error',
+    };
+  }
 }

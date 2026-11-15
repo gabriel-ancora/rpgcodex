@@ -421,8 +421,42 @@ const WIKI_EXTRACTION_SCHEMA = {
         ],
       },
     },
+    relationships: {
+      type: "ARRAY",
+      description:
+        "Conexões explícitas ou implícitas entre as entidades extraídas (ou com entidades já existentes) para montar o Grafo de Relações.",
+      items: {
+        type: "OBJECT",
+        properties: {
+          sourceName: {
+            type: "STRING",
+            description: "Nome exato da entidade de origem.",
+          },
+          targetName: {
+            type: "STRING",
+            description: "Nome exato da entidade de destino.",
+          },
+          label: {
+            type: "STRING",
+            description:
+              "Rótulo curto da relação (ex: Líder de, Sediada em, Rival de, Protege, Busca, Pertence a).",
+          },
+          type: {
+            type: "STRING",
+            enum: ["hostile", "allied", "secret", "patron", "neutral", "blood"],
+            description:
+              "Tipo da conexão: hostile, allied, secret, patron, neutral ou blood.",
+          },
+          isSecret: {
+            type: "BOOLEAN",
+            description: "true se for uma conexão secreta/oculta dos jogadores.",
+          },
+        },
+        required: ["sourceName", "targetName", "label", "type", "isSecret"],
+      },
+    },
   },
-  required: ["summaryNotes", "entities"],
+  required: ["summaryNotes", "entities", "relationships"],
 };
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
@@ -682,8 +716,9 @@ export const extractWikiFromPdf = action({
           : "",
         "Regras de extração:",
         "- Responda sempre em Português do Brasil (traduzindo termos narrativos se o PDF estiver em outro idioma, mantendo nomes próprios quando fizer sentido).",
-        "- Classifique cada entrada em uma das categorias exatas: npc (personagens), location (lugares), item (itens/relíquias/equipamentos), lore (informações históricas, mitos, eventos, pistas), faction (facções/organizações), monster (monstros/criaturas/chefes).",
+        "- Classifique cada entrada separadamente na categoria exata (NUNCA misture tudo em lore): npc (personagens), location (lugares/cidades/masmorras), item (itens/relíquias/equipamentos), lore (eventos históricos, mitos, pistas, leis), faction (facções/organizações/cultos), monster (criaturas/chefes).",
         "- Separe informações secretas, armadilhas, motivações ocultas ou plot twists no campo `secrets` (para Névoa de Guerra do Mestre), e deixe em `publicContent` a descrição principal.",
+        "- Em `relationships`, extraia todas as conexões relevantes entre as entidades (ex.: NPC -> Facção, NPC -> Local, Facção -> Local, Monstro -> Local, Item -> NPC/Local, NPC <-> NPC) usando exatamente os mesmos nomes em `sourceName` e `targetName`.",
         "- Extraia no máximo 30 entidades mais relevantes para manter a resposta objetiva e bem estruturada.",
         "- Retorne APENAS JSON válido seguindo o schema solicitado.",
       ]
@@ -734,5 +769,171 @@ export const extractWikiFromPdf = action({
       await ctx.storage.delete(args.storageId).catch(() => {});
       return { ok: false as const, reason: "network_or_parse_error" };
     }
+  },
+});
+
+const GRAPH_ORGANIZE_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    summaryNotes: {
+      type: "STRING",
+      description: "Resumo curto do que a IA organizou e conectou.",
+    },
+    newRelationships: {
+      type: "ARRAY",
+      description:
+        "Novas conexões descobertas na análise da Wiki entre os nós existentes (sem duplicar conexões já existentes).",
+      items: {
+        type: "OBJECT",
+        properties: {
+          sourceId: { type: "STRING" },
+          targetId: { type: "STRING" },
+          label: { type: "STRING" },
+          type: {
+            type: "STRING",
+            enum: ["hostile", "allied", "secret", "patron", "neutral", "blood"],
+          },
+          isSecret: { type: "BOOLEAN" },
+        },
+        required: ["sourceId", "targetId", "label", "type", "isSecret"],
+      },
+    },
+    positions: {
+      type: "ARRAY",
+      description:
+        "Posições organizadas (x entre 90 e 870, y entre 70 e 530) para todos os nós, agrupando por afinidade narrativa e separando categorias sem sobreposição.",
+      items: {
+        type: "OBJECT",
+        properties: {
+          id: { type: "STRING" },
+          x: { type: "NUMBER" },
+          y: { type: "NUMBER" },
+        },
+        required: ["id", "x", "y"],
+      },
+    },
+  },
+  required: ["summaryNotes", "newRelationships", "positions"],
+};
+
+export const organizeAndConnectGraph = action({
+  args: {
+    userApiKey: v.optional(v.string()),
+    campaignName: v.optional(v.string()),
+    campaignSystem: v.optional(v.string()),
+    worldContext: v.optional(v.string()),
+    nodes: v.array(
+      v.object({
+        id: v.string(),
+        name: v.string(),
+        category: v.string(),
+        summary: v.string(),
+        publicContent: v.optional(v.string()),
+        secrets: v.optional(v.array(v.string())),
+      })
+    ),
+    existingEdges: v.array(
+      v.object({
+        sourceId: v.string(),
+        targetId: v.string(),
+        label: v.string(),
+        type: v.string(),
+      })
+    ),
+  },
+  handler: async (_ctx, args) => {
+    const envObj = (
+      globalThis as unknown as {
+        process?: { env?: Record<string, string | undefined> };
+      }
+    ).process?.env;
+    const serverKey = sanitizeApiKey(envObj?.GEMINI_API_KEY);
+    const userKey = sanitizeApiKey(args.userApiKey);
+    const effectiveKey = userKey || serverKey;
+
+    if (!effectiveKey || effectiveKey.length < 10) {
+      return { ok: false as const, reason: "no_api_key" };
+    }
+
+    const nodeLines = args.nodes
+      .slice(0, 80)
+      .map((n) => {
+        const sec = n.secrets && n.secrets.length > 0 ? ` | Segredos: ${n.secrets.join("; ")}` : "";
+        const pub = n.publicContent ? ` | Detalhes: ${n.publicContent.slice(0, 260)}` : "";
+        return `- [${n.id}] (${n.category}) ${n.name}: ${n.summary.slice(0, 180)}${pub}${sec}`;
+      })
+      .join("\n");
+
+    const edgeLines = args.existingEdges
+      .slice(0, 120)
+      .map((e) => `- ${e.sourceId} -> ${e.targetId} (${e.type}: ${e.label})`)
+      .join("\n");
+
+    const prompt = [
+      "Você é um arquiteto narrativo especialista em RPG de mesa.",
+      "Analise TODAS as entidades da Wiki, seus textos públicos, segredos, menções (@/#) e o contexto do mundo.",
+      args.campaignName ? `Campanha: ${args.campaignName}` : "",
+      args.campaignSystem ? `Sistema: ${args.campaignSystem}` : "",
+      args.worldContext ? `Contexto do Mundo:\n${args.worldContext.slice(0, 2000)}` : "",
+      `Nós disponíveis no Grafo:\n${nodeLines}`,
+      edgeLines ? `Conexões já existentes (NÃO duplique):\n${edgeLines}` : "Nenhuma conexão existente ainda.",
+      "Tarefas:",
+      "1. Em `newRelationships`, crie TODAS as conexões narrativas faltantes que fazem sentido com base nos textos/segredos da Wiki (use exatamente os `id` entre colchetes). Marque `isSecret: true` para conexões baseadas em segredos do Mestre.",
+      "2. Em `positions`, organize TODOS os nós em um canvas 960x600 (x entre 90 e 870, y entre 70 e 530), separando bem as categorias em regiões claras (ex: facções no topo, locais à esquerda/centro, NPCs/PJs no centro-direita, ameaças/monstros à direita, itens/lore na base) e aproximando nós fortemente conectados, garantindo pelo menos 95px de distância entre nós para evitar qualquer sobreposição.",
+      "3. Responda em Português do Brasil com JSON válido seguindo o schema.",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+    const discovered = await discoverAvailableGeminiModels(effectiveKey);
+    const modelsToTry = discovered.ok
+      ? discovered.models.slice(0, 4)
+      : CANDIDATE_MODELS;
+
+    let lastStatus = discovered.status || 500;
+
+    for (const model of modelsToTry) {
+      try {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+            model
+          )}:generateContent?key=${encodeURIComponent(effectiveKey)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ role: "user", parts: [{ text: prompt }] }],
+              generationConfig: {
+                temperature: 0.35,
+                maxOutputTokens: 8192,
+                responseMimeType: "application/json",
+                responseSchema: GRAPH_ORGANIZE_SCHEMA,
+              },
+            }),
+          }
+        );
+        lastStatus = res.status;
+        if (!res.ok) {
+          if (res.status === 401 || res.status === 403) break;
+          continue;
+        }
+        const data = (await res.json()) as {
+          candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+        };
+        const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        const parsed = extractJsonObject(rawText);
+        if (parsed) {
+          return {
+            ok: true as const,
+            parsed,
+            modelUsed: model,
+          };
+        }
+      } catch {
+        // try next model
+      }
+    }
+
+    return { ok: false as const, reason: `http_${lastStatus}` };
   },
 });

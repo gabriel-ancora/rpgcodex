@@ -16,7 +16,10 @@ import {
   Check,
   X,
   UserPlus,
+  Sparkles,
+  Loader2,
 } from 'lucide-react';
+import { organizeGraphWithAI } from '../../services/geminiService';
 
 const RELATION_STYLES: Record<
   RelationType,
@@ -82,7 +85,13 @@ export const RelationshipGraphView: React.FC = () => {
   const relationships = useCampaignStore((s) => s.relationships);
   const graphPositions = useCampaignStore((s) => s.graphPositions);
   const viewRole = useCampaignStore((s) => s.viewRole);
+  const geminiApiKey = useCampaignStore((s) => s.geminiApiKey);
+  const campaignName = useCampaignStore((s) => s.campaignName);
+  const activeCampaignId = useCampaignStore((s) => s.activeCampaignId);
+  const campaigns = useCampaignStore((s) => s.campaigns);
+  const showToast = useCampaignStore((s) => s.showToast);
   const updateGraphNodePosition = useCampaignStore((s) => s.updateGraphNodePosition);
+  const applyGraphPositionsBatch = useCampaignStore((s) => s.applyGraphPositionsBatch);
   const addManualGraphNode = useCampaignStore((s) => s.addManualGraphNode);
   const deleteManualGraphNode = useCampaignStore((s) => s.deleteManualGraphNode);
   const addRelationship = useCampaignStore((s) => s.addRelationship);
@@ -116,6 +125,7 @@ export const RelationshipGraphView: React.FC = () => {
   const [zoom, setZoom] = useState(1);
 
   const [isConnectMode, setIsConnectMode] = useState(false);
+  const [isOrganizingWithAI, setIsOrganizingWithAI] = useState(false);
   const [connectingSourceId, setConnectingSourceId] = useState<string | null>(null);
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
 
@@ -224,6 +234,75 @@ export const RelationshipGraphView: React.FC = () => {
     setEdgeLabel('');
   };
 
+  const handleOrganizeAndConnectWithAI = async () => {
+    if (isOrganizingWithAI) return;
+    if (allNodes.length < 2) {
+      showToast('Adicione pelo menos 2 entidades na Wiki ou no Grafo para organizar.');
+      return;
+    }
+
+    setIsOrganizingWithAI(true);
+    try {
+      const activeCamp = campaigns.find((c) => c.id === activeCampaignId);
+      const entityMap = new Map(entities.map((e) => [e.id, e]));
+      const payloadNodes = allNodes.map((n) => {
+        const ent = n.entityId ? entityMap.get(n.entityId) : undefined;
+        return {
+          id: n.id,
+          name: ent ? ent.name : n.label,
+          category: n.category,
+          summary: ent ? ent.summary : n.subtitle,
+          publicContent: ent?.publicContent,
+          secrets: ent?.secrets.map((s) => `${s.title}: ${s.content}`),
+        };
+      });
+
+      const res = await organizeGraphWithAI({
+        apiKey: geminiApiKey,
+        campaignName: activeCamp?.title || campaignName,
+        campaignSystem: activeCamp?.system,
+        worldContext: activeCamp?.worldContext,
+        nodes: payloadNodes,
+        existingEdges: relationships.map((r) => ({
+          sourceId: r.sourceId,
+          targetId: r.targetId,
+          label: r.label,
+          type: r.type,
+        })),
+      });
+
+      if (!res.ok) {
+        if (res.errorReason === 'no_api_key') {
+          showToast('Configure a chave da API Gemini nas Configurações para usar a IA.');
+        } else {
+          showToast('Não foi possível organizar o grafo com a IA agora. Tente novamente.');
+        }
+        return;
+      }
+
+      if (res.positions.length > 0) {
+        applyGraphPositionsBatch(res.positions);
+      }
+
+      for (const rel of res.newRelationships) {
+        addRelationship({
+          sourceId: rel.sourceId,
+          targetId: rel.targetId,
+          label: rel.label,
+          type: rel.type,
+          isSecret: rel.isSecret,
+          isRevealed: !rel.isSecret,
+        });
+      }
+
+      showToast(
+        `IA organizou ${res.positions.length} nó(s) e criou ${res.newRelationships.length} conexão(ões) a partir da Wiki!`
+      );
+    } finally {
+      setIsOrganizingWithAI(false);
+    }
+  };
+
   const selectedNode = allNodes.find((n) => n.id === selectedNodeId);
 
   return (
@@ -268,6 +347,25 @@ export const RelationshipGraphView: React.FC = () => {
                         ? 'Selecione o destino...'
                         : 'Selecione a origem...'
                       : 'Conectar nós'}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleOrganizeAndConnectWithAI}
+                  disabled={isOrganizingWithAI}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-amber-500/15 text-amber-200 border border-amber-500/30 hover:bg-amber-500/25 disabled:opacity-50 transition-colors"
+                  title="Analisa toda a Wiki com Gemini para organizar os nós por categoria/afinidade e criar conexões faltantes"
+                >
+                  {isOrganizingWithAI ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-3.5 h-3.5" />
+                  )}
+                  <span>
+                    {isOrganizingWithAI
+                      ? 'Analisando Wiki...'
+                      : 'Organizar & Conectar (IA)'}
                   </span>
                 </button>
               </>

@@ -225,6 +225,16 @@ interface CampaignState {
 
   // Entity & Secret Actions
   addEntity: (partial: Partial<Entity> & { name: string; category: EntityCategory }) => Entity;
+  importWikiEntitiesWithRelations: (
+    items: (Partial<Entity> & { name: string; category: EntityCategory })[],
+    relationships: {
+      sourceName: string;
+      targetName: string;
+      label: string;
+      type: RelationshipEdge['type'];
+      isSecret: boolean;
+    }[]
+  ) => Promise<{ createdCount: number; linkedCount: number }>;
   updateEntity: (id: string, updates: Partial<Entity>) => void;
   deleteEntity: (id: string) => void;
   togglePinEntity: (id: string) => void;
@@ -237,6 +247,7 @@ interface CampaignState {
 
   // Graph Actions
   updateGraphNodePosition: (entityId: string, x: number, y: number) => void;
+  applyGraphPositionsBatch: (positions: { entityId: string; x: number; y: number }[]) => void;
   addManualGraphNode: (node: Omit<ManualGraphNode, 'id'>) => void;
   deleteManualGraphNode: (id: string) => void;
   addRelationship: (edge: Omit<RelationshipEdge, 'id'>) => void;
@@ -1829,6 +1840,189 @@ export const useCampaignStore = create<CampaignState>()(
           .catch((err) =>
             get().showToast(formatCloudError(err, 'Erro ao salvar posição no grafo na nuvem.'))
           );
+      },
+
+      applyGraphPositionsBatch: (positions) => {
+        if (positions.length === 0) return;
+        const posMap = new Map(positions.map((p) => [p.entityId, p]));
+        set((state) => {
+          const updatedManual = state.manualGraphNodes.map((n) => {
+            const p = posMap.get(n.id);
+            return p ? { ...n, x: p.x, y: p.y } : n;
+          });
+          const manualIds = new Set(updatedManual.map((n) => n.id));
+          const mergedPositions = [...state.graphPositions];
+          for (const p of positions) {
+            if (manualIds.has(p.entityId)) continue;
+            const idx = mergedPositions.findIndex((gp) => gp.entityId === p.entityId);
+            if (idx >= 0) {
+              mergedPositions[idx] = { entityId: p.entityId, x: p.x, y: p.y };
+            } else {
+              mergedPositions.push({ entityId: p.entityId, x: p.x, y: p.y });
+            }
+          }
+          return {
+            manualGraphNodes: updatedManual,
+            graphPositions: mergedPositions,
+          };
+        });
+
+        const campaignId = get().activeCampaignId;
+        const sessionToken = get().sessionToken || undefined;
+        Promise.all(
+          positions.map((p) =>
+            convexClient.mutation(api.relationships.updatePosition, {
+              campaignId,
+              sessionToken,
+              entityId: p.entityId,
+              x: p.x,
+              y: p.y,
+            })
+          )
+        ).catch((err) =>
+          get().showToast(formatCloudError(err, 'Erro ao sincronizar posições do grafo na nuvem.'))
+        );
+      },
+
+      importWikiEntitiesWithRelations: async (items, relationshipsToCreate) => {
+        const campaignId = get().activeCampaignId;
+        const sessionToken = get().sessionToken || undefined;
+        const nameToId = new Map<string, string>();
+        for (const existing of get().entities) {
+          nameToId.set(existing.name.trim().toLowerCase(), existing.id);
+        }
+
+        // Category-separated base zones on 960x600 canvas
+        const categoryZones: Record<EntityCategory, { baseX: number; baseY: number }> = {
+          faction: { baseX: 200, baseY: 110 },
+          location: { baseX: 190, baseY: 320 },
+          npc: { baseX: 480, baseY: 220 },
+          monster: { baseX: 760, baseY: 170 },
+          item: { baseX: 740, baseY: 410 },
+          lore: { baseX: 470, baseY: 455 },
+        };
+        const catCounts: Record<string, number> = {};
+        const batchPositions: { entityId: string; x: number; y: number }[] = [];
+        let createdCount = 0;
+
+        for (let idx = 0; idx < items.length; idx++) {
+          const partial = items[idx];
+          const isAtPrefix =
+            partial.category === 'npc' ||
+            partial.category === 'faction' ||
+            partial.category === 'monster';
+          const prefix = partial.mentionPrefix || (isAtPrefix ? '@' : '#');
+          const cleanHandle =
+            partial.handle ||
+            partial.name
+              .normalize('NFD')
+              .replace(/[\u0300-\u036f]/g, '')
+              .replace(/\s+/g, '')
+              .replace(/[^a-zA-Z0-9]/g, '');
+
+          const uniqueSuffix = `${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`;
+          const newEntity: Entity = {
+            id: `ent-${uniqueSuffix}`,
+            handle: cleanHandle || `Entidade${Date.now()}`,
+            mentionPrefix: prefix,
+            name: partial.name,
+            subtitle: partial.subtitle || 'Registro de Campanha',
+            category: partial.category,
+            tags: partial.tags || ['Registro'],
+            summary: partial.summary || 'Descrição resumida desta entidade.',
+            publicContent: partial.publicContent || partial.summary || '',
+            secrets: partial.secrets || [],
+            attributes: partial.attributes || [],
+            pinnedInSession: Boolean(partial.pinnedInSession),
+            isPublicToPlayers: partial.isPublicToPlayers ?? true,
+            imageUrl: partial.imageUrl,
+            updatedAt: new Date().toISOString(),
+          };
+
+          const zone = categoryZones[partial.category] || categoryZones.lore;
+          const cIdx = catCounts[partial.category] || 0;
+          catCounts[partial.category] = cIdx + 1;
+          const col = cIdx % 2;
+          const row = Math.floor(cIdx / 2);
+          const posX = Math.max(85, Math.min(875, zone.baseX + col * 145 - 65));
+          const posY = Math.max(65, Math.min(535, zone.baseY + row * 72));
+
+          try {
+            const convexId = await convexClient.mutation(api.entities.create, {
+              campaignId,
+              sessionToken,
+              name: newEntity.name,
+              handle: newEntity.handle,
+              mentionPrefix: newEntity.mentionPrefix,
+              subtitle: newEntity.subtitle,
+              category: newEntity.category,
+              tags: newEntity.tags,
+              summary: newEntity.summary,
+              publicContent: newEntity.publicContent,
+              pinnedInSession: newEntity.pinnedInSession,
+              isPublicToPlayers: newEntity.isPublicToPlayers,
+              imageUrl: newEntity.imageUrl,
+              updatedAt: newEntity.updatedAt,
+              initialSecrets: newEntity.secrets.map((s) => ({
+                title: s.title,
+                content: s.content,
+                isRevealed: s.isRevealed,
+              })),
+              initialAttributes: newEntity.attributes.map((a) => ({
+                label: a.label,
+                value: a.value,
+                max: a.max,
+                category: a.category,
+              })),
+            });
+
+            const finalId = convexId || newEntity.id;
+            const createdEntity = { ...newEntity, id: finalId };
+            nameToId.set(newEntity.name.trim().toLowerCase(), finalId);
+            batchPositions.push({ entityId: finalId, x: posX, y: posY });
+            createdCount++;
+
+            set((state) => ({
+              entities: [createdEntity, ...state.entities],
+              selectedEntityId: createdEntity.id,
+            }));
+          } catch (err) {
+            get().showToast(
+              formatCloudError(err, `Erro ao importar "${partial.name}" para a nuvem.`)
+            );
+          }
+        }
+
+        if (batchPositions.length > 0) {
+          get().applyGraphPositionsBatch(batchPositions);
+        }
+
+        let linkedCount = 0;
+        const existingEdgeSet = new Set(
+          get().relationships.map(
+            (r) => `${r.sourceId}::${r.targetId}::${r.label.toLowerCase()}`
+          )
+        );
+
+        for (const rel of relationshipsToCreate) {
+          const srcId = nameToId.get(rel.sourceName.trim().toLowerCase());
+          const tgtId = nameToId.get(rel.targetName.trim().toLowerCase());
+          if (!srcId || !tgtId || srcId === tgtId) continue;
+          const edgeKey = `${srcId}::${tgtId}::${rel.label.toLowerCase()}`;
+          if (existingEdgeSet.has(edgeKey)) continue;
+          existingEdgeSet.add(edgeKey);
+          get().addRelationship({
+            sourceId: srcId,
+            targetId: tgtId,
+            label: rel.label,
+            type: rel.type,
+            isSecret: rel.isSecret,
+            isRevealed: !rel.isSecret,
+          });
+          linkedCount++;
+        }
+
+        return { createdCount, linkedCount };
       },
 
       addManualGraphNode: (node) => {

@@ -21,6 +21,7 @@ import { useCampaignStore } from '../../store/useCampaignStore';
 import { EntityCategory } from '../../types/campaign';
 import {
   ExtractedWikiEntity,
+  ExtractedWikiRelationship,
   extractWikiEntitiesFromPdf,
 } from '../../services/geminiService';
 
@@ -74,7 +75,9 @@ export const PdfWikiImportModal: React.FC<PdfWikiImportModalProps> = ({
   const activeCampaignId = useCampaignStore((s) => s.activeCampaignId);
   const campaignName = useCampaignStore((s) => s.campaignName);
   const geminiApiKey = useCampaignStore((s) => s.geminiApiKey);
-  const addEntity = useCampaignStore((s) => s.addEntity);
+  const importWikiEntitiesWithRelations = useCampaignStore(
+    (s) => s.importWikiEntitiesWithRelations
+  );
   const showToast = useCampaignStore((s) => s.showToast);
   const setIsSettingsModalOpen = useCampaignStore((s) => s.setIsSettingsModalOpen);
 
@@ -90,6 +93,10 @@ export const PdfWikiImportModal: React.FC<PdfWikiImportModalProps> = ({
   const [summaryNotes, setSummaryNotes] = useState('');
   const [modelUsed, setModelUsed] = useState<string | undefined>(undefined);
   const [extracted, setExtracted] = useState<ExtractedWikiEntity[]>([]);
+  const [extractedRelationships, setExtractedRelationships] = useState<
+    ExtractedWikiRelationship[]
+  >([]);
+  const [isImporting, setIsImporting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [categoryFilter, setCategoryFilter] = useState<EntityCategory | 'all'>('all');
 
@@ -115,6 +122,8 @@ export const PdfWikiImportModal: React.FC<PdfWikiImportModalProps> = ({
     setSummaryNotes('');
     setModelUsed(undefined);
     setExtracted([]);
+    setExtractedRelationships([]);
+    setIsImporting(false);
     setSelectedIds(new Set());
     setCategoryFilter('all');
   };
@@ -194,6 +203,7 @@ export const PdfWikiImportModal: React.FC<PdfWikiImportModalProps> = ({
     setSummaryNotes(res.summaryNotes);
     setModelUsed(res.modelUsed);
     setExtracted(res.entities);
+    setExtractedRelationships(res.relationships || []);
 
     // Seleciona por padrão apenas entidades que ainda não existem na Wiki
     const initialSelected = new Set<string>();
@@ -243,36 +253,44 @@ export const PdfWikiImportModal: React.FC<PdfWikiImportModalProps> = ({
     });
   };
 
-  const handleImportSelected = () => {
+  const handleImportSelected = async () => {
     const toImport = extracted.filter((e) => selectedIds.has(e.tempId));
-    if (toImport.length === 0) return;
+    if (toImport.length === 0 || isImporting) return;
 
+    setIsImporting(true);
     const stamp = Date.now();
-    toImport.forEach((item, idx) => {
-      addEntity({
-        name: item.name.trim() || 'Entidade sem nome',
-        subtitle: item.subtitle.trim() || 'Registro importado do PDF',
-        category: item.category,
-        tags: item.tags.length > 0 ? item.tags : ['PDF'],
-        summary: item.summary.trim() || item.name,
-        publicContent: item.publicContent.trim() || item.summary,
-        isPublicToPlayers: item.isPublicToPlayers,
-        secrets: item.secrets.map((sec, sIdx) => ({
-          id: `sec-${stamp}-${idx}-${sIdx}`,
-          title: sec.title,
-          content: sec.content,
-          isRevealed: false,
-        })),
-        attributes: item.attributes.map((attr, aIdx) => ({
-          id: `attr-${stamp}-${idx}-${aIdx}`,
-          label: attr.label,
-          value: attr.value,
-          category: 'meta',
-        })),
-      });
-    });
+    const payloads = toImport.map((item, idx) => ({
+      name: item.name.trim() || 'Entidade sem nome',
+      subtitle: item.subtitle.trim() || 'Registro importado do PDF',
+      category: item.category,
+      tags: item.tags.length > 0 ? item.tags : ['PDF'],
+      summary: item.summary.trim() || item.name,
+      publicContent: item.publicContent.trim() || item.summary,
+      isPublicToPlayers: item.isPublicToPlayers,
+      secrets: item.secrets.map((sec, sIdx) => ({
+        id: `sec-${stamp}-${idx}-${sIdx}`,
+        title: sec.title,
+        content: sec.content,
+        isRevealed: false,
+      })),
+      attributes: item.attributes.map((attr, aIdx) => ({
+        id: `attr-${stamp}-${idx}-${aIdx}`,
+        label: attr.label,
+        value: attr.value,
+        category: 'meta' as const,
+      })),
+    }));
 
-    showToast(`${toImport.length} entidade(s) importada(s) do PDF para a Wiki!`);
+    const { createdCount, linkedCount } = await importWikiEntitiesWithRelations(
+      payloads,
+      extractedRelationships
+    );
+
+    showToast(
+      linkedCount > 0
+        ? `${createdCount} entidade(s) importada(s) e ${linkedCount} conexão(ões) criada(s) no Grafo!`
+        : `${createdCount} entidade(s) importada(s) do PDF para a Wiki!`
+    );
     resetModalState();
     onClose();
   };
