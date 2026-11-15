@@ -2669,6 +2669,34 @@ export async function fetchCharacterProgression55e(params: {
 // ============================================================================
 // 7. BUSCA ASSÍNCRONA DE MAGIAS E EQUIPAMENTOS NA API D&D 5.5E (2024)
 // ============================================================================
+function mapApiSpellDetail(d: Api2024SpellDetail): Omit<CharacterSpell, 'id'> {
+  return {
+    index: d.index,
+    name: d.name,
+    level: d.level ?? 0,
+    school: d.school?.name || 'Evocation',
+    castingTime: d.casting_time || 'Action',
+    range: d.range || '60 feet',
+    components: Array.isArray(d.components)
+      ? `${d.components.join(', ')}${d.material ? ` (${d.material})` : ''}`
+      : 'V, S',
+    duration: d.duration || 'Instantaneous',
+    description: d.description || 'Magia oficial SRD 5.2 (D&D 5.5e).',
+  };
+}
+
+export async function fetchSpellDetail55e(
+  index: string
+): Promise<Omit<CharacterSpell, 'id'> | null> {
+  const curated = CURATED_55E_SPELLS.find((s) => s.index === index);
+  if (curated) {
+    const { classes: _, ...rest } = curated;
+    return rest;
+  }
+  const d = await fetch2024Json<Api2024SpellDetail>(`/spells/${index}`);
+  return d ? mapApiSpellDetail(d) : null;
+}
+
 export async function searchDndSpells(
   query: string,
   options?: { classIndex?: string; maxLevel?: number }
@@ -2677,16 +2705,71 @@ export async function searchDndSpells(
   const maxLvl = options?.maxLevel;
   const clsIdx = options?.classIndex;
 
+  if (typeof maxLvl === 'number' && maxLvl <= 0 && clsIdx) {
+    // Non-caster classes at level 1 still can only see cantrips if they had any, otherwise none
+    const hasCantrip = CURATED_55E_SPELLS.some(
+      (s) => s.level === 0 && s.classes.includes(clsIdx)
+    );
+    if (!hasCantrip) return [];
+  }
+
   const localFiltered = CURATED_55E_SPELLS.filter((s) => {
     if (typeof maxLvl === 'number' && s.level > maxLvl) return false;
-    if (clsIdx && !q && !s.classes.includes(clsIdx)) return false;
+    if (clsIdx && !s.classes.includes(clsIdx)) return false;
     if (!q) return true;
     return (
       s.name.toLowerCase().includes(q) ||
       s.index.toLowerCase().includes(q) ||
       s.school.toLowerCase().includes(q)
     );
-  });
+  }).map(({ classes: _, ...rest }) => rest);
+
+  // Quando há classe definida, consulta a lista oficial da classe na API 2024 (suporta busca vazia ou por nome)
+  if (clsIdx) {
+    const classApi = await fetch2024Json<{ results?: Api2024SpellSummary[] }>(
+      `/classes/${clsIdx}/spells`
+    );
+    if (!classApi?.results) {
+      return localFiltered;
+    }
+
+    const candidates = classApi.results.filter((item) => {
+      if (typeof maxLvl === 'number' && (item.level ?? 0) > maxLvl) return false;
+      if (localFiltered.some((m) => m.index === item.index)) return false;
+      if (!q) return true;
+      return (
+        item.name.toLowerCase().includes(q) ||
+        item.index.toLowerCase().includes(q)
+      );
+    });
+
+    const detailSlice = candidates.slice(0, 16);
+    const detailed = await Promise.all(
+      detailSlice.map((item) => fetch2024Json<Api2024SpellDetail>(`/spells/${item.index}`))
+    );
+
+    const merged: Omit<CharacterSpell, 'id'>[] = [...localFiltered];
+    for (let i = 0; i < candidates.length && merged.length < 60; i++) {
+      const item = candidates[i];
+      const d = i < detailed.length ? detailed[i] : null;
+      if (d) {
+        merged.push(mapApiSpellDetail(d));
+      } else {
+        merged.push({
+          index: item.index,
+          name: item.name,
+          level: item.level ?? 0,
+          school: 'SRD 5.2',
+          castingTime: '—',
+          range: '—',
+          components: '—',
+          duration: '—',
+          description: 'Clique em Preparar para carregar a descrição completa da API D&D 5.5e.',
+        });
+      }
+    }
+    return merged.sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
+  }
 
   if (!q || q.length < 2) {
     return localFiltered;
@@ -2702,32 +2785,16 @@ export async function searchDndSpells(
 
   const topResults = data.results
     .filter((item) => (typeof maxLvl === 'number' ? (item.level ?? 0) <= maxLvl : true))
-    .slice(0, 6);
+    .slice(0, 20);
 
   const detailed = await Promise.all(
-    topResults.map(async (item) => {
-      const d = await fetch2024Json<Api2024SpellDetail>(`/spells/${item.index}`);
-      if (!d) return null;
-      return {
-        index: d.index,
-        name: d.name,
-        level: d.level ?? 0,
-        school: d.school?.name || 'Evocation',
-        castingTime: d.casting_time || 'Action',
-        range: d.range || '60 feet',
-        components: Array.isArray(d.components)
-          ? `${d.components.join(', ')}${d.material ? ` (${d.material})` : ''}`
-          : 'V, S',
-        duration: d.duration || 'Instantaneous',
-        description: d.description || 'Magia oficial SRD 5.2 (D&D 5.5e).',
-      } as Omit<CharacterSpell, 'id'>;
-    })
+    topResults.map((item) => fetch2024Json<Api2024SpellDetail>(`/spells/${item.index}`))
   );
 
   const merged: Omit<CharacterSpell, 'id'>[] = [...localFiltered];
-  for (const sp of detailed) {
-    if (sp && !merged.some((m) => m.index === sp.index)) {
-      merged.push(sp);
+  for (const d of detailed) {
+    if (d && !merged.some((m) => m.index === d.index)) {
+      merged.push(mapApiSpellDetail(d));
     }
   }
   return merged;
@@ -3205,45 +3272,53 @@ export async function fetchPermittedSpellsForBuild55e(params: {
       sp.classes.some((c) => allowedClasses.has(c))
   ).map(({ classes: _, ...rest }) => rest);
 
-  // 2. Complementa com lista oficial da API 2024 para a classe principal
-  const primarySpellClass =
-    cls.casterType !== 'none'
-      ? cls.index
-      : activeSub?.spellcasterThird
-      ? 'wizard'
-      : originSpellClass || lineageSpellClass;
+  // 2. Complementa com TODAS as magias oficiais da API 2024 para todas as classes liberadas pela build
+  const apiLists = await Promise.all(
+    Array.from(allowedClasses).map((cIdx) =>
+      fetch2024Json<{ results?: Api2024SpellSummary[] }>(`/classes/${cIdx}/spells`)
+    )
+  );
 
-  if (primarySpellClass) {
-    const apiList = await fetch2024Json<{ results?: Api2024SpellSummary[] }>(
-      `/classes/${primarySpellClass}/spells`
-    );
-    if (apiList?.results) {
-      const candidates = apiList.results
-        .filter(
-          (r) =>
-            r.level <= effectiveMaxCircle &&
-            !results.some((ex) => ex.index === r.index)
-        )
-        .slice(0, 14);
-
-      const detailed = await Promise.all(
-        candidates.map((c) => fetch2024Json<Api2024SpellDetail>(`/spells/${c.index}`))
-      );
-
-      for (const d of detailed) {
-        if (!d) continue;
-        results.push({
-          index: d.index,
-          name: d.name,
-          level: d.level ?? 0,
-          school: d.school?.name || 'Evocation',
-          castingTime: d.casting_time || 'Action',
-          range: d.range || '60 feet',
-          components: Array.isArray(d.components) ? d.components.join(', ') : 'V, S',
-          duration: d.duration || 'Instantaneous',
-          description: d.description?.slice(0, 260) || 'Magia oficial SRD 5.2 (5.5e).',
-        });
+  const candidates: Api2024SpellSummary[] = [];
+  for (const apiList of apiLists) {
+    if (!apiList?.results) continue;
+    for (const r of apiList.results) {
+      if (
+        r.level <= effectiveMaxCircle &&
+        !results.some((ex) => ex.index === r.index) &&
+        !candidates.some((c) => c.index === r.index)
+      ) {
+        candidates.push(r);
       }
+    }
+  }
+
+  candidates.sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
+
+  // Busca detalhes completos para o primeiro lote e mantém todas as demais já selecionáveis com carga sob demanda
+  const detailBatch = candidates.slice(0, 24);
+  const detailed = await Promise.all(
+    detailBatch.map((c) => fetch2024Json<Api2024SpellDetail>(`/spells/${c.index}`))
+  );
+
+  for (let i = 0; i < candidates.length; i++) {
+    const c = candidates[i];
+    const d = i < detailed.length ? detailed[i] : null;
+    if (d) {
+      results.push(mapApiSpellDetail(d));
+    } else {
+      results.push({
+        index: c.index,
+        name: c.name,
+        level: c.level ?? 0,
+        school: 'SRD 5.2',
+        castingTime: '—',
+        range: '—',
+        components: '—',
+        duration: '—',
+        description:
+          'Clique em "+ Selecionar" para carregar os detalhes completos da API D&D 5.5e.',
+      });
     }
   }
 

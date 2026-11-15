@@ -22,6 +22,7 @@ import {
   fetchCharacterProgression55e,
   getPermittedBuildChoices55e,
   fetchPermittedSpellsForBuild55e,
+  fetchSpellDetail55e,
   searchDndSpells,
   searchDndEquipment,
   StatKey,
@@ -637,7 +638,7 @@ export const CharacterSheetModal: React.FC<CharacterSheetModalProps> = ({
       enforceClassFilter
         ? {
             classIndex,
-            maxLevel: Math.max(1, maxUnlockedSpellCircle),
+            maxLevel: maxUnlockedSpellCircle,
           }
         : undefined
     ).then((res) => {
@@ -889,28 +890,50 @@ export const CharacterSheetModal: React.FC<CharacterSheetModalProps> = ({
     });
   };
 
+  const enrichSpellIfPlaceholder = (
+    spellId: string,
+    sp: Omit<CharacterSpell, 'id'>
+  ) => {
+    if (sp.castingTime !== '—' && sp.school !== 'SRD 5.2') return;
+    fetchSpellDetail55e(sp.index).then((full) => {
+      if (!full) return;
+      setSpells((prev) =>
+        prev.map((item) =>
+          item.id === spellId ? { ...item, ...full } : item
+        )
+      );
+      setPermittedSpells((prev) =>
+        prev.map((item) => (item.index === sp.index ? full : item))
+      );
+    });
+  };
+
   const handleTogglePermittedSpell = (sp: Omit<CharacterSpell, 'id'>) => {
     const exists = spells.find((s) => s.index === sp.index);
     if (exists) {
       setSpells((prev) => prev.filter((s) => s.index !== sp.index));
     } else {
+      const newId = `sp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const newSp: CharacterSpell = {
         ...sp,
-        id: `sp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        id: newId,
         prepared: true,
       };
       setSpells((prev) => [...prev, newSp].sort((a, b) => a.level - b.level));
+      enrichSpellIfPlaceholder(newId, sp);
     }
   };
 
   const handleAddSpellFromApi = (sp: Omit<CharacterSpell, 'id'>) => {
     if (spells.some((existing) => existing.index === sp.index)) return;
+    const newId = `sp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const newSp: CharacterSpell = {
       ...sp,
-      id: `sp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      id: newId,
       prepared: true,
     };
     setSpells((prev) => [newSp, ...prev]);
+    enrichSpellIfPlaceholder(newId, sp);
   };
 
   const handleRemoveSpell = (id: string) => {
