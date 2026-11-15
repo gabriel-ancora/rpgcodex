@@ -1075,7 +1075,7 @@ export const CharacterSheetModal: React.FC<CharacterSheetModalProps> = ({
     <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-3 lg:p-6">
       <div className="max-w-5xl w-full max-h-[92vh] rounded-xl bg-[#131317] border border-white/[0.1] shadow-elevated flex flex-col overflow-hidden">
         {/* Modal Header */}
-        <div className="px-6 py-4 border-b border-white/[0.06] flex flex-wrap items-center justify-between gap-3">
+        <div className="px-6 py-4 border-b border-white/[0.06] flex flex-wrap items-center justify-between gap-3 shrink-0">
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-base font-semibold text-zinc-100">
@@ -1155,7 +1155,7 @@ export const CharacterSheetModal: React.FC<CharacterSheetModalProps> = ({
         </div>
 
         {/* Underline Tabs */}
-        <div className="px-6 border-b border-white/[0.06] flex items-center justify-between overflow-x-auto">
+        <div className="px-6 border-b border-white/[0.06] flex items-center justify-between overflow-x-auto shrink-0">
           <div className="flex items-center gap-1 shrink-0">
             {[
               { id: 'stats' as const, label: 'Atributos & combate', icon: Swords },

@@ -12,6 +12,14 @@ export default {
         serif: ['"Newsreader"', 'Georgia', 'serif'],
         mono: ['"Roboto Mono"', 'monospace'],
       },
+      fontSize: {
+        xs: ['0.875rem', { lineHeight: '1.35rem' }],
+        sm: ['0.95rem', { lineHeight: '1.45rem' }],
+        base: ['1.0625rem', { lineHeight: '1.6rem' }],
+        lg: ['1.1875rem', { lineHeight: '1.75rem' }],
+        xl: ['1.375rem', { lineHeight: '1.9rem' }],
+        '2xl': ['1.65rem', { lineHeight: '2.15rem' }],
+      },
       colors: {
         obsidian: {
           950: '#0b0b0d',

@@ -128,7 +128,7 @@ export const WorkspaceSidebar: React.FC<WorkspaceSidebarProps> = ({
     return (
       <div
         className={`h-full flex flex-col bg-[#0e0e11] border-r border-white/[0.06] select-none transition-all duration-200 ${
-          isNarrow ? 'w-[60px]' : 'w-[236px]'
+          isNarrow ? 'w-[60px]' : 'w-[252px]'
         }`}
       >
         {/* Top Brand & Collapse Toggle */}
