@@ -82,6 +82,8 @@ export const list = query({
 
     const results = [];
     for (const m of maps) {
+      if (role === "player" && m.isPublicToPlayers === false) continue;
+
       let resolvedUrl = m.customImageUrl;
       if (m.storageId) {
         const storageUrl = await ctx.storage.getUrl(m.storageId);
@@ -89,6 +91,10 @@ export const list = query({
       }
 
       const mapShapes = (m.shapes || []).filter((s) => {
+        if (s.type === "fog") {
+          if (role === "player" && s.isRevealed) return false;
+          return true;
+        }
         if (role === "player" && s.isSecret && !s.isRevealed) return false;
         return true;
       });
@@ -101,6 +107,7 @@ export const list = query({
       results.push({
         ...m,
         id: m._id,
+        isPublicToPlayers: m.isPublicToPlayers ?? true,
         customImageUrl: resolvedUrl,
         shapes: mapShapes,
         pins: pins
@@ -131,15 +138,33 @@ export const create = mutation({
     presetSvgType: v.optional(v.string()),
     customImageUrl: v.optional(v.string()),
     storageId: v.optional(v.id("_storage")),
+    isPublicToPlayers: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     await assertDmPermission(ctx, args.sessionToken, args.campaignId);
     const { sessionToken: _, ...data } = args;
     return await ctx.db.insert("campaignMaps", {
       ...data,
+      isPublicToPlayers: args.isPublicToPlayers ?? true,
       campaignId: normalizeCampaignId(args.campaignId),
       shapes: [],
     });
+  },
+});
+
+export const setVisibility = mutation({
+  args: {
+    mapId: v.string(),
+    isPublicToPlayers: v.boolean(),
+    sessionToken: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const mapId = ctx.db.normalizeId("campaignMaps", args.mapId);
+    if (!mapId) throw new Error("Mapa ainda não sincronizado na nuvem.");
+    const map = await ctx.db.get(mapId);
+    if (!map) return;
+    await assertDmPermission(ctx, args.sessionToken, map.campaignId);
+    await ctx.db.patch(mapId, { isPublicToPlayers: args.isPublicToPlayers });
   },
 });
 

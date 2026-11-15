@@ -163,6 +163,7 @@ export default defineSchema({
     presetSvgType: v.optional(v.string()),
     customImageUrl: v.optional(v.string()),
     storageId: v.optional(v.id("_storage")),
+    isPublicToPlayers: v.optional(v.boolean()),
     shapes: v.optional(
       v.array(
         v.object({

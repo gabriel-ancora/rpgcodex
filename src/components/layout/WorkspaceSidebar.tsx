@@ -615,19 +615,21 @@ export const WorkspaceSidebar: React.FC<WorkspaceSidebarProps> = ({
             </button>
           )}
 
-          <button
-            onClick={() => {
-              setIsSettingsModalOpen(true);
-              onCloseMobile();
-            }}
-            className={navItemClass(false)}
-            title="Configurações, IA & Backups"
-          >
-            <span className="flex items-center gap-2.5 truncate">
-              <Settings className="w-4 h-4 shrink-0 opacity-80" />
-              {!isNarrow && <span>Configurações</span>}
-            </span>
-          </button>
+          {!isPlayerMode && (
+            <button
+              onClick={() => {
+                setIsSettingsModalOpen(true);
+                onCloseMobile();
+              }}
+              className={navItemClass(false)}
+              title="Configurações, IA & Backups"
+            >
+              <span className="flex items-center gap-2.5 truncate">
+                <Settings className="w-4 h-4 shrink-0 opacity-80" />
+                {!isNarrow && <span>Configurações</span>}
+              </span>
+            </button>
+          )}
 
           {/* User Footer */}
           <div

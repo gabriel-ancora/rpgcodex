@@ -257,6 +257,7 @@ interface CampaignState {
     storageId?: Id<'_storage'>
   ) => void;
   deleteMap: (id: string) => void;
+  toggleMapVisibility: (mapId: string) => void;
   addMapPin: (mapId: string, pin: Omit<MapPin, 'id'>) => void;
   updateMapPin: (mapId: string, pinId: string, updates: Partial<MapPin>) => void;
   deleteMapPin: (mapId: string, pinId: string) => void;
@@ -264,6 +265,7 @@ interface CampaignState {
   addMapShape: (mapId: string, shape: Omit<MapDrawingShape, 'id'>) => void;
   updateMapShape: (mapId: string, shapeId: string, updates: Partial<MapDrawingShape>) => void;
   deleteMapShape: (mapId: string, shapeId: string) => void;
+  setMapShapes: (mapId: string, shapes: MapDrawingShape[], toastMessage?: string) => void;
 
   // Calendar & Timeline Actions
   advanceCalendarDays: (days: number) => void;
@@ -1127,6 +1129,10 @@ export const useCampaignStore = create<CampaignState>()(
       },
 
       setGeminiApiKey: (key) => {
+        if (get().workspaceMode === 'player' || get().currentUser?.role === 'player') {
+          get().showToast('Apenas o Mestre pode alterar a chave de API da IA.');
+          return;
+        }
         set({ geminiApiKey: key });
         get().showToast(
           key.trim()
@@ -1135,7 +1141,13 @@ export const useCampaignStore = create<CampaignState>()(
         );
       },
 
-      setIsSettingsModalOpen: (open) => set({ isSettingsModalOpen: open }),
+      setIsSettingsModalOpen: (open) => {
+        if (open && (get().workspaceMode === 'player' || get().currentUser?.role === 'player')) {
+          get().showToast('Configurações de API e backup são exclusivas do Mestre.');
+          return;
+        }
+        set({ isSettingsModalOpen: open });
+      },
 
       setIsDmPartyDrawerOpen: (open, characterId = null) =>
         set((state) => ({
@@ -1988,6 +2000,7 @@ export const useCampaignStore = create<CampaignState>()(
           regionType,
           presetSvgType: customImageUrl ? 'custom' : 'tactical_grid',
           customImageUrl,
+          isPublicToPlayers: true,
           pins: [],
           shapes: [],
         };
@@ -2006,6 +2019,7 @@ export const useCampaignStore = create<CampaignState>()(
             presetSvgType: newMap.presetSvgType,
             customImageUrl,
             storageId,
+            isPublicToPlayers: true,
           })
           .then((cloudMapId) => {
             if (cloudMapId) {
@@ -2040,6 +2054,35 @@ export const useCampaignStore = create<CampaignState>()(
             get().showToast(formatCloudError(err, 'Erro ao remover mapa na nuvem.'))
           );
         get().showToast('Mapa removido.');
+      },
+
+      toggleMapVisibility: (mapId) => {
+        const target = get().maps.find((m) => m.id === mapId);
+        if (!target) return;
+        const nextVisible = target.isPublicToPlayers === false;
+        set((state) => ({
+          maps: state.maps.map((m) =>
+            m.id === mapId ? { ...m, isPublicToPlayers: nextVisible } : m
+          ),
+        }));
+
+        convexClient
+          .mutation(api.maps.setVisibility, {
+            mapId,
+            isPublicToPlayers: nextVisible,
+            sessionToken: get().sessionToken || undefined,
+          })
+          .catch((err) =>
+            get().showToast(
+              formatCloudError(err, 'Erro ao atualizar visibilidade do mapa na nuvem.')
+            )
+          );
+
+        get().showToast(
+          nextVisible
+            ? `Mapa "${target.name}" agora está visível para os jogadores!`
+            : `Mapa "${target.name}" oculto dos jogadores.`
+        );
       },
 
       addMapPin: (mapId, pin) => {
@@ -2244,6 +2287,22 @@ export const useCampaignStore = create<CampaignState>()(
             get().showToast(formatCloudError(err, 'Erro ao remover camada vetorial na nuvem.'))
           );
         get().showToast('Desenho/Território removido do mapa.');
+      },
+
+      setMapShapes: (mapId, shapes, toastMessage) => {
+        set((state) => ({
+          maps: state.maps.map((m) => (m.id === mapId ? { ...m, shapes } : m)),
+        }));
+        convexClient
+          .mutation(api.maps.updateShapes, {
+            mapId,
+            shapes,
+            sessionToken: get().sessionToken || undefined,
+          })
+          .catch((err) =>
+            get().showToast(formatCloudError(err, 'Erro ao atualizar camadas do mapa na nuvem.'))
+          );
+        if (toastMessage) get().showToast(toastMessage);
       },
 
       // ======================================================================

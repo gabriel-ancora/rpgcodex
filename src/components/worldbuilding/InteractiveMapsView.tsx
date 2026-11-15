@@ -153,11 +153,15 @@ const ENTITY_CATEGORY_DOT: Record<string, string> = {
 interface MapVectorLayerProps {
   shapes: MapDrawingShape[];
   drawingPoints: { x: number; y: number }[];
+  dragBox: { startX: number; startY: number; currentX: number; currentY: number } | null;
   activeTool: DrawingToolType;
   shapeColor: string;
   rulerPoints: { x: number; y: number }[];
   rulerDistanceLabel: string;
   viewRole: 'gm' | 'player';
+  selectedShapeId: string | null;
+  canSelectShape: boolean;
+  onSelectShape: (shapeId: string) => void;
   entitiesMap: Map<string, Entity>;
   onSelectEntity: (entityId: string) => void;
 }
@@ -166,21 +170,45 @@ const MapVectorLayer: React.FC<MapVectorLayerProps> = React.memo(
   ({
     shapes,
     drawingPoints,
+    dragBox,
     activeTool,
     shapeColor,
     rulerPoints,
     rulerDistanceLabel,
-    viewRole,
+    selectedShapeId,
+    canSelectShape,
+    onSelectShape,
     entitiesMap,
     onSelectEntity,
   }) => {
+    const nonFogShapes = shapes.filter((s) => s.type !== 'fog');
+    const previewBox = dragBox
+      ? {
+          x: Math.min(dragBox.startX, dragBox.currentX),
+          y: Math.min(dragBox.startY, dragBox.currentY),
+          w: Math.abs(dragBox.currentX - dragBox.startX),
+          h: Math.abs(dragBox.currentY - dragBox.startY),
+        }
+      : null;
+
     return (
       <svg
         viewBox="0 0 100 100"
         preserveAspectRatio="none"
         className="absolute inset-0 w-full h-full pointer-events-none z-10"
       >
-        {shapes.map((shape) => {
+        {nonFogShapes.map((shape) => {
+          const isSelected = shape.id === selectedShapeId;
+          const shapeInteractiveProps = canSelectShape
+            ? {
+                className: 'pointer-events-auto cursor-pointer',
+                onPointerDown: (e: React.PointerEvent<SVGGElement>) => {
+                  if (e.button !== 0) return;
+                  e.stopPropagation();
+                  onSelectShape(shape.id);
+                },
+              }
+            : {};
           const linkedEntity = shape.entityId
             ? entitiesMap.get(shape.entityId)
             : undefined;
@@ -196,7 +224,19 @@ const MapVectorLayer: React.FC<MapVectorLayerProps> = React.memo(
             const mid = shape.points[Math.floor(shape.points.length / 2)];
             const isRiver = shape.type === 'river';
             return (
-              <g key={shape.id}>
+              <g key={shape.id} {...shapeInteractiveProps}>
+                {isSelected && (
+                  <polyline
+                    points={pts}
+                    fill="none"
+                    stroke="#ffffff"
+                    strokeOpacity={0.75}
+                    strokeWidth={(shape.strokeWidth || 3) * 0.42}
+                    strokeDasharray="1.2 0.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                )}
                 {isRiver && (
                   <polyline
                     points={pts}
@@ -243,14 +283,14 @@ const MapVectorLayer: React.FC<MapVectorLayerProps> = React.memo(
             const cy =
               shape.points.reduce((acc, p) => acc + p.y, 0) / shape.points.length;
             return (
-              <g key={shape.id}>
+              <g key={shape.id} {...shapeInteractiveProps}>
                 <polygon
                   points={pts}
                   fill={shape.color}
                   fillOpacity={shape.opacity ?? 0.18}
-                  stroke={shape.color}
-                  strokeWidth={0.3}
-                  strokeDasharray={shape.dashed ? '1.1 0.7' : undefined}
+                  stroke={isSelected ? '#ffffff' : shape.color}
+                  strokeWidth={isSelected ? 0.5 : 0.3}
+                  strokeDasharray={shape.dashed || isSelected ? '1.1 0.7' : undefined}
                 />
                 <text
                   x={cx}
@@ -277,16 +317,16 @@ const MapVectorLayer: React.FC<MapVectorLayerProps> = React.memo(
             const center = shape.points[0];
             const r = shape.radius || 10;
             return (
-              <g key={shape.id}>
+              <g key={shape.id} {...shapeInteractiveProps}>
                 <circle
                   cx={center.x}
                   cy={center.y}
                   r={r}
                   fill={shape.color}
                   fillOpacity={shape.opacity ?? 0.16}
-                  stroke={shape.color}
-                  strokeWidth={0.3}
-                  strokeDasharray={shape.dashed ? '1.1 0.7' : undefined}
+                  stroke={isSelected ? '#ffffff' : shape.color}
+                  strokeWidth={isSelected ? 0.5 : 0.3}
+                  strokeDasharray={shape.dashed || isSelected ? '1.1 0.7' : undefined}
                 />
                 <text
                   x={center.x}
@@ -307,7 +347,7 @@ const MapVectorLayer: React.FC<MapVectorLayerProps> = React.memo(
             const w = shape.width || 16;
             const h = shape.height || 12;
             return (
-              <g key={shape.id}>
+              <g key={shape.id} {...shapeInteractiveProps}>
                 <rect
                   x={p.x}
                   y={p.y}
@@ -315,9 +355,9 @@ const MapVectorLayer: React.FC<MapVectorLayerProps> = React.memo(
                   height={h}
                   fill={shape.color}
                   fillOpacity={shape.opacity ?? 0.16}
-                  stroke={shape.color}
-                  strokeWidth={0.3}
-                  strokeDasharray={shape.dashed ? '1.1 0.7' : undefined}
+                  stroke={isSelected ? '#ffffff' : shape.color}
+                  strokeWidth={isSelected ? 0.5 : 0.3}
+                  strokeDasharray={shape.dashed || isSelected ? '1.1 0.7' : undefined}
                 />
                 <text
                   x={p.x + w / 2}
@@ -333,50 +373,24 @@ const MapVectorLayer: React.FC<MapVectorLayerProps> = React.memo(
             );
           }
 
-          if (shape.type === 'fog' && shape.points[0]) {
-            // Fog of war: hidden when isRevealed === true for players; semi-opaque for GM
-            if (shape.isRevealed && viewRole === 'player') return null;
-            const p = shape.points[0];
-            const w = shape.width || 22;
-            const h = shape.height || 18;
-            const fillOp =
-              viewRole === 'player' ? 0.97 : shape.isRevealed ? 0.18 : 0.62;
-            return (
-              <g key={shape.id}>
-                <rect
-                  x={p.x}
-                  y={p.y}
-                  width={w}
-                  height={h}
-                  rx={0.8}
-                  fill="#070709"
-                  fillOpacity={fillOp}
-                  stroke={viewRole === 'gm' ? '#71717a' : 'none'}
-                  strokeWidth={0.25}
-                  strokeDasharray="0.9 0.7"
-                />
-                {viewRole === 'gm' && (
-                  <text
-                    x={p.x + w / 2}
-                    y={p.y + h / 2}
-                    textAnchor="middle"
-                    fill="#a1a1aa"
-                    fontSize="1.6"
-                    fontStyle="italic"
-                  >
-                    {shape.label || 'Névoa de Guerra'}
-                    {shape.isRevealed ? ' (Dissipada)' : ''}
-                  </text>
-                )}
-              </g>
-            );
-          }
-
           if (shape.type === 'text' && shape.points[0]) {
             const p = shape.points[0];
             const fs = shape.fontSize || 2.4;
             return (
-              <g key={shape.id}>
+              <g key={shape.id} {...shapeInteractiveProps}>
+                {isSelected && (
+                  <rect
+                    x={p.x - 10}
+                    y={p.y - fs - 0.8}
+                    width={20}
+                    height={fs + 2.2}
+                    rx={0.5}
+                    fill="none"
+                    stroke="#ffffff"
+                    strokeWidth={0.3}
+                    strokeDasharray="0.9 0.6"
+                  />
+                )}
                 <text
                   x={p.x}
                   y={p.y}
@@ -397,6 +411,22 @@ const MapVectorLayer: React.FC<MapVectorLayerProps> = React.memo(
 
           return null;
         })}
+
+        {/* Drag-to-draw Rect / Fog Live Preview */}
+        {previewBox && (activeTool === 'fog' || activeTool === 'rect') && (
+          <rect
+            x={previewBox.x}
+            y={previewBox.y}
+            width={previewBox.w}
+            height={previewBox.h}
+            rx={0.6}
+            fill={activeTool === 'fog' ? '#09090b' : shapeColor}
+            fillOpacity={activeTool === 'fog' ? 0.65 : 0.22}
+            stroke={activeTool === 'fog' ? '#fbbf24' : shapeColor}
+            strokeWidth={0.4}
+            strokeDasharray="1 0.7"
+          />
+        )}
 
         {/* Active Multi-Point Preview */}
         {drawingPoints.length > 0 && (
@@ -452,6 +482,88 @@ const MapVectorLayer: React.FC<MapVectorLayerProps> = React.memo(
             </text>
           </g>
         )}
+      </svg>
+    );
+  }
+);
+
+// ============================================================================
+// MEMOIZED FOG OF WAR LAYER (ABOVE PINS FOR PLAYERS, BELOW PINS FOR GM)
+// ============================================================================
+interface MapFogLayerProps {
+  shapes: MapDrawingShape[];
+  viewRole: 'gm' | 'player';
+  selectedShapeId: string | null;
+  canSelectShape: boolean;
+  onSelectShape: (shapeId: string) => void;
+}
+
+const MapFogLayer: React.FC<MapFogLayerProps> = React.memo(
+  ({ shapes, viewRole, selectedShapeId, canSelectShape, onSelectShape }) => {
+    const fogShapes = shapes.filter((s) => s.type === 'fog' && s.points[0]);
+    if (fogShapes.length === 0) return null;
+
+    return (
+      <svg
+        viewBox="0 0 100 100"
+        preserveAspectRatio="none"
+        className={`absolute inset-0 w-full h-full pointer-events-none ${
+          viewRole === 'player' ? 'z-[25]' : 'z-[15]'
+        }`}
+      >
+        {fogShapes.map((shape) => {
+          if (shape.isRevealed && viewRole === 'player') return null;
+          const p = shape.points[0];
+          const w = shape.width || 22;
+          const h = shape.height || 18;
+          const isSelected = shape.id === selectedShapeId;
+          const fillOp =
+            viewRole === 'player' ? 0.99 : shape.isRevealed ? 0.14 : 0.62;
+
+          return (
+            <g
+              key={shape.id}
+              className={canSelectShape ? 'pointer-events-auto cursor-pointer' : undefined}
+              onPointerDown={(e) => {
+                if (!canSelectShape || e.button !== 0) return;
+                e.stopPropagation();
+                onSelectShape(shape.id);
+              }}
+            >
+              <rect
+                x={p.x}
+                y={p.y}
+                width={w}
+                height={h}
+                rx={0.5}
+                fill="#070709"
+                fillOpacity={fillOp}
+                stroke={
+                  viewRole === 'gm'
+                    ? isSelected
+                      ? '#fbbf24'
+                      : '#71717a'
+                    : 'none'
+                }
+                strokeWidth={isSelected ? 0.55 : 0.25}
+                strokeDasharray="0.9 0.7"
+              />
+              {viewRole === 'gm' && (
+                <text
+                  x={p.x + w / 2}
+                  y={p.y + h / 2}
+                  textAnchor="middle"
+                  fill={isSelected ? '#fde68a' : '#a1a1aa'}
+                  fontSize="1.6"
+                  fontStyle="italic"
+                >
+                  {shape.label || 'Névoa de Guerra'}
+                  {shape.isRevealed ? ' (Dissipada)' : ''}
+                </text>
+              )}
+            </g>
+          );
+        })}
       </svg>
     );
   }
@@ -566,6 +678,7 @@ export const InteractiveMapsView: React.FC = () => {
   const addEntity = useCampaignStore((s) => s.addEntity);
   const addMap = useCampaignStore((s) => s.addMap);
   const deleteMap = useCampaignStore((s) => s.deleteMap);
+  const toggleMapVisibility = useCampaignStore((s) => s.toggleMapVisibility);
   const addMapPin = useCampaignStore((s) => s.addMapPin);
   const updateMapPin = useCampaignStore((s) => s.updateMapPin);
   const deleteMapPin = useCampaignStore((s) => s.deleteMapPin);
@@ -573,6 +686,7 @@ export const InteractiveMapsView: React.FC = () => {
   const addMapShape = useCampaignStore((s) => s.addMapShape);
   const updateMapShape = useCampaignStore((s) => s.updateMapShape);
   const deleteMapShape = useCampaignStore((s) => s.deleteMapShape);
+  const setMapShapes = useCampaignStore((s) => s.setMapShapes);
   const setSelectedEntityId = useCampaignStore((s) => s.setSelectedEntityId);
   const setWorldSubTab = useCampaignStore((s) => s.setWorldSubTab);
   const addCombatant = useCampaignStore((s) => s.addCombatant);
@@ -628,6 +742,13 @@ export const InteractiveMapsView: React.FC = () => {
 
   const [activeTool, setActiveTool] = useState<DrawingToolType>('select');
   const [drawingPoints, setDrawingPoints] = useState<{ x: number; y: number }[]>([]);
+  const [dragBox, setDragBox] = useState<{
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
+  } | null>(null);
+  const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null);
   const [rulerPoints, setRulerPoints] = useState<{ x: number; y: number }[]>([]);
   const [shapeLabel, setShapeLabel] = useState('Território / Rota');
   const [shapeColor, setShapeColor] = useState('#d4a853');
@@ -872,12 +993,45 @@ export const InteractiveMapsView: React.FC = () => {
     [visiblePins, selectedPinId]
   );
 
+  const selectedShape: MapDrawingShape | undefined = useMemo(
+    () => visibleShapes.find((s) => s.id === selectedShapeId),
+    [visibleShapes, selectedShapeId]
+  );
+
   // Reset inline pin editor when switching selected pin
   useEffect(() => {
     setIsEditingPin(false);
     setEditDraft(null);
     setInspectorWikiSearch('');
   }, [selectedPinId, currentMap?.id]);
+
+  // Clear shape selection on map change
+  useEffect(() => {
+    setSelectedShapeId(null);
+  }, [currentMap?.id]);
+
+  // Keyboard Delete/Backspace shortcut for GM to delete selected shape/fog or pin
+  useEffect(() => {
+    if (viewRole !== 'gm' || !currentMap) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if ((e.target as HTMLElement | null)?.isContentEditable) return;
+
+      if (selectedShapeId) {
+        e.preventDefault();
+        deleteMapShape(currentMap.id, selectedShapeId);
+        setSelectedShapeId(null);
+      } else if (selectedPinId) {
+        e.preventDefault();
+        deleteMapPin(currentMap.id, selectedPinId);
+        setSelectedPinId(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [viewRole, currentMap, selectedShapeId, selectedPinId, deleteMapShape, deleteMapPin]);
 
   const startEditingActivePin = () => {
     if (!activePin) return;
@@ -952,6 +1106,19 @@ export const InteractiveMapsView: React.FC = () => {
       return;
     }
 
+    if (
+      viewRole === 'gm' &&
+      (activeTool === 'fog' || activeTool === 'rect') &&
+      e.button === 0
+    ) {
+      const pt = clientToStagePercent(e.clientX, e.clientY);
+      if (pt) {
+        setDragBox({ startX: pt.x, startY: pt.y, currentX: pt.x, currentY: pt.y });
+        e.currentTarget.setPointerCapture(e.pointerId);
+      }
+      return;
+    }
+
     if (activeTool === 'ruler' && e.button === 0) {
       const pt = clientToStagePercent(e.clientX, e.clientY);
       if (!pt) return;
@@ -964,6 +1131,16 @@ export const InteractiveMapsView: React.FC = () => {
       const pt = clientToStagePercent(e.clientX, e.clientY);
       if (pt) {
         setDraggingPin({ id: draggingPin.id, x: pt.x, y: pt.y });
+      }
+      return;
+    }
+
+    if (dragBox) {
+      const pt = clientToStagePercent(e.clientX, e.clientY);
+      if (pt) {
+        setDragBox((prev) =>
+          prev ? { ...prev, currentX: pt.x, currentY: pt.y } : null
+        );
       }
       return;
     }
@@ -998,6 +1175,62 @@ export const InteractiveMapsView: React.FC = () => {
       return;
     }
 
+    if (dragBox && currentMap && viewRole === 'gm') {
+      const box = dragBox;
+      setDragBox(null);
+      const minX = Math.min(box.startX, box.currentX);
+      const minY = Math.min(box.startY, box.currentY);
+      const w = Math.abs(box.currentX - box.startX);
+      const h = Math.abs(box.currentY - box.startY);
+      const isDragged = w >= 1.5 && h >= 1.5;
+
+      if (activeTool === 'rect') {
+        addMapShape(currentMap.id, {
+          type: 'rect',
+          label: shapeLabel.trim() || 'Estrutura / Quarteirão',
+          color: shapeColor,
+          strokeWidth: shapeStrokeWidth,
+          dashed: shapeDashed,
+          opacity: 0.18,
+          entityId: shapeEntityId || undefined,
+          points: [
+            {
+              x: isDragged ? minX : Math.max(1, box.startX - 9),
+              y: isDragged ? minY : Math.max(1, box.startY - 7),
+            },
+          ],
+          width: isDragged ? Number(w.toFixed(2)) : 18,
+          height: isDragged ? Number(h.toFixed(2)) : 14,
+          isSecret: false,
+          isRevealed: true,
+        });
+        setActiveTool('select');
+        return;
+      }
+
+      if (activeTool === 'fog') {
+        addMapShape(currentMap.id, {
+          type: 'fog',
+          label: shapeLabel.trim() || 'Área Inexplorada',
+          color: '#09090b',
+          strokeWidth: 1,
+          opacity: 0.95,
+          points: [
+            {
+              x: isDragged ? minX : Math.max(0, box.startX - 12),
+              y: isDragged ? minY : Math.max(0, box.startY - 10),
+            },
+          ],
+          width: isDragged ? Number(w.toFixed(2)) : 24,
+          height: isDragged ? Number(h.toFixed(2)) : 20,
+          isSecret: true,
+          isRevealed: false,
+        });
+        showToast('Zona de Névoa de Guerra adicionada.');
+        return;
+      }
+    }
+
     const wasPanning = panDragRef.current.active;
     const didMove = panDragRef.current.moved;
     panDragRef.current.active = false;
@@ -1006,7 +1239,14 @@ export const InteractiveMapsView: React.FC = () => {
       return;
     }
 
-    if (activeTool === 'select' || activeTool === 'pan' || activeTool === 'ruler') {
+    if (activeTool === 'select') {
+      if (!didMove && e.button === 0) {
+        setSelectedShapeId(null);
+      }
+      return;
+    }
+
+    if (activeTool === 'pan' || activeTool === 'ruler') {
       return;
     }
 
@@ -1370,6 +1610,11 @@ export const InteractiveMapsView: React.FC = () => {
                 }`}
               >
                 <span>{m.name}</span>
+                {viewRole === 'gm' && m.isPublicToPlayers === false && (
+                  <span title="Mapa oculto dos jogadores" className="inline-flex">
+                    <EyeOff className="w-3 h-3 text-amber-400 shrink-0" />
+                  </span>
+                )}
                 <span className="text-[10px] font-mono opacity-60 tabular-nums">
                   {m.pins.length}
                 </span>
@@ -1534,6 +1779,73 @@ export const InteractiveMapsView: React.FC = () => {
                   className="input-clean px-2 py-0.5 rounded text-xs w-32"
                 />
 
+                {activeTool === 'fog' && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] text-zinc-400 hidden sm:inline">
+                      Arraste no mapa para cobrir uma área
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        addMapShape(currentMap.id, {
+                          type: 'fog',
+                          label: 'Névoa Total',
+                          color: '#09090b',
+                          strokeWidth: 1,
+                          opacity: 0.98,
+                          points: [{ x: 0, y: 0 }],
+                          width: 100,
+                          height: 100,
+                          isSecret: true,
+                          isRevealed: false,
+                        });
+                        showToast('Mapa inteiro coberto por Névoa de Guerra!');
+                      }}
+                      className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-100 text-[11px] border border-white/[0.08] inline-flex items-center gap-1"
+                      title="Cobrir todo o mapa com névoa para os jogadores"
+                    >
+                      <CloudOff className="w-3 h-3" />
+                      <span>Cobrir mapa inteiro</span>
+                    </button>
+                    {(currentMap.shapes || []).some((s) => s.type === 'fog') && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = (currentMap.shapes || []).map((s) =>
+                              s.type === 'fog' ? { ...s, isRevealed: true } : s
+                            );
+                            setMapShapes(
+                              currentMap.id,
+                              next,
+                              'Todas as névoas foram dissipadas.'
+                            );
+                          }}
+                          className="px-2 py-0.5 rounded bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 text-[11px] border border-emerald-500/25"
+                        >
+                          Dissipar todas
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = (currentMap.shapes || []).filter(
+                              (s) => s.type !== 'fog'
+                            );
+                            setMapShapes(
+                              currentMap.id,
+                              next,
+                              'Todas as névoas foram removidas.'
+                            );
+                          }}
+                          className="px-2 py-0.5 rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 text-[11px] border border-rose-500/25"
+                        >
+                          Limpar névoas
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+
                 {activeTool !== 'fog' && (
                   <>
                     <div className="flex items-center gap-1">
@@ -1653,14 +1965,45 @@ export const InteractiveMapsView: React.FC = () => {
             </div>
           )}
 
-          {viewRole === 'gm' && maps.length >= 1 && (
-            <button
-              onClick={() => deleteMap(currentMap.id)}
-              className="p-1.5 rounded-md text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
-              title="Excluir mapa atual"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
+          {viewRole === 'gm' && (
+            <div className="flex items-center gap-1.5 ml-auto">
+              <button
+                type="button"
+                onClick={() => toggleMapVisibility(currentMap.id)}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border transition-colors ${
+                  currentMap.isPublicToPlayers === false
+                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/30 hover:bg-amber-500/25'
+                    : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/25'
+                }`}
+                title={
+                  currentMap.isPublicToPlayers === false
+                    ? 'Clique para mostrar este mapa aos jogadores'
+                    : 'Clique para esconder este mapa dos jogadores'
+                }
+              >
+                {currentMap.isPublicToPlayers === false ? (
+                  <>
+                    <EyeOff className="w-3.5 h-3.5" />
+                    <span>Oculto dos jogadores</span>
+                  </>
+                ) : (
+                  <>
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>Visível aos jogadores</span>
+                  </>
+                )}
+              </button>
+
+              {maps.length >= 1 && (
+                <button
+                  onClick={() => deleteMap(currentMap.id)}
+                  className="p-1.5 rounded-md text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                  title="Excluir mapa atual"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -1674,10 +2017,14 @@ export const InteractiveMapsView: React.FC = () => {
             </div>
             <div className="space-y-1 max-w-sm">
               <h3 className="text-sm font-medium text-zinc-200">
-                Nenhum mapa cadastrado
+                {viewRole === 'player'
+                  ? 'Nenhum mapa revelado pelo Mestre'
+                  : 'Nenhum mapa cadastrado'}
               </h3>
               <p className="text-xs text-zinc-500">
-                Envie uma imagem de mapa regional, urbano ou tático (ou crie um grid vetorial limpo) para posicionar marcadores, zoom e vínculos com a Wiki.
+                {viewRole === 'player'
+                  ? 'Aguarde o Mestre tornar um mapa visível para os jogadores.'
+                  : 'Envie uma imagem de mapa regional, urbano ou tático (ou crie um grid vetorial limpo) para posicionar marcadores, zoom e vínculos com a Wiki.'}
               </p>
             </div>
             {viewRole === 'gm' && (
@@ -1874,17 +2221,36 @@ export const InteractiveMapsView: React.FC = () => {
                 </svg>
               )}
 
-              {/* Memoized Vector & Fog Layer */}
+              {/* Memoized Vector Layer */}
               <MapVectorLayer
                 shapes={visibleShapes}
                 drawingPoints={drawingPoints}
+                dragBox={dragBox}
                 activeTool={activeTool}
                 shapeColor={shapeColor}
                 rulerPoints={rulerPoints}
                 rulerDistanceLabel={rulerDistanceLabel}
                 viewRole={viewRole}
+                selectedShapeId={selectedShapeId}
+                canSelectShape={viewRole === 'gm' && activeTool === 'select'}
+                onSelectShape={(shapeId) => {
+                  setSelectedShapeId(shapeId);
+                  setSelectedPinId(null);
+                }}
                 entitiesMap={entitiesMap}
                 onSelectEntity={openEntityInWiki}
+              />
+
+              {/* Memoized Fog of War Layer (covers pins for players, below pins for GM) */}
+              <MapFogLayer
+                shapes={visibleShapes}
+                viewRole={viewRole}
+                selectedShapeId={selectedShapeId}
+                canSelectShape={viewRole === 'gm' && activeTool === 'select'}
+                onSelectShape={(shapeId) => {
+                  setSelectedShapeId(shapeId);
+                  setSelectedPinId(null);
+                }}
               />
 
               {/* Memoized Interactive Pins */}
@@ -1906,7 +2272,10 @@ export const InteractiveMapsView: React.FC = () => {
                     linkedCount={linkedCount}
                     hasSubMap={Boolean(pin.linkedMapId)}
                     canDrag={viewRole === 'gm' && activeTool === 'select'}
-                    onSelect={setSelectedPinId}
+                    onSelect={(pinId) => {
+                      setSelectedPinId(pinId);
+                      setSelectedShapeId(null);
+                    }}
                     onStartDrag={handleStartPinDrag}
                   />
                 );
@@ -1936,6 +2305,63 @@ export const InteractiveMapsView: React.FC = () => {
                 </select>
               )}
             </div>
+
+            {/* Floating Selected Shape / Fog Action Bar (GM) */}
+            {selectedShape && viewRole === 'gm' && (
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3 py-2 rounded-xl bg-[#111114]/95 border border-white/[0.14] backdrop-blur-md shadow-2xl pointer-events-auto">
+                <span
+                  className="w-2.5 h-2.5 rounded-full shrink-0"
+                  style={{
+                    backgroundColor:
+                      selectedShape.type === 'fog' ? '#71717a' : selectedShape.color,
+                  }}
+                />
+                <span className="text-xs font-medium text-zinc-100 max-w-[180px] truncate">
+                  {selectedShape.type === 'fog' ? 'Névoa: ' : ''}
+                  {selectedShape.label || 'Elemento'}
+                </span>
+
+                {selectedShape.type === 'fog' && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateMapShape(currentMap.id, selectedShape.id, {
+                        isRevealed: !selectedShape.isRevealed,
+                      })
+                    }
+                    className={`px-2 py-1 rounded-md text-[11px] font-medium border transition-colors ${
+                      selectedShape.isRevealed
+                        ? 'bg-amber-500/15 text-amber-300 border-amber-500/30 hover:bg-amber-500/25'
+                        : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/25'
+                    }`}
+                  >
+                    {selectedShape.isRevealed ? 'Reativar névoa' : 'Dissipar névoa'}
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    deleteMapShape(currentMap.id, selectedShape.id);
+                    setSelectedShapeId(null);
+                  }}
+                  className="px-2 py-1 rounded-md text-[11px] font-medium bg-rose-500/15 text-rose-300 border border-rose-500/30 hover:bg-rose-500/25 inline-flex items-center gap-1"
+                  title="Excluir este item individualmente (Delete)"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  <span>Excluir</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedShapeId(null)}
+                  className="p-1 text-zinc-500 hover:text-zinc-200"
+                  title="Desmarcar"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
 
             {/* Bottom-Left Vector & Fog Layer Manager (GM) */}
             {visibleShapes.length > 0 && viewRole === 'gm' && (
@@ -1969,7 +2395,15 @@ export const InteractiveMapsView: React.FC = () => {
                         return (
                           <div
                             key={sh.id}
-                            className="flex items-center justify-between gap-1.5 text-[11px] text-zinc-300 bg-[#0b0b0d] px-2 py-1.5 rounded-md border border-white/[0.06]"
+                            onClick={() => {
+                              setSelectedShapeId(sh.id);
+                              setSelectedPinId(null);
+                            }}
+                            className={`flex items-center justify-between gap-1.5 text-[11px] text-zinc-300 bg-[#0b0b0d] px-2 py-1.5 rounded-md border cursor-pointer transition-colors ${
+                              sh.id === selectedShapeId
+                                ? 'border-amber-400/60 bg-amber-500/10'
+                                : 'border-white/[0.06] hover:border-white/[0.16]'
+                            }`}
                           >
                             <div className="min-w-0 flex-1 flex items-center gap-1.5">
                               <span

@@ -52,12 +52,17 @@ export const SettingsModal: React.FC = () => {
   if (!isOpen) return null;
 
   const activeCamp = campaigns.find((c) => c.id === activeCampaignId);
+  const canManageApiKey =
+    workspaceMode === 'dm' && (!activeCampaignId || activeCamp?.isDm !== false);
   const isDm =
     workspaceMode === 'dm' &&
     viewRole === 'gm' &&
     activeCamp?.isDm !== false;
 
+  if (!canManageApiKey) return null;
+
   const handleTestKey = async () => {
+    if (!canManageApiKey) return;
     setIsTestingKey(true);
     setKeyStatus(null);
     const cleaned = sanitizeGeminiKey(keyInput);
@@ -154,6 +159,7 @@ export const SettingsModal: React.FC = () => {
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canManageApiKey) return;
     setGeminiApiKey(sanitizeGeminiKey(keyInput));
     setIsSettingsModalOpen(false);
   };

@@ -143,6 +143,7 @@ export interface CampaignMap {
   presetSvgType?: string;
   customImageUrl?: string;
   storageId?: string;
+  isPublicToPlayers?: boolean;
   pins: MapPin[];
   shapes?: MapDrawingShape[];
 }
