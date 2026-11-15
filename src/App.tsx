@@ -27,6 +27,7 @@ const VALID_ROUTES: AppRoute[] = [
 
 export function App() {
   const currentUser = useCampaignStore((s) => s.currentUser);
+  const sessionRoleLocked = useCampaignStore((s) => s.sessionRoleLocked);
   const currentRoute = useCampaignStore((s) => s.currentRoute);
   const setCurrentRoute = useCampaignStore((s) => s.setCurrentRoute);
   const workspaceMode = useCampaignStore((s) => s.workspaceMode);
@@ -59,7 +60,8 @@ export function App() {
       const inviteParam = params.get('invite');
       if (inviteParam && inviteParam.trim()) {
         const code = inviteParam.trim().toUpperCase();
-        if (useCampaignStore.getState().currentUser) {
+        const st = useCampaignStore.getState();
+        if (st.currentUser && st.sessionRoleLocked) {
           joinCampaignByInviteCode(code);
           window.history.replaceState({}, '', window.location.pathname);
         } else {
@@ -68,8 +70,9 @@ export function App() {
       }
 
       const path = window.location.pathname as AppRoute;
-      if (VALID_ROUTES.includes(path) && useCampaignStore.getState().currentUser) {
-        useCampaignStore.setState({ currentRoute: path });
+      const stAfter = useCampaignStore.getState();
+      if (VALID_ROUTES.includes(path) && stAfter.currentUser && stAfter.sessionRoleLocked) {
+        stAfter.setCurrentRoute(path);
       }
     } catch {
       // ignore in restricted environments
@@ -77,8 +80,9 @@ export function App() {
 
     const handlePopState = () => {
       const path = window.location.pathname as AppRoute;
-      if (VALID_ROUTES.includes(path)) {
-        useCampaignStore.setState({ currentRoute: path });
+      const st = useCampaignStore.getState();
+      if (VALID_ROUTES.includes(path) && st.currentUser && st.sessionRoleLocked) {
+        st.setCurrentRoute(path);
       }
     };
 
@@ -89,13 +93,13 @@ export function App() {
   const activeCamp = campaigns.find((c) => c.id === activeCampaignId);
   const isPlayerInActiveCamp = activeCamp?.isDm === false;
 
-  // Proteção por campanha: se o usuário participa da campanha ativa apenas como Jogador, redireciona /campaign/session para /campaign/player-view
+  // Proteção por campanha e papel da sessão
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || !sessionRoleLocked) return;
     if (currentRoute === '/campaign/session' && isPlayerInActiveCamp) {
-      setCurrentRoute('/campaign/player-view');
+      setCurrentRoute(workspaceMode === 'player' ? '/campaign/player-view' : '/dm-dashboard');
     }
-  }, [currentUser, currentRoute, isPlayerInActiveCamp, setCurrentRoute]);
+  }, [currentUser, sessionRoleLocked, currentRoute, isPlayerInActiveCamp, workspaceMode, setCurrentRoute]);
 
   const handleAfterAuth = async () => {
     if (pendingInviteCode) {
@@ -115,7 +119,8 @@ export function App() {
   };
 
   const isPlayerMode = workspaceMode === 'player';
-  const isAuthenticated = Boolean(currentUser) && currentRoute !== '/login';
+  const isAuthenticated =
+    Boolean(currentUser) && sessionRoleLocked && currentRoute !== '/login';
   const quickEntity = entities.find((e) => e.id === quickInspectEntityId);
 
   return (

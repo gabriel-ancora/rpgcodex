@@ -5,6 +5,10 @@ import {
   AlertCircle,
   Loader2,
   KeyRound,
+  Shield,
+  Sword,
+  LogOut,
+  Lock,
 } from 'lucide-react';
 
 interface LoginViewProps {
@@ -16,20 +20,27 @@ export const LoginView: React.FC<LoginViewProps> = ({
   pendingInviteCode,
   onAuthenticated,
 }) => {
+  const currentUser = useCampaignStore((s) => s.currentUser);
+  const sessionToken = useCampaignStore((s) => s.sessionToken);
+  const sessionRoleLocked = useCampaignStore((s) => s.sessionRoleLocked);
   const registerAccount = useCampaignStore((s) => s.registerAccount);
   const loginWithPassword = useCampaignStore((s) => s.loginWithPassword);
+  const confirmSessionRole = useCampaignStore((s) => s.confirmSessionRole);
+  const logoutUser = useCampaignStore((s) => s.logoutUser);
 
   const [mode, setMode] = useState<'login' | 'register'>(
     pendingInviteCode ? 'register' : 'login'
-  );
-  const [selectedRole, setSelectedRole] = useState<'dm' | 'player'>(
-    pendingInviteCode ? 'player' : 'dm'
   );
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [selectingRole, setSelectingRole] = useState<'dm' | 'player' | null>(null);
+
+  const isAwaitingRoleChoice = Boolean(
+    currentUser && sessionToken && !sessionRoleLocked
+  );
 
   const cleanConvexError = (err: unknown): string => {
     const raw = err instanceof Error ? err.message : String(err);
@@ -44,15 +55,27 @@ export const LoginView: React.FC<LoginViewProps> = ({
     setIsLoading(true);
     try {
       if (mode === 'register') {
-        await registerAccount(name, email, password, selectedRole);
+        await registerAccount(name, email, password);
       } else {
         await loginWithPassword(email, password);
       }
-      onAuthenticated?.();
     } catch (err) {
       setErrorMsg(cleanConvexError(err));
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleChooseRole = async (role: 'dm' | 'player') => {
+    setErrorMsg(null);
+    setSelectingRole(role);
+    try {
+      await confirmSessionRole(role);
+      await onAuthenticated?.();
+    } catch (err) {
+      setErrorMsg(cleanConvexError(err));
+    } finally {
+      setSelectingRole(null);
     }
   };
 
@@ -128,12 +151,18 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
           <div className="space-y-1.5">
             <h2 className="text-xl font-semibold tracking-tight text-zinc-100">
-              {mode === 'login' ? 'Acessar estúdio' : 'Criar sua conta'}
+              {isAwaitingRoleChoice
+                ? `Olá, ${currentUser?.name}`
+                : mode === 'login'
+                ? 'Acessar estúdio'
+                : 'Criar sua conta'}
             </h2>
             <p className="text-xs text-zinc-400">
-              {mode === 'login'
-                ? 'Entre com seu e-mail para acessar como Mestre ou Jogador.'
-                : 'Escolha por onde começar — você poderá alternar entre Mestre e Jogador a qualquer momento com a mesma conta.'}
+              {isAwaitingRoleChoice
+                ? 'Escolha como deseja entrar nesta sessão. Não será possível trocar após entrar.'
+                : mode === 'login'
+                ? 'Entre com seu e-mail e senha para escolher seu papel na mesa.'
+                : 'Crie sua conta e, após entrar, escolha se irá atuar como Mestre ou Jogador.'}
             </p>
           </div>
 
@@ -147,73 +176,6 @@ export const LoginView: React.FC<LoginViewProps> = ({
             </div>
           )}
 
-          {/* Segmented Switcher */}
-          <div className="grid grid-cols-2 p-1 rounded-lg bg-[#141418] border border-white/[0.06]">
-            <button
-              type="button"
-              onClick={() => {
-                setMode('login');
-                setErrorMsg(null);
-              }}
-              className={`py-1.5 rounded-md text-xs font-medium transition-colors ${
-                mode === 'login'
-                  ? 'bg-zinc-800 text-zinc-100 shadow-xs'
-                  : 'text-zinc-500 hover:text-zinc-300'
-              }`}
-            >
-              Entrar
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setMode('register');
-                setErrorMsg(null);
-              }}
-              className={`py-1.5 rounded-md text-xs font-medium transition-colors ${
-                mode === 'register'
-                  ? 'bg-zinc-800 text-zinc-100 shadow-xs'
-                  : 'text-zinc-500 hover:text-zinc-300'
-              }`}
-            >
-              Criar conta
-            </button>
-          </div>
-
-          {/* Role Selector on Register */}
-          {mode === 'register' && (
-            <div className="grid grid-cols-2 gap-2.5">
-              <button
-                type="button"
-                onClick={() => setSelectedRole('dm')}
-                className={`p-3 rounded-lg border text-left transition-colors ${
-                  selectedRole === 'dm'
-                    ? 'bg-white/[0.06] border-zinc-300 text-zinc-100'
-                    : 'bg-[#111114] border-white/[0.07] text-zinc-400 hover:border-white/[0.14]'
-                }`}
-              >
-                <div className="text-xs font-semibold text-zinc-100">Mestre</div>
-                <div className="text-[11px] text-zinc-500 mt-0.5">
-                  Criar mundo & conduzir
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setSelectedRole('player')}
-                className={`p-3 rounded-lg border text-left transition-colors ${
-                  selectedRole === 'player'
-                    ? 'bg-white/[0.06] border-zinc-300 text-zinc-100'
-                    : 'bg-[#111114] border-white/[0.07] text-zinc-400 hover:border-white/[0.14]'
-                }`}
-              >
-                <div className="text-xs font-semibold text-zinc-100">Jogador</div>
-                <div className="text-[11px] text-zinc-500 mt-0.5">
-                  Fichas 5e & visão de mesa
-                </div>
-              </button>
-            </div>
-          )}
-
           {errorMsg && (
             <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/25 flex items-start gap-2 text-xs text-rose-200">
               <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
@@ -221,70 +183,183 @@ export const LoginView: React.FC<LoginViewProps> = ({
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-3.5">
-            {mode === 'register' && (
-              <div className="space-y-1.5">
-                <label className="block text-xs font-medium text-zinc-300">
-                  Nome de exibição
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Seu nome ou apelido na mesa"
-                  className="input-clean w-full px-3 py-2 rounded-lg text-xs"
-                />
+          {isAwaitingRoleChoice ? (
+            <div className="space-y-3">
+              <button
+                type="button"
+                disabled={selectingRole !== null}
+                onClick={() => handleChooseRole('player')}
+                className={`w-full p-4 rounded-xl border text-left transition-all flex items-start justify-between gap-3 disabled:opacity-50 ${
+                  pendingInviteCode
+                    ? 'bg-emerald-500/10 border-emerald-400/40 hover:border-emerald-300'
+                    : 'bg-[#121216] border-white/[0.08] hover:border-white/[0.22] hover:bg-white/[0.04]'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-emerald-500/15 border border-emerald-400/25 flex items-center justify-center text-emerald-300 shrink-0">
+                    <Sword className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold text-zinc-100">
+                      Entrar como Jogador
+                    </div>
+                    <p className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">
+                      Gerencie suas fichas D&D 5.5e, entre em mesas por convite e visualize apenas o que foi revelado.
+                    </p>
+                  </div>
+                </div>
+                {selectingRole === 'player' ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-zinc-300 shrink-0 mt-1" />
+                ) : (
+                  <ArrowRight className="w-4 h-4 text-zinc-500 shrink-0 mt-1" />
+                )}
+              </button>
+
+              <button
+                type="button"
+                disabled={selectingRole !== null}
+                onClick={() => handleChooseRole('dm')}
+                className="w-full p-4 rounded-xl border border-white/[0.08] bg-[#121216] hover:border-white/[0.22] hover:bg-white/[0.04] text-left transition-all flex items-start justify-between gap-3 disabled:opacity-50"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-amber-500/15 border border-amber-400/25 flex items-center justify-center text-amber-300 shrink-0">
+                    <Shield className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold text-zinc-100">
+                      Entrar como Mestre
+                    </div>
+                    <p className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">
+                      Crie e gerencie suas próprias campanhas, segredos, mapas táticos, combate e sessões ao vivo.
+                    </p>
+                  </div>
+                </div>
+                {selectingRole === 'dm' ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-zinc-300 shrink-0 mt-1" />
+                ) : (
+                  <ArrowRight className="w-4 h-4 text-zinc-500 shrink-0 mt-1" />
+                )}
+              </button>
+
+              <div className="p-3 rounded-lg bg-white/[0.03] border border-white/[0.06] flex items-center gap-2 text-[11px] text-zinc-400">
+                <Lock className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                <span>
+                  A escolha trava o modo até o fim da sessão. Para usar o outro modo, encerre a sessão e faça login novamente.
+                </span>
               </div>
-            )}
 
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-zinc-300">
-                E-mail
-              </label>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="nome@exemplo.com"
-                className="input-clean w-full px-3 py-2 rounded-lg text-xs"
-              />
+              <button
+                type="button"
+                onClick={() => {
+                  setErrorMsg(null);
+                  logoutUser();
+                }}
+                className="w-full py-2 rounded-lg text-xs text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04] transition-colors inline-flex items-center justify-center gap-1.5"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Sair e usar outra conta</span>
+              </button>
             </div>
+          ) : (
+            <>
+              {/* Segmented Switcher */}
+              <div className="grid grid-cols-2 p-1 rounded-lg bg-[#141418] border border-white/[0.06]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('login');
+                    setErrorMsg(null);
+                  }}
+                  className={`py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    mode === 'login'
+                      ? 'bg-zinc-800 text-zinc-100 shadow-xs'
+                      : 'text-zinc-500 hover:text-zinc-300'
+                  }`}
+                >
+                  Entrar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('register');
+                    setErrorMsg(null);
+                  }}
+                  className={`py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    mode === 'register'
+                      ? 'bg-zinc-800 text-zinc-100 shadow-xs'
+                      : 'text-zinc-500 hover:text-zinc-300'
+                  }`}
+                >
+                  Criar conta
+                </button>
+              </div>
 
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-zinc-300">
-                Senha {mode === 'register' && <span className="text-zinc-500">(mín. 6 caracteres)</span>}
-              </label>
-              <input
-                type="password"
-                required
-                minLength={6}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="input-clean w-full px-3 py-2 rounded-lg text-xs"
-              />
-            </div>
+              <form onSubmit={handleSubmit} className="space-y-3.5">
+                {mode === 'register' && (
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-medium text-zinc-300">
+                      Nome de exibição
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="Seu nome ou apelido na mesa"
+                      className="input-clean w-full px-3 py-2 rounded-lg text-xs"
+                    />
+                  </div>
+                )}
 
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="btn-solid w-full py-2.5 px-4 rounded-lg text-xs flex items-center justify-center gap-2 disabled:opacity-50 mt-1"
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Autenticando...</span>
-                </>
-              ) : (
-                <>
-                  <span>{mode === 'login' ? 'Continuar' : 'Criar conta'}</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </>
-              )}
-            </button>
-          </form>
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-medium text-zinc-300">
+                    E-mail
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="nome@exemplo.com"
+                    className="input-clean w-full px-3 py-2 rounded-lg text-xs"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-medium text-zinc-300">
+                    Senha {mode === 'register' && <span className="text-zinc-500">(mín. 6 caracteres)</span>}
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="input-clean w-full px-3 py-2 rounded-lg text-xs"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className="btn-solid w-full py-2.5 px-4 rounded-lg text-xs flex items-center justify-center gap-2 disabled:opacity-50 mt-1"
+                >
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Autenticando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>{mode === 'login' ? 'Continuar' : 'Criar conta e escolher modo'}</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </>
+                  )}
+                </button>
+              </form>
+            </>
+          )}
         </div>
       </div>
     </div>

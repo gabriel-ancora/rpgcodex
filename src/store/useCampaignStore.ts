@@ -122,6 +122,7 @@ interface CampaignState {
   currentRoute: AppRoute;
   currentUser: AuthUser | null;
   sessionToken: string | null;
+  sessionRoleLocked: boolean;
   workspaceMode: 'dm' | 'player';
   campaigns: CampaignSummary[];
   activeCampaignId: string;
@@ -179,7 +180,8 @@ interface CampaignState {
   setCurrentRoute: (route: AppRoute) => void;
   setWorkspaceMode: (mode: 'dm' | 'player', targetRoute?: AppRoute) => void;
   loginAsUser: (user: AuthUser, token?: string | null) => void;
-  registerAccount: (name: string, email: string, password: string, role: 'dm' | 'player') => Promise<void>;
+  confirmSessionRole: (role: 'dm' | 'player') => Promise<void>;
+  registerAccount: (name: string, email: string, password: string) => Promise<void>;
   loginWithPassword: (email: string, password: string) => Promise<void>;
   logoutUser: () => void;
   createCampaign: (
@@ -375,6 +377,7 @@ export const useCampaignStore = create<CampaignState>()(
       currentRoute: '/login',
       currentUser: null,
       sessionToken: null,
+      sessionRoleLocked: false,
       workspaceMode: 'dm',
       campaigns: [],
       activeCampaignId: '',
@@ -402,11 +405,20 @@ export const useCampaignStore = create<CampaignState>()(
       // AUTH, ROUTING & HUBS (CONVEX NATIVE AUTH + MULTI-TENANCY)
       // ======================================================================
       setCurrentRoute: (route) => {
-        const userRole = get().currentUser?.role;
-        const activeCamp = get().campaigns.find((c) => c.id === get().activeCampaignId);
+        const state = get();
+        if (!state.sessionRoleLocked && route !== '/login') {
+          set({ currentRoute: '/login' });
+          return;
+        }
+
+        const lockedMode: 'dm' | 'player' =
+          state.workspaceMode === 'player' || state.currentUser?.role === 'player'
+            ? 'player'
+            : 'dm';
+        const activeCamp = state.campaigns.find((c) => c.id === state.activeCampaignId);
 
         if (
-          userRole === 'player' &&
+          lockedMode === 'player' &&
           (route === '/dm-dashboard' || route === '/campaign/session')
         ) {
           const safeRoute: AppRoute =
@@ -420,36 +432,49 @@ export const useCampaignStore = create<CampaignState>()(
           return;
         }
 
-        const isCampaignPlayerOnly =
-          route === '/campaign/session' && activeCamp && activeCamp.isDm === false;
-
-        if (isCampaignPlayerOnly) {
-          set({ currentRoute: '/campaign/player-view', viewRole: 'player', workspaceMode: 'player' });
-          get().showToast('Você participa desta campanha como Jogador.');
+        if (
+          lockedMode === 'dm' &&
+          (route === '/player-dashboard' || route === '/campaign/player-view')
+        ) {
+          const safeRoute: AppRoute =
+            route === '/campaign/player-view' && activeCamp?.isDm !== false
+              ? '/campaign/session'
+              : '/dm-dashboard';
+          set({ currentRoute: safeRoute, viewRole: 'gm', workspaceMode: 'dm' });
           try {
-            window.history.pushState({}, '', '/campaign/player-view');
+            window.history.pushState({}, '', safeRoute);
           } catch {
             // ignore
           }
           return;
         }
 
-        const nextMode: 'dm' | 'player' =
-          userRole === 'player'
-            ? 'player'
-            : route === '/player-dashboard' || route === '/campaign/player-view'
-            ? 'player'
-            : route === '/dm-dashboard' || route === '/campaign/session'
-            ? 'dm'
-            : get().workspaceMode;
+        const isCampaignPlayerOnly =
+          route === '/campaign/session' && activeCamp && activeCamp.isDm === false;
 
-        const viewRole: ViewRole =
-          userRole === 'player' ||
-          route === '/campaign/player-view' ||
-          route === '/player-dashboard'
-            ? 'player'
-            : 'gm';
-        set({ currentRoute: route, viewRole, workspaceMode: nextMode });
+        if (isCampaignPlayerOnly) {
+          const fallbackRoute: AppRoute =
+            lockedMode === 'dm' ? '/dm-dashboard' : '/campaign/player-view';
+          set({
+            currentRoute: fallbackRoute,
+            viewRole: lockedMode === 'dm' ? 'gm' : 'player',
+            workspaceMode: lockedMode,
+          });
+          get().showToast(
+            lockedMode === 'dm'
+              ? 'Você participa desta mesa apenas como Jogador. Encerre a sessão e entre como Jogador para acessá-la.'
+              : 'Você participa desta campanha como Jogador.'
+          );
+          try {
+            window.history.pushState({}, '', fallbackRoute);
+          } catch {
+            // ignore
+          }
+          return;
+        }
+
+        const viewRole: ViewRole = lockedMode === 'player' ? 'player' : 'gm';
+        set({ currentRoute: route, viewRole, workspaceMode: lockedMode });
         try {
           window.history.pushState({}, '', route);
         } catch {
@@ -457,54 +482,28 @@ export const useCampaignStore = create<CampaignState>()(
         }
       },
 
-      setWorkspaceMode: (mode, targetRoute) => {
-        const state = get();
-        if (state.currentUser?.role === 'player' && mode === 'dm') {
-          set({
-            workspaceMode: 'player',
-            viewRole: 'player',
-            currentRoute: '/player-dashboard',
-          });
-          get().showToast('Contas de Jogador não podem acessar o Modo Mestre.');
-          return;
-        }
-        const activeCamp = state.campaigns.find((c) => c.id === state.activeCampaignId);
-        let nextRoute: AppRoute =
-          targetRoute || (mode === 'dm' ? '/dm-dashboard' : '/player-dashboard');
-
-        if (mode === 'dm' && nextRoute === '/campaign/session' && activeCamp?.isDm === false) {
-          nextRoute = '/dm-dashboard';
-        }
-
-        set({
-          workspaceMode: mode,
-          currentRoute: nextRoute,
-          viewRole: mode === 'dm' ? 'gm' : 'player',
-        });
-
-        try {
-          window.history.pushState({}, '', nextRoute);
-        } catch {
-          // ignore
-        }
-
+      setWorkspaceMode: () => {
         get().showToast(
-          mode === 'dm'
-            ? 'Modo Mestre ativado: gerencie e mestre suas campanhas.'
-            : 'Modo Jogador ativado: visualize suas fichas e mesas que você joga.'
+          'Não é possível trocar entre Mestre e Jogador após entrar. Encerre a sessão para escolher outro papel.'
         );
       },
 
       loginAsUser: (user, token = null) => {
         const prevUserId = get().currentUser?.id;
         const isDifferentUser = prevUserId !== user.id;
-        const initialMode: 'dm' | 'player' = user.role === 'player' ? 'player' : 'dm';
-        const targetRoute: AppRoute =
-          initialMode === 'dm' ? '/dm-dashboard' : '/player-dashboard';
+        const confirmedRole = user.sessionRole ?? null;
+        const initialMode: 'dm' | 'player' =
+          confirmedRole ?? (user.role === 'player' ? 'player' : 'dm');
+        const targetRoute: AppRoute = confirmedRole
+          ? confirmedRole === 'dm'
+            ? '/dm-dashboard'
+            : '/player-dashboard'
+          : '/login';
 
         set((state) => ({
           currentUser: user,
           sessionToken: token ?? state.sessionToken,
+          sessionRoleLocked: Boolean(confirmedRole),
           workspaceMode: initialMode,
           currentRoute: targetRoute,
           viewRole: initialMode === 'dm' ? 'gm' : 'player',
@@ -525,17 +524,49 @@ export const useCampaignStore = create<CampaignState>()(
         } catch {
           // ignore
         }
+        if (confirmedRole) {
+          get().showToast(
+            `Bem-vindo(a), ${user.name}! (${confirmedRole === 'dm' ? 'Modo Mestre' : 'Modo Jogador'})`
+          );
+        }
+      },
+
+      confirmSessionRole: async (role) => {
+        const token = get().sessionToken;
+        if (!token) {
+          throw new Error('Sessão não encontrada. Faça login novamente.');
+        }
+        const updatedUser = await convexClient.mutation(api.auth.selectSessionRole, {
+          sessionToken: token,
+          role,
+        });
+        const targetRoute: AppRoute =
+          role === 'dm' ? '/dm-dashboard' : '/player-dashboard';
+
+        set({
+          currentUser: updatedUser as AuthUser,
+          sessionRoleLocked: true,
+          workspaceMode: role,
+          currentRoute: targetRoute,
+          viewRole: role === 'dm' ? 'gm' : 'player',
+        });
+
+        try {
+          window.history.pushState({}, '', targetRoute);
+        } catch {
+          // ignore
+        }
+
         get().showToast(
-          `Bem-vindo(a), ${user.name}! (${initialMode === 'dm' ? 'Modo Mestre' : 'Modo Jogador'})`
+          `Bem-vindo(a), ${updatedUser.name}! (${role === 'dm' ? 'Modo Mestre' : 'Modo Jogador'})`
         );
       },
 
-      registerAccount: async (name, email, password, role) => {
+      registerAccount: async (name, email, password) => {
         const res = await convexClient.mutation(api.auth.register, {
           name,
           email,
           password,
-          role,
         });
         get().loginAsUser(res.user, res.token);
       },
@@ -556,6 +587,9 @@ export const useCampaignStore = create<CampaignState>()(
         set({
           currentUser: null,
           sessionToken: null,
+          sessionRoleLocked: false,
+          workspaceMode: 'dm',
+          viewRole: 'gm',
           currentRoute: '/login',
           campaigns: [],
           activeCampaignId: '',
@@ -684,26 +718,31 @@ export const useCampaignStore = create<CampaignState>()(
         const prevCampaignId = get().activeCampaignId;
         const found = get().campaigns.find((c) => c.id === campaignId);
         const isSwitchingCampaign = prevCampaignId !== campaignId;
-
-        const effectiveTarget: AppRoute =
-          targetRoute === '/campaign/session' && found && found.isDm === false
-            ? '/campaign/player-view'
-            : targetRoute;
-
-        const nextMode: 'dm' | 'player' =
-          effectiveTarget === '/campaign/player-view' || effectiveTarget === '/player-dashboard'
+        const lockedMode: 'dm' | 'player' =
+          get().workspaceMode === 'player' || get().currentUser?.role === 'player'
             ? 'player'
             : 'dm';
+
+        if (lockedMode === 'dm' && found && found.isDm === false) {
+          get().showToast(
+            'Você participa desta mesa como Jogador. Encerre a sessão e entre como Jogador para acessá-la.'
+          );
+          return;
+        }
+
+        const effectiveTarget: AppRoute =
+          lockedMode === 'player'
+            ? '/campaign/player-view'
+            : targetRoute === '/campaign/player-view' || targetRoute === '/player-dashboard'
+            ? '/campaign/session'
+            : targetRoute;
 
         set((state) => ({
           activeCampaignId: campaignId,
           campaignName: found ? found.title : state.campaignName,
           currentRoute: effectiveTarget,
-          workspaceMode: nextMode,
-          viewRole:
-            found?.isDm === false || effectiveTarget === '/campaign/player-view'
-              ? 'player'
-              : 'gm',
+          workspaceMode: lockedMode,
+          viewRole: lockedMode === 'player' ? 'player' : 'gm',
           ...(isSwitchingCampaign ? getEmptyCampaignScopedState() : {}),
         }));
         try {
@@ -3592,6 +3631,7 @@ export const useCampaignStore = create<CampaignState>()(
       partialize: (state) => ({
         sessionToken: state.sessionToken,
         currentUser: state.currentUser,
+        sessionRoleLocked: state.sessionRoleLocked,
         workspaceMode: state.workspaceMode,
         activeCampaignId: state.activeCampaignId,
         activeCharacterId: state.activeCharacterId,

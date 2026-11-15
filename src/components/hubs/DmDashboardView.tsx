@@ -27,7 +27,6 @@ export const DmDashboardView: React.FC = () => {
   const updateCampaign = useCampaignStore((s) => s.updateCampaign);
   const deleteCampaign = useCampaignStore((s) => s.deleteCampaign);
   const selectCampaign = useCampaignStore((s) => s.selectCampaign);
-  const setCurrentRoute = useCampaignStore((s) => s.setCurrentRoute);
   const currentUser = useCampaignStore((s) => s.currentUser);
   const characterSheets = useCampaignStore((s) => s.characterSheets);
   const setIsDmPartyDrawerOpen = useCampaignStore((s) => s.setIsDmPartyDrawerOpen);
@@ -35,7 +34,6 @@ export const DmDashboardView: React.FC = () => {
   const showToast = useCampaignStore((s) => s.showToast);
 
   const dmCampaigns = campaigns.filter((c) => c.isDm !== false);
-  const playerJoinedCampaigns = campaigns.filter((c) => c.isDm === false);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<CampaignSummary | null>(null);
@@ -194,25 +192,6 @@ export const DmDashboardView: React.FC = () => {
           </button>
         </div>
       </div>
-
-      {/* Joined as Player Notice */}
-      {playerJoinedCampaigns.length > 0 && (
-        <div className="px-4 py-3 rounded-xl bg-[#131317] border border-white/[0.08] flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xs text-zinc-400">
-            Você também participa de{' '}
-            <strong className="text-zinc-200">{playerJoinedCampaigns.length}</strong>{' '}
-            {playerJoinedCampaigns.length === 1 ? 'mesa como Jogador' : 'mesas como Jogador'}.
-          </p>
-          <button
-            type="button"
-            onClick={() => setCurrentRoute('/player-dashboard')}
-            className="btn-subtle px-3 py-1.5 rounded-lg text-xs inline-flex items-center gap-1.5"
-          >
-            <span>Ver minhas fichas & mesas como Jogador</span>
-            <ArrowUpRight className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
 
       {/* Empty State */}
       {dmCampaigns.length === 0 ? (

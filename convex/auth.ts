@@ -31,11 +31,12 @@ export const register = mutation({
     name: v.string(),
     email: v.string(),
     password: v.string(),
-    role: v.union(v.literal("dm"), v.literal("player")),
+    role: v.optional(v.union(v.literal("dm"), v.literal("player"))),
   },
   handler: async (ctx, args) => {
     const normalizedEmail = args.email.trim().toLowerCase();
     const cleanName = args.name.trim();
+    const initialRole = args.role ?? "player";
 
     if (!normalizedEmail.includes("@")) {
       throw new Error("Informe um endereço de e-mail válido.");
@@ -67,7 +68,7 @@ export const register = mutation({
       email: normalizedEmail,
       passwordHash,
       salt,
-      role: args.role,
+      role: initialRole,
       createdAt: now,
     });
 
@@ -85,7 +86,8 @@ export const register = mutation({
         id: userId,
         name: cleanName,
         email: normalizedEmail,
-        role: args.role,
+        role: initialRole,
+        sessionRole: null as "dm" | "player" | null,
       },
     };
   },
@@ -129,6 +131,7 @@ export const login = mutation({
         name: user.name,
         email: user.email,
         role: user.role,
+        sessionRole: null as "dm" | "player" | null,
         avatarUrl: user.avatarUrl,
       },
     };
@@ -160,31 +163,53 @@ export const logout = mutation({
   },
 });
 
+export const selectSessionRole = mutation({
+  args: {
+    sessionToken: v.string(),
+    role: v.union(v.literal("dm"), v.literal("player")),
+  },
+  handler: async (ctx, args) => {
+    const session = await ctx.db
+      .query("userSessions")
+      .withIndex("by_token", (q) => q.eq("token", args.sessionToken))
+      .first();
+    if (!session || session.expiresAt < Date.now()) {
+      throw new Error("Sessão expirada ou inválida. Faça login novamente.");
+    }
+    if (session.sessionRole) {
+      if (session.sessionRole !== args.role) {
+        throw new Error(
+          "O modo de acesso já foi definido após o login e não pode ser alterado. Encerre a sessão para escolher outro papel."
+        );
+      }
+    } else {
+      await ctx.db.patch(session._id, { sessionRole: args.role });
+    }
+
+    const user = await ctx.db.get(session.userId);
+    if (!user) {
+      throw new Error("Usuário não encontrado.");
+    }
+    return {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      role: args.role,
+      sessionRole: args.role,
+      avatarUrl: user.avatarUrl,
+    };
+  },
+});
+
 export const switchRole = mutation({
   args: {
     sessionToken: v.optional(v.string()),
     role: v.union(v.literal("dm"), v.literal("player")),
   },
-  handler: async (ctx, args) => {
-    const user = await getSessionUser(ctx, args.sessionToken);
-    if (!user) {
-      throw new Error("Sessão expirada ou inválida.");
-    }
-    if (user.role === "player" && args.role === "dm") {
-      throw new Error(
-        "Contas de Jogador não podem se promover para o Modo Mestre."
-      );
-    }
-    if (user.role !== args.role) {
-      await ctx.db.patch(user.id, { role: args.role });
-    }
-    return {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: args.role,
-      avatarUrl: user.avatarUrl,
-    };
+  handler: async () => {
+    throw new Error(
+      "Não é possível trocar entre Mestre e Jogador após entrar. Encerre a sessão para acessar de outro modo."
+    );
   },
 });
 

@@ -335,7 +335,7 @@ export const update = mutation({
 
     const isOwner = existing.playerId === user.id;
     let isCampaignDm = false;
-    if (existing.campaignId) {
+    if (existing.campaignId && user.role === "dm") {
       const camp = await findCampaignByAnyId(ctx, existing.campaignId);
       isCampaignDm = camp?.dmUserId === user.id;
     }
@@ -381,7 +381,7 @@ export const remove = mutation({
 
     const isOwner = existing.playerId === user.id;
     let isCampaignDm = false;
-    if (existing.campaignId) {
+    if (existing.campaignId && user.role === "dm") {
       const camp = await findCampaignByAnyId(ctx, existing.campaignId);
       isCampaignDm = camp?.dmUserId === user.id;
     }

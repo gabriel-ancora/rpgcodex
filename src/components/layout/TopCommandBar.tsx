@@ -12,22 +12,14 @@ export const TopCommandBar: React.FC<TopCommandBarProps> = ({
   onOpenMobileSidebar,
 }) => {
   const activeCampaignId = useCampaignStore((s) => s.activeCampaignId);
-  const campaigns = useCampaignStore((s) => s.campaigns);
   const campaignName = useCampaignStore((s) => s.campaignName);
   const currentRoute = useCampaignStore((s) => s.currentRoute);
-  const setCurrentRoute = useCampaignStore((s) => s.setCurrentRoute);
   const workspaceMode = useCampaignStore((s) => s.workspaceMode);
-  const currentUser = useCampaignStore((s) => s.currentUser);
   const activeModule = useCampaignStore((s) => s.activeModule);
   const worldSubTab = useCampaignStore((s) => s.worldSubTab);
   const plotSubTab = useCampaignStore((s) => s.plotSubTab);
   const portalSubTab = useCampaignStore((s) => s.portalSubTab);
-  const viewRole = useCampaignStore((s) => s.viewRole);
-  const setViewRole = useCampaignStore((s) => s.setViewRole);
   const calendar = useCampaignStore((s) => s.calendar);
-
-  const activeCamp = campaigns.find((c) => c.id === activeCampaignId);
-  const canDmActiveCamp = Boolean(activeCampaignId && activeCamp?.isDm !== false);
 
   const dbStatus = useQuery(
     api.campaign.getStatus,
@@ -118,42 +110,15 @@ export const TopCommandBar: React.FC<TopCommandBarProps> = ({
           </span>
         )}
 
-        {/* Segmented Preview Switcher (Somente para conta Mestre na sua campanha) */}
-        {currentUser?.role !== 'player' && canDmActiveCamp && workspaceMode === 'dm' ? (
-          <div className="flex items-center bg-[#141418] border border-white/[0.07] rounded-lg p-0.5 text-xs">
-            <button
-              onClick={() => {
-                setViewRole('gm');
-                if (currentRoute === '/campaign/player-view') {
-                  setCurrentRoute('/campaign/session');
-                }
-              }}
-              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
-                viewRole === 'gm'
-                  ? 'bg-zinc-800 text-zinc-100 shadow-xs'
-                  : 'text-zinc-500 hover:text-zinc-300'
-              }`}
-              title="Exibir controles e segredos do Mestre"
-            >
-              Mestre
-            </button>
-            <button
-              onClick={() => setViewRole('player')}
-              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
-                viewRole === 'player'
-                  ? 'bg-zinc-800 text-emerald-300 shadow-xs'
-                  : 'text-zinc-500 hover:text-zinc-300'
-              }`}
-              title="Simular a visão filtrada dos jogadores"
-            >
-              Prévia jogador
-            </button>
-          </div>
-        ) : (
-          <span className="px-2.5 py-1 rounded-lg bg-[#141418] border border-white/[0.07] text-[11px] text-emerald-300/90 font-medium">
-            {currentUser?.role === 'player' ? 'Jogador' : 'Mestre'}
-          </span>
-        )}
+        {/* Locked Session Role Badge */}
+        <span
+          className={`px-2.5 py-1 rounded-lg bg-[#141418] border border-white/[0.07] text-[11px] font-medium ${
+            workspaceMode === 'player' ? 'text-emerald-300/90' : 'text-amber-300/90'
+          }`}
+          title="Modo definido no login. Para alterar, encerre a sessão e entre novamente."
+        >
+          {workspaceMode === 'player' ? 'Modo Jogador' : 'Modo Mestre'}
+        </span>
       </div>
     </header>
   );

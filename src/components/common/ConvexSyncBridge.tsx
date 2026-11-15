@@ -35,12 +35,14 @@ export const ConvexSyncBridge: React.FC = () => {
   const currentRoute = useCampaignStore((s) => s.currentRoute);
   const campaigns = useCampaignStore((s) => s.campaigns);
   const sessionToken = useCampaignStore((s) => s.sessionToken);
+  const sessionRoleLocked = useCampaignStore((s) => s.sessionRoleLocked);
   const currentUser = useCampaignStore((s) => s.currentUser);
 
-  const hasSession = Boolean(sessionToken);
-  const hasActiveCampaign = Boolean(sessionToken && activeCampaignId);
+  const hasSession = Boolean(sessionToken && sessionRoleLocked);
+  const hasActiveCampaign = Boolean(hasSession && activeCampaignId);
   const activeCamp = campaigns.find((c) => c.id === activeCampaignId);
-  const serverViewerRole = activeCamp?.isDm === false ? 'player' : viewRole;
+  const serverViewerRole =
+    workspaceMode === 'player' || activeCamp?.isDm === false ? 'player' : viewRole;
 
   const tenantArgs = hasActiveCampaign
     ? {
@@ -112,12 +114,13 @@ export const ConvexSyncBridge: React.FC = () => {
   );
   const resourcesData = useQuery(api.portal.getResources, campaignOnlyArgs);
 
-  // Sincronização de autenticação / expiração de token
+  // Sincronização de autenticação / expiração de token e papel travado na sessão
   useEffect(() => {
     if (!sessionToken || meData === undefined) return;
     if (meData === null) {
       useCampaignStore.setState({
         sessionToken: null,
+        sessionRoleLocked: false,
         currentUser: null,
         currentRoute: '/login',
         campaigns: [],
@@ -127,14 +130,45 @@ export const ConvexSyncBridge: React.FC = () => {
         activeCharacterId: '',
       });
     } else {
-      useCampaignStore.setState({
-        currentUser: {
-          id: meData.id,
-          name: meData.name,
-          email: meData.email,
-          role: meData.role,
-          avatarUrl: meData.avatarUrl,
-        },
+      const lockedRole = meData.sessionRole ?? null;
+      useCampaignStore.setState((state) => {
+        if (!lockedRole) {
+          return {
+            currentUser: {
+              id: meData.id,
+              name: meData.name,
+              email: meData.email,
+              role: meData.role,
+              sessionRole: null,
+              avatarUrl: meData.avatarUrl,
+            },
+            sessionRoleLocked: false,
+            currentRoute: '/login',
+          };
+        }
+
+        const nextViewRole = lockedRole === 'player' ? 'player' : state.viewRole;
+        let nextRoute = state.currentRoute;
+        if (lockedRole === 'player' && (nextRoute === '/login' || nextRoute === '/dm-dashboard' || nextRoute === '/campaign/session')) {
+          nextRoute = nextRoute === '/campaign/session' ? '/campaign/player-view' : '/player-dashboard';
+        } else if (lockedRole === 'dm' && (nextRoute === '/login' || nextRoute === '/player-dashboard' || nextRoute === '/campaign/player-view')) {
+          nextRoute = nextRoute === '/campaign/player-view' ? '/campaign/session' : '/dm-dashboard';
+        }
+
+        return {
+          currentUser: {
+            id: meData.id,
+            name: meData.name,
+            email: meData.email,
+            role: meData.role,
+            sessionRole: lockedRole,
+            avatarUrl: meData.avatarUrl,
+          },
+          sessionRoleLocked: true,
+          workspaceMode: lockedRole,
+          viewRole: nextViewRole,
+          currentRoute: nextRoute,
+        };
       });
     }
   }, [meData, sessionToken]);
@@ -167,19 +201,23 @@ export const ConvexSyncBridge: React.FC = () => {
         };
       }
 
+      const modeCampaigns =
+        state.workspaceMode === 'dm'
+          ? campaignsData.filter((c) => c.isDm !== false)
+          : campaignsData;
+
       const activeFound =
-        campaignsData.find((c) => c.id === state.activeCampaignId) ||
-        (state.workspaceMode === 'dm'
-          ? campaignsData.find((c) => c.isDm) || campaignsData[0]
-          : campaignsData[0]);
+        modeCampaigns.find((c) => c.id === state.activeCampaignId) ||
+        modeCampaigns[0] ||
+        null;
 
       const mustFallbackToPlayerView =
-        state.currentRoute === '/campaign/session' && activeFound?.isDm === false;
+        state.workspaceMode === 'player' && state.currentRoute === '/campaign/session';
 
       return {
         campaigns: campaignsData,
-        activeCampaignId: activeFound.id,
-        campaignName: activeFound.title,
+        activeCampaignId: activeFound?.id || '',
+        campaignName: activeFound?.title || '',
         ...(mustFallbackToPlayerView
           ? { currentRoute: '/campaign/player-view', viewRole: 'player' as const }
           : {}),

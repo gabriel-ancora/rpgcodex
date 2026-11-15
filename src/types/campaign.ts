@@ -378,6 +378,7 @@ export interface AuthUser {
   name: string;
   email: string;
   role: 'dm' | 'player';
+  sessionRole?: 'dm' | 'player' | null;
   avatarUrl?: string;
 }
 

@@ -208,29 +208,33 @@ export const WorkspaceSidebar: React.FC<WorkspaceSidebarProps> = ({
 
             {campaignMenuOpen && (
               <div className="absolute left-2.5 right-2.5 top-full mt-1 z-50 rounded-xl bg-[#18181d] border border-white/[0.1] shadow-elevated p-1 space-y-0.5">
-                {campaigns.length === 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCurrentRoute(isPlayerMode ? '/player-dashboard' : '/dm-dashboard');
-                      setCampaignMenuOpen(false);
-                      onCloseMobile();
-                    }}
-                    className="w-full px-2.5 py-2 rounded-lg text-left text-xs text-zinc-300 hover:bg-white/[0.05]"
-                  >
-                    {isPlayerMode ? '+ Ingressar com código' : '+ Criar nova campanha'}
-                  </button>
-                ) : (
-                  campaigns.map((camp) => (
+                {(() => {
+                  const visibleCampaigns = isPlayerMode
+                    ? campaigns
+                    : campaigns.filter((c) => c.isDm !== false);
+                  if (visibleCampaigns.length === 0) {
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCurrentRoute(isPlayerMode ? '/player-dashboard' : '/dm-dashboard');
+                          setCampaignMenuOpen(false);
+                          onCloseMobile();
+                        }}
+                        className="w-full px-2.5 py-2 rounded-lg text-left text-xs text-zinc-300 hover:bg-white/[0.05]"
+                      >
+                        {isPlayerMode ? '+ Ingressar com código' : '+ Criar nova campanha'}
+                      </button>
+                    );
+                  }
+                  return visibleCampaigns.map((camp) => (
                     <button
                       key={camp.id}
                       type="button"
                       onClick={() => {
                         selectCampaign(
                           camp.id,
-                          camp.isDm === false || isPlayerMode
-                            ? '/campaign/player-view'
-                            : '/campaign/session'
+                          isPlayerMode ? '/campaign/player-view' : '/campaign/session'
                         );
                         setCampaignMenuOpen(false);
                         onCloseMobile();
@@ -244,15 +248,15 @@ export const WorkspaceSidebar: React.FC<WorkspaceSidebarProps> = ({
                       <span className="truncate">{camp.title}</span>
                       <span className="flex items-center gap-1.5 shrink-0">
                         <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-white/[0.05] text-zinc-400">
-                          {camp.isDm === false ? 'Jogando' : 'Mestre'}
+                          {isPlayerMode ? 'Jogador' : 'Mestre'}
                         </span>
                         {camp.id === activeCampaignId && (
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                         )}
                       </span>
                     </button>
-                  ))
-                )}
+                  ));
+                })()}
               </div>
             )}
           </div>

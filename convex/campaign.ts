@@ -93,7 +93,7 @@ export const list = query({
           inviteCode: c.inviteCode || "",
           dmName: c.dmName || "Mestre",
           dmUserId: c.dmUserId || "",
-          isDm: c.dmUserId ? c.dmUserId === user.id : user.role === "dm",
+          isDm: user.role === "dm" && (c.dmUserId ? c.dmUserId === user.id : true),
           activePlayersCount: playersOnly.length,
           sessionsPlayed: c.sessionsPlayed ?? 0,
           updatedAt: c.updatedAt,
@@ -121,6 +121,9 @@ export const create = mutation({
     const user = await getSessionUser(ctx, args.sessionToken);
     if (!user) {
       throw new Error("Faça login para criar uma campanha.");
+    }
+    if (user.role !== "dm") {
+      throw new Error("Entre no Modo Mestre para criar campanhas.");
     }
 
     const now = new Date().toISOString();

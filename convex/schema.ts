@@ -21,6 +21,7 @@ export default defineSchema({
   userSessions: defineTable({
     token: v.string(),
     userId: v.id("users"),
+    sessionRole: v.optional(v.union(v.literal("dm"), v.literal("player"))),
     expiresAt: v.number(),
     createdAt: v.string(),
   })

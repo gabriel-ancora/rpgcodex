@@ -41,7 +41,8 @@ export async function getSessionUser(
     id: user._id,
     name: user.name,
     email: user.email,
-    role: user.role,
+    role: session.sessionRole ?? user.role,
+    sessionRole: session.sessionRole ?? null,
     avatarUrl: user.avatarUrl,
   };
 }
@@ -91,7 +92,7 @@ export async function resolveEffectiveRole(
   }
 ): Promise<"gm" | "player"> {
   const user = await getSessionUser(ctx, opts.sessionToken);
-  if (!user) {
+  if (!user || user.role !== "dm") {
     return "player";
   }
 
@@ -104,18 +105,18 @@ export async function resolveEffectiveRole(
       if (camp.dmUserId === user.id) {
         return opts.viewerRole ?? "gm";
       }
-      // Mesmo se user.role === "dm", em campanha de outro Mestre ele vê estritamente como jogador
+      // Mesmo no Modo Mestre, em campanha de outro Mestre ele vê estritamente como jogador
       return "player";
     }
     const isMember =
       !camp.memberUserIds?.length || camp.memberUserIds.includes(user.id);
-    if (user.role === "dm" && isMember) {
+    if (isMember) {
       return opts.viewerRole ?? "gm";
     }
     return "player";
   }
 
-  return user.role === "dm" ? (opts.viewerRole ?? "gm") : "player";
+  return opts.viewerRole ?? "gm";
 }
 
 /**
@@ -137,11 +138,13 @@ export async function assertCampaignMember(
     throw new Error("Campanha não encontrada.");
   }
 
-  const isDm = camp.dmUserId
-    ? camp.dmUserId === user.id
-    : user.role === "dm" &&
-      (!camp.memberUserIds?.length || camp.memberUserIds.includes(user.id));
-  const isMember = isDm || Boolean(camp.memberUserIds?.includes(user.id));
+  const isDm =
+    user.role === "dm" &&
+    (camp.dmUserId
+      ? camp.dmUserId === user.id
+      : !camp.memberUserIds?.length || camp.memberUserIds.includes(user.id));
+  const isMember =
+    camp.dmUserId === user.id || Boolean(camp.memberUserIds?.includes(user.id));
 
   if (!isMember) {
     throw new Error("Acesso negado: você não participa desta campanha.");
@@ -159,6 +162,11 @@ export async function assertDmPermission(
   campaignId?: string
 ) {
   const user = await requireSessionUser(ctx, sessionToken);
+  if (user.role !== "dm") {
+    throw new Error(
+      "Acesso negado: sua sessão está no Modo Jogador e não pode alterar recursos do Mestre."
+    );
+  }
 
   if (campaignId) {
     const camp = await findCampaignByAnyId(ctx, campaignId);
@@ -173,15 +181,11 @@ export async function assertDmPermission(
     }
     const isMember =
       !camp.memberUserIds?.length || camp.memberUserIds.includes(user.id);
-    if (user.role === "dm" && isMember) return user;
+    if (isMember) return user;
     throw new Error(
       "Acesso negado: apenas o Mestre desta campanha pode realizar esta ação."
     );
   }
 
-  if (user.role === "dm") return user;
-
-  throw new Error(
-    "Acesso negado: apenas o Mestre desta campanha pode realizar esta ação."
-  );
+  return user;
 }
