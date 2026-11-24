@@ -207,6 +207,14 @@ export default defineSchema({
     customImageUrl: v.optional(v.string()),
     storageId: v.optional(v.id("_storage")),
     isPublicToPlayers: v.optional(v.boolean()),
+    canvasTheme: v.optional(v.string()),
+    gridMode: v.optional(v.string()),
+    gridSize: v.optional(v.number()),
+    gridOpacity: v.optional(v.number()),
+    imageOpacity: v.optional(v.number()),
+    stageWidth: v.optional(v.number()),
+    stageHeight: v.optional(v.number()),
+    scalePer100Pct: v.optional(v.number()),
     shapes: v.optional(
       v.array(
         v.object({
@@ -218,14 +226,45 @@ export default defineSchema({
             v.literal("circle"),
             v.literal("rect"),
             v.literal("text"),
-            v.literal("fog")
+            v.literal("fog"),
+            v.literal("fog_poly"),
+            v.literal("freehand"),
+            v.literal("highlighter"),
+            v.literal("arrow"),
+            v.literal("sticky"),
+            v.literal("frame"),
+            v.literal("stamp")
           ),
           label: v.string(),
           color: v.string(),
+          fillColor: v.optional(v.string()),
           strokeWidth: v.number(),
+          strokeStyle: v.optional(
+            v.union(v.literal("solid"), v.literal("dashed"), v.literal("dotted"))
+          ),
           dashed: v.optional(v.boolean()),
           opacity: v.optional(v.number()),
           fontSize: v.optional(v.number()),
+          fontFamily: v.optional(
+            v.union(v.literal("sans"), v.literal("serif"), v.literal("mono"))
+          ),
+          fontWeight: v.optional(
+            v.union(v.literal("normal"), v.literal("bold"))
+          ),
+          fontStyle: v.optional(
+            v.union(v.literal("normal"), v.literal("italic"))
+          ),
+          textAlign: v.optional(
+            v.union(v.literal("left"), v.literal("center"), v.literal("right"))
+          ),
+          rotation: v.optional(v.number()),
+          arrowStart: v.optional(v.boolean()),
+          arrowEnd: v.optional(v.boolean()),
+          curved: v.optional(v.boolean()),
+          stampType: v.optional(v.string()),
+          locked: v.optional(v.boolean()),
+          zIndex: v.optional(v.number()),
+          closed: v.optional(v.boolean()),
           entityId: v.optional(v.string()),
           linkedEntityIds: v.optional(v.array(v.string())),
           points: v.array(v.object({ x: v.number(), y: v.number() })),

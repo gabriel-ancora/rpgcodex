@@ -87,31 +87,72 @@ export type MapPinIcon =
 export type DrawingToolType =
   | 'select'
   | 'pan'
+  | 'freehand'
+  | 'highlighter'
+  | 'eraser'
   | 'pin'
+  | 'sticky'
   | 'text'
+  | 'arrow'
   | 'road'
   | 'river'
   | 'polygon'
   | 'circle'
   | 'rect'
+  | 'frame'
+  | 'stamp'
   | 'fog'
+  | 'fog_poly'
   | 'ruler';
+
+export type MapShapeType =
+  | 'road'
+  | 'river'
+  | 'polygon'
+  | 'circle'
+  | 'rect'
+  | 'text'
+  | 'fog'
+  | 'fog_poly'
+  | 'freehand'
+  | 'highlighter'
+  | 'arrow'
+  | 'sticky'
+  | 'frame'
+  | 'stamp';
+
+export type MapCanvasTheme = 'obsidian' | 'parchment' | 'paper' | 'blueprint';
+export type MapGridMode = 'off' | 'dots' | 'square' | 'hex';
 
 export interface MapDrawingShape {
   id: string;
-  type: 'road' | 'river' | 'polygon' | 'circle' | 'rect' | 'text' | 'fog';
+  type: MapShapeType;
   label: string;
   color: string;
+  fillColor?: string;
   strokeWidth: number;
+  strokeStyle?: 'solid' | 'dashed' | 'dotted';
   dashed?: boolean;
   opacity?: number;
   fontSize?: number;
+  fontFamily?: 'sans' | 'serif' | 'mono';
+  fontWeight?: 'normal' | 'bold';
+  fontStyle?: 'normal' | 'italic';
+  textAlign?: 'left' | 'center' | 'right';
+  rotation?: number;
+  arrowStart?: boolean;
+  arrowEnd?: boolean;
+  curved?: boolean;
+  stampType?: string;
+  locked?: boolean;
+  zIndex?: number;
+  closed?: boolean;
   entityId?: string;
   linkedEntityIds?: string[];
-  points: { x: number; y: number }[]; // percentage 0-100 coordinates
+  points: { x: number; y: number }[]; // percentage 0-100 coordinates (can extend beyond 0-100 on infinite canvas)
   radius?: number; // percentage for circle
-  width?: number; // percentage for rect
-  height?: number; // percentage for rect
+  width?: number; // percentage for rect / sticky / frame / stamp / ellipse
+  height?: number; // percentage for rect / sticky / frame / stamp / ellipse
   isSecret?: boolean;
   isRevealed?: boolean;
 }
@@ -145,6 +186,14 @@ export interface CampaignMap {
   storageId?: string;
   /** Ausente em mapas antigos: o servidor trata como visível aos jogadores. */
   isPublicToPlayers?: boolean;
+  canvasTheme?: MapCanvasTheme;
+  gridMode?: MapGridMode;
+  gridSize?: number;
+  gridOpacity?: number;
+  imageOpacity?: number;
+  stageWidth?: number;
+  stageHeight?: number;
+  scalePer100Pct?: number;
   pins: MapPin[];
   shapes?: MapDrawingShape[];
 }

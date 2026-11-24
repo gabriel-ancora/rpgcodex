@@ -179,6 +179,15 @@ export function buildBackupPayload(src: BackupSourceState): CodexBackupPayload {
       regionType: m.regionType,
       presetSvgType: m.presetSvgType,
       customImageUrl: /^https?:\/\//i.test(m.customImageUrl || '') ? m.customImageUrl : undefined,
+      isPublicToPlayers: m.isPublicToPlayers,
+      canvasTheme: m.canvasTheme,
+      gridMode: m.gridMode,
+      gridSize: m.gridSize,
+      gridOpacity: m.gridOpacity,
+      imageOpacity: m.imageOpacity,
+      stageWidth: m.stageWidth,
+      stageHeight: m.stageHeight,
+      scalePer100Pct: m.scalePer100Pct,
       pins: m.pins,
       shapes: m.shapes,
     })),
@@ -390,16 +399,58 @@ function normPoint(p: Obj) {
 }
 
 function normShape(o: Obj, i: number): MapDrawingShape | null {
-  const type = oneOf(o.type, ['road', 'river', 'polygon', 'circle', 'rect', 'text', 'fog'] as const, 'polygon');
+  const type = oneOf(
+    o.type,
+    [
+      'road',
+      'river',
+      'polygon',
+      'circle',
+      'rect',
+      'text',
+      'fog',
+      'fog_poly',
+      'freehand',
+      'highlighter',
+      'arrow',
+      'sticky',
+      'frame',
+      'stamp',
+    ] as const,
+    'polygon'
+  );
   return {
     id: str(o.id, `shape-${i}`),
     type,
     label: str(o.label),
     color: str(o.color, '#71717a'),
+    fillColor: optStr(o.fillColor),
     strokeWidth: num(o.strokeWidth, 2),
+    strokeStyle:
+      o.strokeStyle === 'solid' || o.strokeStyle === 'dashed' || o.strokeStyle === 'dotted'
+        ? o.strokeStyle
+        : undefined,
     dashed: typeof o.dashed === 'boolean' ? o.dashed : undefined,
     opacity: typeof o.opacity === 'number' ? o.opacity : undefined,
     fontSize: typeof o.fontSize === 'number' ? o.fontSize : undefined,
+    fontFamily:
+      o.fontFamily === 'sans' || o.fontFamily === 'serif' || o.fontFamily === 'mono'
+        ? o.fontFamily
+        : undefined,
+    fontWeight: o.fontWeight === 'normal' || o.fontWeight === 'bold' ? o.fontWeight : undefined,
+    fontStyle: o.fontStyle === 'normal' || o.fontStyle === 'italic' ? o.fontStyle : undefined,
+    textAlign:
+      o.textAlign === 'left' || o.textAlign === 'center' || o.textAlign === 'right'
+        ? o.textAlign
+        : undefined,
+    rotation: typeof o.rotation === 'number' ? o.rotation : undefined,
+    arrowStart: typeof o.arrowStart === 'boolean' ? o.arrowStart : undefined,
+    arrowEnd: typeof o.arrowEnd === 'boolean' ? o.arrowEnd : undefined,
+    curved: typeof o.curved === 'boolean' ? o.curved : undefined,
+    stampType: optStr(o.stampType),
+    locked: typeof o.locked === 'boolean' ? o.locked : undefined,
+    zIndex: typeof o.zIndex === 'number' ? o.zIndex : undefined,
+    closed: typeof o.closed === 'boolean' ? o.closed : undefined,
     entityId: optStr(o.entityId),
     linkedEntityIds: Array.isArray(o.linkedEntityIds) ? strArr(o.linkedEntityIds) : undefined,
     points: objArr(o.points).map(normPoint),
@@ -593,6 +644,24 @@ export function validateBackup(raw: unknown): { payload: CodexBackupPayload; war
       regionType: oneOf(o.regionType, ['regional', 'tactical', 'city'] as const, 'regional'),
       presetSvgType: optStr(o.presetSvgType),
       customImageUrl: /^https?:\/\//i.test(str(o.customImageUrl)) ? str(o.customImageUrl) : undefined,
+      isPublicToPlayers: typeof o.isPublicToPlayers === 'boolean' ? o.isPublicToPlayers : undefined,
+      canvasTheme:
+        o.canvasTheme === 'obsidian' ||
+        o.canvasTheme === 'parchment' ||
+        o.canvasTheme === 'paper' ||
+        o.canvasTheme === 'blueprint'
+          ? o.canvasTheme
+          : undefined,
+      gridMode:
+        o.gridMode === 'off' || o.gridMode === 'dots' || o.gridMode === 'square' || o.gridMode === 'hex'
+          ? o.gridMode
+          : undefined,
+      gridSize: typeof o.gridSize === 'number' ? o.gridSize : undefined,
+      gridOpacity: typeof o.gridOpacity === 'number' ? o.gridOpacity : undefined,
+      imageOpacity: typeof o.imageOpacity === 'number' ? o.imageOpacity : undefined,
+      stageWidth: typeof o.stageWidth === 'number' ? o.stageWidth : undefined,
+      stageHeight: typeof o.stageHeight === 'number' ? o.stageHeight : undefined,
+      scalePer100Pct: typeof o.scalePer100Pct === 'number' ? o.scalePer100Pct : undefined,
       pins: objArr(o.pins).map(normPin).filter((p): p is MapPin => p !== null),
       shapes: objArr(o.shapes).map(normShape).filter((s): s is MapDrawingShape => s !== null),
     };

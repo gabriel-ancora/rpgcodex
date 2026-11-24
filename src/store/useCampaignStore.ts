@@ -363,8 +363,43 @@ interface CampaignState {
     subtitle: string,
     customImageUrl: string,
     regionType?: CampaignMap['regionType'],
-    storageId?: Id<'_storage'>
+    storageId?: Id<'_storage'>,
+    extra?: Partial<
+      Pick<
+        CampaignMap,
+        | 'isPublicToPlayers'
+        | 'canvasTheme'
+        | 'gridMode'
+        | 'gridSize'
+        | 'gridOpacity'
+        | 'imageOpacity'
+        | 'stageWidth'
+        | 'stageHeight'
+        | 'scalePer100Pct'
+      >
+    >
   ) => Promise<string | null>;
+  updateMap: (
+    mapId: string,
+    updates: Partial<
+      Pick<
+        CampaignMap,
+        | 'name'
+        | 'subtitle'
+        | 'regionType'
+        | 'customImageUrl'
+        | 'isPublicToPlayers'
+        | 'canvasTheme'
+        | 'gridMode'
+        | 'gridSize'
+        | 'gridOpacity'
+        | 'imageOpacity'
+        | 'stageWidth'
+        | 'stageHeight'
+        | 'scalePer100Pct'
+      >
+    > & { storageId?: Id<'_storage'>; clearImage?: boolean }
+  ) => Ok;
   deleteMap: (id: string) => Ok;
   /** Resolve com o id definitivo do marcador ou null. */
   addMapPin: (mapId: string, pin: Omit<MapPin, 'id'>) => Promise<string | null>;
@@ -374,6 +409,7 @@ interface CampaignState {
   addMapShape: (mapId: string, shape: Omit<MapDrawingShape, 'id'>) => Ok;
   updateMapShape: (mapId: string, shapeId: string, updates: Partial<MapDrawingShape>) => Ok;
   deleteMapShape: (mapId: string, shapeId: string) => Ok;
+  setMapShapes: (mapId: string, shapes: MapDrawingShape[], label?: string) => Ok;
 
   // ---- Calendário e cronologia ----
   advanceCalendarDays: (days: number) => Ok;
@@ -1651,7 +1687,7 @@ export const useCampaignStore = create<CampaignState>()(
         clearFocusMapPin: () => set({ focusMapPin: null }),
         setSelectedMapId: (id) => set({ selectedMapId: id }),
 
-        addMap: async (name, subtitle, customImageUrl, regionType = 'regional', storageId) => {
+        addMap: async (name, subtitle, customImageUrl, regionType = 'regional', storageId, extra) => {
           const { sessionToken, campaignId } = sess();
           const temp = tempId('map');
           const prevSelected = get().selectedMapId;
@@ -1662,6 +1698,7 @@ export const useCampaignStore = create<CampaignState>()(
             regionType,
             presetSvgType: customImageUrl ? 'custom' : 'tactical_grid',
             customImageUrl,
+            ...extra,
             pins: [],
             shapes: [],
           };
@@ -1683,6 +1720,34 @@ export const useCampaignStore = create<CampaignState>()(
               })) as string,
             `Mapa "${name}" salvo.`
           );
+        },
+
+        updateMap: async (mapId, updates) => {
+          const { sessionToken } = sess();
+          const undo = snap('maps');
+          const { storageId, clearImage, ...rest } = updates;
+          set((state) => ({
+            maps: state.maps.map((m) =>
+              m.id === mapId
+                ? {
+                    ...m,
+                    ...rest,
+                    ...(clearImage ? { customImageUrl: undefined, storageId: undefined } : {}),
+                    ...(storageId ? { storageId } : {}),
+                  }
+                : m
+            ),
+          }));
+          return mutate('atualizar o mapa', undo, async () => {
+            const realMap = await resolveId(mapId);
+            await convexClient.mutation(api.maps.update, {
+              sessionToken,
+              mapId: realMap,
+              ...rest,
+              ...(storageId ? { storageId } : {}),
+              ...(clearImage ? { clearImage: true } : {}),
+            });
+          });
         },
 
         deleteMap: async (id) => {
@@ -1802,6 +1867,9 @@ export const useCampaignStore = create<CampaignState>()(
 
         deleteMapShape: (mapId, shapeId) =>
           writeShapes(mapId, (shapes) => shapes.filter((s) => s.id !== shapeId), 'remover o desenho', 'Desenho removido do mapa.'),
+
+        setMapShapes: (mapId, shapes, label = 'atualizar o mapa') =>
+          writeShapes(mapId, () => shapes, label),
 
         // ===================================================================
         // CALENDÁRIO E CRONOLOGIA

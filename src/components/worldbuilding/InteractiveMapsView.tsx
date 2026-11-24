@@ -1,544 +1,158 @@
 import React, {
-  useState,
-  useRef,
+  useCallback,
   useEffect,
   useMemo,
-  useCallback,
+  useRef,
+  useState,
 } from 'react';
-import { useCampaignStore } from '../../store/useCampaignStore';
 import {
+  Brush,
+  Check,
+  Circle as CircleIcon,
+  CloudOff,
+  Compass,
+  Download,
+  Eraser,
+  Eye,
+  EyeOff,
+  Frame,
+  Grid3X3,
+  Hand,
+  Hexagon,
+  Highlighter,
+  Layers,
+  Lock,
+  Magnet,
+  Map as MapIcon,
+  MapPin as MapPinIconLucide,
+  Maximize2,
+  Minimize2,
+  MousePointer2,
+  MoveUpRight,
+  PenTool,
+  Plus,
+  Redo2,
+  Ruler,
+  SlidersHorizontal,
+  Square,
+  StickyNote,
+  Trash2,
+  Type,
+  Undo2,
+  Unlock,
+  Waves,
+  X,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react';
+import { useCampaignStore } from '../../store/useCampaignStore';
+import type {
+  DrawingToolType,
+  Entity,
+  MapCanvasTheme,
+  MapDrawingShape,
+  MapGridMode,
   MapLayer,
   MapPin,
   MapPinIcon,
-  DrawingToolType,
-  MapDrawingShape,
-  Entity,
 } from '../../types/campaign';
-import { MentionText, MentionTextarea } from '../common/MentionText';
-import { uploadImageToCloudStorage } from '../../services/storageService';
-import { Id } from '../../../convex/_generated/dataModel';
+import { useConfirm } from '../common/Modal';
 import {
-  Map as MapIcon,
-  Plus,
-  Upload,
-  Castle,
-  Building2,
-  Home,
-  Beer,
-  ShoppingBag,
-  Anchor,
-  Sparkles,
-  DoorOpen,
-  Skull,
-  Landmark,
-  Tent,
-  Orbit,
-  Compass,
-  Users,
-  Lock,
-  Eye,
-  EyeOff,
-  Coins,
-  Swords,
-  ExternalLink,
-  Trash2,
-  X,
-  PenTool,
-  Waves,
-  Type,
-  CloudOff,
-  Ruler,
-  Hand,
-  Circle as CircleIcon,
-  Square,
-  Hexagon,
-  MousePointer,
-  Check,
-  Loader2,
-  Cloud,
-  MapPin as MapPinLucide,
-  ZoomIn,
-  ZoomOut,
-  Maximize2,
-  Grid3X3,
-  Link2,
-  Edit3,
-  Save,
-  BookPlus,
-  Layers,
-  CornerDownRight,
-} from 'lucide-react';
+  BoundingBox,
+  CANVAS_THEMES,
+  DEFAULT_STAGE_H,
+  DEFAULT_STAGE_W,
+  LAYER_CONFIG,
+  MAP_STAMPS,
+  MAX_ZOOM,
+  MIN_ZOOM,
+  PIN_ICON_META,
+  Point,
+  STICKY_PALETTE,
+  STROKE_PALETTE,
+  boxesIntersect,
+  formatPathDistance,
+  getShapeBounds,
+  resizeShapeToBounds,
+  round2,
+  simplifyPoints,
+  translateShape,
+} from './maps/mapConstants';
+import { CanvasVectorStage, ResizeHandleId } from './maps/CanvasVectorStage';
+import { FloatingShapeToolbar } from './maps/FloatingShapeToolbar';
+import {
+  MapSettingsModal,
+  MapSettingsSubmitPayload,
+} from './maps/MapSettingsModal';
+import {
+  CreatePinModal,
+  CreatePinSubmitData,
+  MapPinInspector,
+  MapPinMarker,
+} from './maps/MapPinInspectorAndModal';
 
-const STAGE_W = 1280;
-const STAGE_H = 820;
-const MIN_ZOOM = 0.35;
-const MAX_ZOOM = 4.5;
+type InteractionState =
+  | { kind: 'none' }
+  | {
+      kind: 'pan';
+      startClientX: number;
+      startClientY: number;
+      originPanX: number;
+      originPanY: number;
+      moved: boolean;
+    }
+  | {
+      kind: 'freehand';
+      tool: 'freehand' | 'highlighter';
+      rawPoints: Point[];
+    }
+  | {
+      kind: 'eraser';
+      erasedIds: Set<string>;
+      baseShapes: MapDrawingShape[];
+    }
+  | {
+      kind: 'drag_create';
+      tool: 'rect' | 'circle' | 'sticky' | 'frame' | 'stamp' | 'fog' | 'arrow';
+      startPt: Point;
+      currentPt: Point;
+    }
+  | {
+      kind: 'marquee';
+      startPt: Point;
+      currentPt: Point;
+      additive: boolean;
+      initialSelected: string[];
+    }
+  | {
+      kind: 'move_shapes';
+      startPt: Point;
+      baseShapes: MapDrawingShape[];
+      selectedIds: Set<string>;
+      moved: boolean;
+    }
+  | {
+      kind: 'resize_shapes';
+      handle: ResizeHandleId;
+      startPt: Point;
+      initialUnionBounds: BoundingBox;
+      initialShapeBounds: Map<string, BoundingBox>;
+      baseShapes: MapDrawingShape[];
+      selectedIds: Set<string>;
+    }
+  | {
+      kind: 'rotate_shape';
+      shapeId: string;
+      center: Point;
+      baseShapes: MapDrawingShape[];
+    }
+  | {
+      kind: 'move_vertex';
+      shapeId: string;
+      vertexIndex: number;
+      baseShapes: MapDrawingShape[];
+    };
 
-const LAYER_CONFIG: Record<
-  MapLayer,
-  // `color` identifica a camada no ícone do marcador e nos filtros. Os marcadores
-  // ficam sobre imagens do usuário, então usam cores explícitas (não tokens).
-  { label: string; shortLabel: string; color: string }
-> = {
-  locations: { label: 'Locais e assentamentos', shortLabel: 'Locais', color: '#22a06b' },
-  dangers: { label: 'Perigos e masmorras', shortLabel: 'Perigos', color: '#e5484d' },
-  quests: { label: 'Ganchos e missões', shortLabel: 'Missões', color: '#d99a1c' },
-  secrets: { label: 'Segredos do mestre', shortLabel: 'Segredos', color: '#8e6bd8' },
-};
-
-const PIN_ICON_META: Record<
-  MapPinIcon,
-  {
-    label: string;
-    defaultLayer: MapLayer;
-    icon: React.FC<{ className?: string }>;
-  }
-> = {
-  castle: { label: 'Castelo / Forte', defaultLayer: 'locations', icon: Castle },
-  city: { label: 'Cidade / Capital', defaultLayer: 'locations', icon: Building2 },
-  village: { label: 'Vila / Povoado', defaultLayer: 'locations', icon: Home },
-  tavern: { label: 'Taverna / Estalagem', defaultLayer: 'locations', icon: Beer },
-  shop: { label: 'Mercado / Forja', defaultLayer: 'locations', icon: ShoppingBag },
-  port: { label: 'Porto / Cais', defaultLayer: 'locations', icon: Anchor },
-  shrine: { label: 'Templo / Santuário', defaultLayer: 'locations', icon: Sparkles },
-  dungeon: { label: 'Entrada de Masmorra', defaultLayer: 'dangers', icon: DoorOpen },
-  skull: { label: 'Chefe / Ameaça Mortal', defaultLayer: 'dangers', icon: Skull },
-  ruins: { label: 'Ruínas Antigas', defaultLayer: 'dangers', icon: Landmark },
-  camp: { label: 'Acampamento', defaultLayer: 'locations', icon: Tent },
-  portal: { label: 'Portal / Fenda Arcana', defaultLayer: 'secrets', icon: Orbit },
-  quest: { label: 'Gancho de Missão', defaultLayer: 'quests', icon: Compass },
-  party: { label: 'Posição do Grupo', defaultLayer: 'quests', icon: Users },
-  secret: { label: 'Segredo / Armadilha', defaultLayer: 'secrets', icon: Lock },
-};
-
-const SHAPE_COLORS = [
-  { label: 'Ocre', hex: '#d4a853' },
-  { label: 'Vermelho', hex: '#e11d48' },
-  { label: 'Verde', hex: '#10b981' },
-  { label: 'Azul', hex: '#38bdf8' },
-  { label: 'Violeta', hex: '#a855f7' },
-  { label: 'Branco', hex: '#e4e4e7' },
-];
-
-// ============================================================================
-// MEMOIZED VECTOR LAYER (60FPS PAN/ZOOM)
-// ============================================================================
-interface MapVectorLayerProps {
-  shapes: MapDrawingShape[];
-  drawingPoints: { x: number; y: number }[];
-  activeTool: DrawingToolType;
-  shapeColor: string;
-  rulerPoints: { x: number; y: number }[];
-  rulerDistanceLabel: string;
-  viewRole: 'gm' | 'player';
-  entitiesMap: Map<string, Entity>;
-  onSelectEntity: (entityId: string) => void;
-}
-
-const MapVectorLayer: React.FC<MapVectorLayerProps> = React.memo(
-  ({
-    shapes,
-    drawingPoints,
-    activeTool,
-    shapeColor,
-    rulerPoints,
-    rulerDistanceLabel,
-    viewRole,
-    entitiesMap,
-    onSelectEntity,
-  }) => {
-    return (
-      <svg
-        viewBox="0 0 100 100"
-        preserveAspectRatio="none"
-        className="absolute inset-0 w-full h-full pointer-events-none z-10"
-      >
-        {shapes.map((shape) => {
-          const linkedEntity = shape.entityId
-            ? entitiesMap.get(shape.entityId)
-            : undefined;
-          const displayLabel = linkedEntity
-            ? `${shape.label} (${linkedEntity.mentionPrefix}${linkedEntity.handle})`
-            : shape.label;
-
-          if (
-            (shape.type === 'road' || shape.type === 'river') &&
-            shape.points.length >= 2
-          ) {
-            const pts = shape.points.map((p) => `${p.x},${p.y}`).join(' ');
-            const mid = shape.points[Math.floor(shape.points.length / 2)];
-            const isRiver = shape.type === 'river';
-            return (
-              <g key={shape.id}>
-                {isRiver && (
-                  <polyline
-                    points={pts}
-                    fill="none"
-                    stroke={shape.color}
-                    strokeOpacity={0.25}
-                    strokeWidth={(shape.strokeWidth || 3) * 0.45}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                )}
-                <polyline
-                  points={pts}
-                  fill="none"
-                  stroke={shape.color}
-                  strokeWidth={(shape.strokeWidth || 3) * (isRiver ? 0.24 : 0.2)}
-                  strokeDasharray={
-                    isRiver ? undefined : shape.dashed ? '1.3 0.9' : undefined
-                  }
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                {mid && shape.label && (
-                  <text
-                    x={mid.x}
-                    y={mid.y - 1.2}
-                    textAnchor="middle"
-                    fill={shape.color}
-                    fontSize="1.65"
-                    fontWeight="600"
-                    style={{ textShadow: '0 1px 3px rgba(0,0,0,0.95)' }}
-                  >
-                    {displayLabel}
-                  </text>
-                )}
-              </g>
-            );
-          }
-
-          if (shape.type === 'polygon' && shape.points.length >= 3) {
-            const pts = shape.points.map((p) => `${p.x},${p.y}`).join(' ');
-            const cx =
-              shape.points.reduce((acc, p) => acc + p.x, 0) / shape.points.length;
-            const cy =
-              shape.points.reduce((acc, p) => acc + p.y, 0) / shape.points.length;
-            return (
-              <g key={shape.id}>
-                <polygon
-                  points={pts}
-                  fill={shape.color}
-                  fillOpacity={shape.opacity ?? 0.18}
-                  stroke={shape.color}
-                  strokeWidth={0.3}
-                  strokeDasharray={shape.dashed ? '1.1 0.7' : undefined}
-                />
-                <text
-                  x={cx}
-                  y={cy}
-                  textAnchor="middle"
-                  fill={shape.color}
-                  fontSize="1.85"
-                  fontWeight="600"
-                  className={linkedEntity ? 'pointer-events-auto cursor-pointer' : ''}
-                  onClick={(e) => {
-                    if (linkedEntity) {
-                      e.stopPropagation();
-                      onSelectEntity(linkedEntity.id);
-                    }
-                  }}
-                >
-                  {displayLabel}
-                </text>
-              </g>
-            );
-          }
-
-          if (shape.type === 'circle' && shape.points[0]) {
-            const center = shape.points[0];
-            const r = shape.radius || 10;
-            return (
-              <g key={shape.id}>
-                <circle
-                  cx={center.x}
-                  cy={center.y}
-                  r={r}
-                  fill={shape.color}
-                  fillOpacity={shape.opacity ?? 0.16}
-                  stroke={shape.color}
-                  strokeWidth={0.3}
-                  strokeDasharray={shape.dashed ? '1.1 0.7' : undefined}
-                />
-                <text
-                  x={center.x}
-                  y={center.y - r - 0.9}
-                  textAnchor="middle"
-                  fill={shape.color}
-                  fontSize="1.75"
-                  fontWeight="600"
-                >
-                  {displayLabel}
-                </text>
-              </g>
-            );
-          }
-
-          if (shape.type === 'rect' && shape.points[0]) {
-            const p = shape.points[0];
-            const w = shape.width || 16;
-            const h = shape.height || 12;
-            return (
-              <g key={shape.id}>
-                <rect
-                  x={p.x}
-                  y={p.y}
-                  width={w}
-                  height={h}
-                  fill={shape.color}
-                  fillOpacity={shape.opacity ?? 0.16}
-                  stroke={shape.color}
-                  strokeWidth={0.3}
-                  strokeDasharray={shape.dashed ? '1.1 0.7' : undefined}
-                />
-                <text
-                  x={p.x + w / 2}
-                  y={p.y - 0.9}
-                  textAnchor="middle"
-                  fill={shape.color}
-                  fontSize="1.75"
-                  fontWeight="600"
-                >
-                  {displayLabel}
-                </text>
-              </g>
-            );
-          }
-
-          if (shape.type === 'fog' && shape.points[0]) {
-            // Fog of war: hidden when isRevealed === true for players; semi-opaque for GM
-            if (shape.isRevealed && viewRole === 'player') return null;
-            const p = shape.points[0];
-            const w = shape.width || 22;
-            const h = shape.height || 18;
-            const fillOp =
-              viewRole === 'player' ? 0.97 : shape.isRevealed ? 0.18 : 0.62;
-            return (
-              <g key={shape.id}>
-                <rect
-                  x={p.x}
-                  y={p.y}
-                  width={w}
-                  height={h}
-                  rx={0.8}
-                  fill="#070709"
-                  fillOpacity={fillOp}
-                  stroke={viewRole === 'gm' ? '#71717a' : 'none'}
-                  strokeWidth={0.25}
-                  strokeDasharray="0.9 0.7"
-                />
-                {viewRole === 'gm' && (
-                  <text
-                    x={p.x + w / 2}
-                    y={p.y + h / 2}
-                    textAnchor="middle"
-                    fill="#d4d4d8"
-                    fontSize="1.6"
-                    fontFamily="IBM Plex Sans, sans-serif"
-                  >
-                    {shape.label || 'Névoa de guerra'}
-                    {shape.isRevealed ? ' (revelada)' : ''}
-                  </text>
-                )}
-              </g>
-            );
-          }
-
-          if (shape.type === 'text' && shape.points[0]) {
-            const p = shape.points[0];
-            const fs = shape.fontSize || 2.4;
-            return (
-              <g key={shape.id}>
-                <text
-                  x={p.x}
-                  y={p.y}
-                  textAnchor="middle"
-                  fill={shape.color || '#e4e4e7'}
-                  fontSize={fs}
-                  fontFamily="IBM Plex Sans, sans-serif"
-                  fontWeight="600"
-                  stroke="rgba(0,0,0,0.65)"
-                  strokeWidth={fs * 0.08}
-                  paintOrder="stroke"
-                >
-                  {displayLabel}
-                </text>
-              </g>
-            );
-          }
-
-          return null;
-        })}
-
-        {/* Active Multi-Point Preview */}
-        {drawingPoints.length > 0 && (
-          <g>
-            <polyline
-              points={drawingPoints.map((p) => `${p.x},${p.y}`).join(' ')}
-              fill={activeTool === 'polygon' ? shapeColor : 'none'}
-              fillOpacity={activeTool === 'polygon' ? 0.16 : 0}
-              stroke={shapeColor}
-              strokeWidth="0.45"
-              strokeDasharray="1 0.8"
-            />
-            {drawingPoints.map((pt, idx) => (
-              <circle key={idx} cx={pt.x} cy={pt.y} r="0.65" fill={shapeColor} />
-            ))}
-          </g>
-        )}
-
-        {/* Ruler Distance Overlay */}
-        {rulerPoints.length === 2 && (
-          <g>
-            {/* Traço duplo (escuro + branco) para ficar legível sobre qualquer imagem */}
-            <line
-              x1={rulerPoints[0].x}
-              y1={rulerPoints[0].y}
-              x2={rulerPoints[1].x}
-              y2={rulerPoints[1].y}
-              stroke="rgba(0,0,0,0.55)"
-              strokeWidth="0.7"
-            />
-            <line
-              x1={rulerPoints[0].x}
-              y1={rulerPoints[0].y}
-              x2={rulerPoints[1].x}
-              y2={rulerPoints[1].y}
-              stroke="#ffffff"
-              strokeWidth="0.35"
-              strokeDasharray="0.9 0.6"
-            />
-            <circle cx={rulerPoints[0].x} cy={rulerPoints[0].y} r="0.7" fill="#ffffff" stroke="#18181b" strokeWidth="0.2" />
-            <circle cx={rulerPoints[1].x} cy={rulerPoints[1].y} r="0.7" fill="#ffffff" stroke="#18181b" strokeWidth="0.2" />
-            <rect
-              x={(rulerPoints[0].x + rulerPoints[1].x) / 2 - 9}
-              y={(rulerPoints[0].y + rulerPoints[1].y) / 2 - 3.6}
-              width="18"
-              height="3.2"
-              rx="0.6"
-              fill="#18181b"
-              fillOpacity="0.92"
-              stroke="#ffffff"
-              strokeOpacity="0.6"
-              strokeWidth="0.15"
-            />
-            <text
-              x={(rulerPoints[0].x + rulerPoints[1].x) / 2}
-              y={(rulerPoints[0].y + rulerPoints[1].y) / 2 - 1.5}
-              textAnchor="middle"
-              fill="#ffffff"
-              fontSize="1.55"
-              fontFamily="IBM Plex Sans, sans-serif"
-              fontWeight="600"
-            >
-              {rulerDistanceLabel}
-            </text>
-          </g>
-        )}
-      </svg>
-    );
-  }
-);
-
-// ============================================================================
-// MEMOIZED PIN MARKER (COUNTER-SCALED ON ZOOM + DRAGGABLE)
-// ============================================================================
-interface MapPinMarkerProps {
-  pin: MapPin;
-  displayX: number;
-  displayY: number;
-  isSelected: boolean;
-  counterScale: number;
-  linkedCount: number;
-  hasSubMap: boolean;
-  canDrag: boolean;
-  onSelect: (pinId: string) => void;
-  onStartDrag: (e: React.PointerEvent<HTMLButtonElement>, pin: MapPin) => void;
-}
-
-const MapPinMarker: React.FC<MapPinMarkerProps> = React.memo(
-  ({
-    pin,
-    displayX,
-    displayY,
-    isSelected,
-    counterScale,
-    linkedCount,
-    hasSubMap,
-    canDrag,
-    onSelect,
-    onStartDrag,
-  }) => {
-    const layerStyle = LAYER_CONFIG[pin.layer] || LAYER_CONFIG.locations;
-    const iconMeta = PIN_ICON_META[pin.iconType] || PIN_ICON_META.castle;
-    const IconComp = iconMeta.icon || MapPinLucide;
-
-    return (
-      <button
-        type="button"
-        onPointerDown={(e) => {
-          e.stopPropagation();
-          onSelect(pin.id);
-          if (canDrag && e.button === 0) {
-            onStartDrag(e, pin);
-          }
-        }}
-        onClick={(e) => {
-          e.stopPropagation();
-          onSelect(pin.id);
-        }}
-        style={{
-          left: `${displayX}%`,
-          top: `${displayY}%`,
-          transform: `translate(-50%, -50%) scale(${
-            isSelected ? counterScale * 1.12 : counterScale
-          })`,
-        }}
-        className={`absolute group ${
-          isSelected ? 'z-30' : 'z-20 hover:z-30'
-        } ${canDrag ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`}
-      >
-        {/* Cores explícitas: o marcador precisa ser legível sobre imagens claras e escuras */}
-        <div className="relative mx-auto w-fit">
-          <div
-            className={`w-8 h-8 rounded-full border-2 flex items-center justify-center mx-auto shadow-[0_1px_3px_rgba(0,0,0,0.45)] ${
-              isSelected
-                ? 'bg-white border-[#18181b]'
-                : 'bg-[#18181b] border-white'
-            }`}
-            style={{ color: layerStyle.color }}
-          >
-            <IconComp className="w-4 h-4" />
-          </div>
-
-          {(linkedCount > 0 || hasSubMap) && (
-            <span
-              title={`${linkedCount} vínculo(s) no códice${hasSubMap ? ' e submapa' : ''}`}
-              className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-white text-[#18181b] border border-[#18181b]/20 text-xs leading-none font-semibold flex items-center justify-center tabular-nums"
-            >
-              {hasSubMap ? '↳' : linkedCount}
-            </span>
-          )}
-        </div>
-
-        <div
-          className={`mt-1 px-1.5 py-0.5 rounded text-xs font-medium whitespace-nowrap shadow-[0_1px_2px_rgba(0,0,0,0.35)] ${
-            isSelected
-              ? 'bg-white text-[#18181b] ring-2 ring-accent'
-              : 'bg-[#18181b]/90 text-white'
-          }`}
-        >
-          {pin.label}
-        </div>
-      </button>
-    );
-  }
-);
-
-// ============================================================================
-// MAIN INTERACTIVE MAPS VIEW
-// ============================================================================
 export const InteractiveMapsView: React.FC = () => {
   const maps = useCampaignStore((s) => s.maps);
   const selectedMapId = useCampaignStore((s) => s.selectedMapId);
@@ -549,20 +163,21 @@ export const InteractiveMapsView: React.FC = () => {
   const entities = useCampaignStore((s) => s.entities);
   const addEntity = useCampaignStore((s) => s.addEntity);
   const addMap = useCampaignStore((s) => s.addMap);
+  const updateMap = useCampaignStore((s) => s.updateMap);
   const deleteMap = useCampaignStore((s) => s.deleteMap);
   const addMapPin = useCampaignStore((s) => s.addMapPin);
   const updateMapPin = useCampaignStore((s) => s.updateMapPin);
   const deleteMapPin = useCampaignStore((s) => s.deleteMapPin);
   const toggleRevealMapPin = useCampaignStore((s) => s.toggleRevealMapPin);
-  const addMapShape = useCampaignStore((s) => s.addMapShape);
-  const updateMapShape = useCampaignStore((s) => s.updateMapShape);
-  const deleteMapShape = useCampaignStore((s) => s.deleteMapShape);
+  const setMapShapes = useCampaignStore((s) => s.setMapShapes);
   const setSelectedEntityId = useCampaignStore((s) => s.setSelectedEntityId);
   const setWorldSubTab = useCampaignStore((s) => s.setWorldSubTab);
   const addCombatant = useCampaignStore((s) => s.addCombatant);
   const showToast = useCampaignStore((s) => s.showToast);
+  const confirm = useConfirm();
 
   const currentMap = maps.find((m) => m.id === selectedMapId) || maps[0];
+  const isGm = viewRole === 'gm';
 
   const entitiesMap = useMemo(() => {
     const m = new Map<string, Entity>();
@@ -570,37 +185,67 @@ export const InteractiveMapsView: React.FC = () => {
     return m;
   }, [entities]);
 
-  // Viewport Zoom & Pan State
+  // Viewport, Zoom, Pan & Fullscreen
   const viewportRef = useRef<HTMLDivElement | null>(null);
-  const [zoom, setZoom] = useState(0.85);
-  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 24, y: 18 });
-  const [gridMode, setGridMode] = useState<'off' | 'square' | 'hex'>('off');
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const [zoom, setZoom] = useState(0.75);
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 40, y: 28 });
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [isSpaceHeld, setIsSpaceHeld] = useState(false);
+  const [snapToGrid, setSnapToGrid] = useState(false);
+  const [showMinimap, setShowMinimap] = useState(true);
 
-  // Panning & Dragging Refs (Zero-lag pointer tracking)
-  const panDragRef = useRef<{
-    active: boolean;
-    startClientX: number;
-    startClientY: number;
-    originPanX: number;
-    originPanY: number;
-    moved: boolean;
-  }>({
-    active: false,
-    startClientX: 0,
-    startClientY: 0,
-    originPanX: 0,
-    originPanY: 0,
-    moved: false,
-  });
+  // Stage dimensions & theme derived from map (with auto image aspect ratio support)
+  const stageW = currentMap?.stageWidth || DEFAULT_STAGE_W;
+  const [naturalStageH, setNaturalStageH] = useState<number | null>(null);
+  const stageH = naturalStageH || currentMap?.stageHeight || DEFAULT_STAGE_H;
+  const stageWRef = useRef(stageW);
+  const stageHRef = useRef(stageH);
+  stageWRef.current = stageW;
+  stageHRef.current = stageH;
 
-  const [draggingPin, setDraggingPin] = useState<{
-    id: string;
-    x: number;
-    y: number;
-  } | null>(null);
+  const canvasTheme: MapCanvasTheme = currentMap?.canvasTheme || 'obsidian';
+  const themeMeta = CANVAS_THEMES[canvasTheme] || CANVAS_THEMES.obsidian;
+  const gridMode: MapGridMode = currentMap?.gridMode || 'dots';
+  const gridSize = currentMap?.gridSize || 40;
+  const gridOpacity = currentMap?.gridOpacity ?? 0.38;
+  const imageOpacity = currentMap?.imageOpacity ?? 1;
 
-  // Layer & Tool States
+  useEffect(() => {
+    const url = currentMap?.customImageUrl;
+    if (!url) {
+      setNaturalStageH(null);
+      return;
+    }
+    let cancelled = false;
+    const img = new Image();
+    img.onload = () => {
+      if (cancelled || !img.naturalWidth || !img.naturalHeight) return;
+      const computedH = Math.round((stageWRef.current * img.naturalHeight) / img.naturalWidth);
+      setNaturalStageH(computedH);
+    };
+    img.src = url;
+    return () => {
+      cancelled = true;
+    };
+  }, [currentMap?.customImageUrl, currentMap?.stageWidth]);
+
+  // Tool & Active Drawing Presets
+  const [activeTool, setActiveTool] = useState<DrawingToolType>('select');
+  const [openDockMenu, setOpenDockMenu] = useState<
+    'pen' | 'shapes' | 'lines' | 'stamps' | 'fog' | null
+  >(null);
+  const [brushColor, setBrushColor] = useState('#d4a853');
+  const [brushFillColor, setBrushFillColor] = useState('');
+  const [stickyColor, setStickyColor] = useState(STICKY_PALETTE[0].hex);
+  const [brushWidth, setBrushWidth] = useState(3);
+  const [brushDash, setBrushDash] = useState<'solid' | 'dashed' | 'dotted'>('solid');
+  const [brushCloseFreehand, setBrushCloseFreehand] = useState(false);
+  const [activeStampId, setActiveStampId] = useState('mountains');
+  const [defaultPinIcon, setDefaultPinIcon] = useState<MapPinIcon>('castle');
+  const [defaultPinLayer, setDefaultPinLayer] = useState<MapLayer>('locations');
+
+  // Layer Visibility Filters
   const [activeLayers, setActiveLayers] = useState<Record<MapLayer, boolean>>({
     locations: true,
     dangers: true,
@@ -608,216 +253,202 @@ export const InteractiveMapsView: React.FC = () => {
     secrets: true,
   });
   const [showVectorShapes, setShowVectorShapes] = useState(true);
-  const [showShapesDrawer, setShowShapesDrawer] = useState(false);
+  const [showLayersDrawer, setShowLayersDrawer] = useState(false);
 
-  const [activeTool, setActiveTool] = useState<DrawingToolType>('select');
-  const [drawingPoints, setDrawingPoints] = useState<{ x: number; y: number }[]>([]);
-  const [rulerPoints, setRulerPoints] = useState<{ x: number; y: number }[]>([]);
-  const [shapeLabel, setShapeLabel] = useState('Território / Rota');
-  const [shapeColor, setShapeColor] = useState('#d4a853');
-  const [shapeStrokeWidth] = useState(3);
-  const [shapeDashed, setShapeDashed] = useState(true);
-  const [shapeRadius, setShapeRadius] = useState(10);
-  const [shapeFontSize, setShapeFontSize] = useState(2.6);
-  const [shapeEntityId, setShapeEntityId] = useState('');
-
-  const [selectedPinId, setSelectedPinId] = useState<string | null>(
-    currentMap?.pins[0]?.id || null
-  );
-  const [isEditingPin, setIsEditingPin] = useState(false);
-
-  // Create Pin Modal State
-  const [pendingCoords, setPendingCoords] = useState<{ x: number; y: number } | null>(
+  // Selection, Live Drag Override, Inline Text Editing & Undo/Redo Stacks
+  const [selectedShapeIds, setSelectedShapeIds] = useState<string[]>([]);
+  const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
+  const [liveShapesOverride, setLiveShapesOverride] = useState<MapDrawingShape[] | null>(
     null
   );
-  const [pinLabel, setPinLabel] = useState('');
-  const [pinSubtitle, setPinSubtitle] = useState('');
-  const [pinLayer, setPinLayer] = useState<MapLayer>('locations');
-  const [pinIcon, setPinIcon] = useState<MapPinIcon>('castle');
-  const [pinEntityId, setPinEntityId] = useState('');
-  const [pinLinkedEntityIds, setPinLinkedEntityIds] = useState<string[]>([]);
-  const [pinLinkedMapId, setPinLinkedMapId] = useState('');
-  const [pinDesc, setPinDesc] = useState('');
-  const [pinMonsters, setPinMonsters] = useState('');
-  const [pinTreasures, setPinTreasures] = useState('');
-  const [pinSecret, setPinSecret] = useState(false);
-  const [pinAutoCreateWiki, setPinAutoCreateWiki] = useState(false);
-  const [modalWikiSearch, setModalWikiSearch] = useState('');
-
-  // Inspector Wiki Linker Search
-  const [inspectorWikiSearch, setInspectorWikiSearch] = useState('');
-
-  // Edit Pin Draft State
-  const [editDraft, setEditDraft] = useState<{
-    label: string;
-    subtitle: string;
-    layer: MapLayer;
-    iconType: MapPinIcon;
-    description: string;
-    monsters: string;
-    treasures: string;
-    entityId: string;
-    linkedMapId: string;
-  } | null>(null);
-
-  // Upload Map Modal State
-  const [showUploadModal, setShowUploadModal] = useState(false);
-  const [newMapName, setNewMapName] = useState('');
-  const [newMapSubtitle, setNewMapSubtitle] = useState('');
-  const [newMapUrl, setNewMapUrl] = useState('');
-  const [uploadedStorageId, setUploadedStorageId] = useState<Id<'_storage'> | undefined>(
-    undefined
+  const [dragDraftShape, setDragDraftShape] = useState<MapDrawingShape | null>(null);
+  const [marqueeBox, setMarqueeBox] = useState<BoundingBox | null>(null);
+  const [drawingPoints, setDrawingPoints] = useState<Point[]>([]);
+  const [liveCursorPoint, setLiveCursorPoint] = useState<Point | null>(null);
+  const [rulerPoints, setRulerPoints] = useState<Point[]>([]);
+  const [draggingPin, setDraggingPin] = useState<{ id: string; x: number; y: number } | null>(
+    null
   );
-  const [isUploadingMap, setIsUploadingMap] = useState(false);
-  const [newMapRegionType, setNewMapRegionType] = useState<'regional' | 'tactical' | 'city'>('regional');
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [editingShapeId, setEditingShapeId] = useState<string | null>(null);
+  const [editingShapeText, setEditingShapeText] = useState('');
 
-  // Altura do palco acompanha a proporção real da imagem enviada (evita cortes).
-  // A largura é fixa (STAGE_W); pins e formas usam coordenadas em %, então continuam alinhados.
-  const [stageH, setStageH] = useState(STAGE_H);
-  const stageHRef = useRef(STAGE_H);
-  const mapImageUrl = currentMap?.customImageUrl;
-  useEffect(() => {
-    if (!mapImageUrl) {
-      stageHRef.current = STAGE_H;
-      setStageH(STAGE_H);
-      return;
-    }
-    let cancelled = false;
-    const img = new Image();
-    img.onload = () => {
-      if (cancelled || !img.naturalWidth || !img.naturalHeight) return;
-      const h = Math.round((STAGE_W * img.naturalHeight) / img.naturalWidth);
-      stageHRef.current = h;
-      setStageH(h);
-    };
-    img.src = mapImageUrl;
-    return () => {
-      cancelled = true;
-    };
-  }, [mapImageUrl]);
+  // Per-map Undo/Redo & Clipboard
+  const historyRef = useRef<
+    Map<string, { past: MapDrawingShape[][]; future: MapDrawingShape[][] }>
+  >(new Map());
+  const [historyTick, setHistoryTick] = useState(0);
+  const clipboardRef = useRef<MapDrawingShape[]>([]);
+  const interactionRef = useRef<InteractionState>({ kind: 'none' });
 
-  // Fit stage inside viewport
+  // Modals
+  const [settingsModal, setSettingsModal] = useState<'create' | 'edit' | null>(null);
+  const [pendingPinCoords, setPendingPinCoords] = useState<Point | null>(null);
+
+  const serverShapes = currentMap?.shapes || [];
+  const effectiveShapes = liveShapesOverride ?? serverShapes;
+
+  const commitShapesWithHistory = useCallback(
+    (nextShapes: MapDrawingShape[], label = 'atualizar o canvas') => {
+      if (!currentMap) return;
+      const entry = historyRef.current.get(currentMap.id) || { past: [], future: [] };
+      const prevSnapshot = currentMap.shapes || [];
+      entry.past = [...entry.past.slice(-49), prevSnapshot];
+      entry.future = [];
+      historyRef.current.set(currentMap.id, entry);
+      setHistoryTick((t) => t + 1);
+      setLiveShapesOverride(null);
+      void setMapShapes(currentMap.id, nextShapes, label);
+    },
+    [currentMap, setMapShapes]
+  );
+
+  const handleUndo = useCallback(() => {
+    if (!currentMap || !isGm) return;
+    const entry = historyRef.current.get(currentMap.id);
+    if (!entry || entry.past.length === 0) return;
+    const previous = entry.past[entry.past.length - 1];
+    entry.past = entry.past.slice(0, -1);
+    entry.future = [currentMap.shapes || [], ...entry.future.slice(0, 49)];
+    historyRef.current.set(currentMap.id, entry);
+    setHistoryTick((t) => t + 1);
+    void setMapShapes(currentMap.id, previous, 'desfazer');
+  }, [currentMap, isGm, setMapShapes]);
+
+  const handleRedo = useCallback(() => {
+    if (!currentMap || !isGm) return;
+    const entry = historyRef.current.get(currentMap.id);
+    if (!entry || entry.future.length === 0) return;
+    const next = entry.future[0];
+    entry.future = entry.future.slice(1);
+    entry.past = [...entry.past.slice(-49), currentMap.shapes || []];
+    historyRef.current.set(currentMap.id, entry);
+    setHistoryTick((t) => t + 1);
+    void setMapShapes(currentMap.id, next, 'refazer');
+  }, [currentMap, isGm, setMapShapes]);
+
+  const currentHistory = currentMap ? historyRef.current.get(currentMap.id) : undefined;
+  const canUndo = Boolean(currentHistory && currentHistory.past.length > 0);
+  const canRedo = Boolean(currentHistory && currentHistory.future.length > 0);
+  void historyTick;
+
+  // Fit & Center Viewport
   const fitMapToViewport = useCallback(() => {
     const vp = viewportRef.current;
     if (!vp) return;
     const vw = vp.clientWidth;
     const vh = vp.clientHeight;
     if (vw <= 0 || vh <= 0) return;
+    const w = stageWRef.current;
     const h = stageHRef.current;
     const fitZ = Math.max(
       MIN_ZOOM,
-      Math.min(1.25, Math.min((vw - 32) / STAGE_W, (vh - 32) / h))
+      Math.min(1.2, Math.min((vw - 96) / w, (vh - 64) / h))
     );
     setZoom(Number(fitZ.toFixed(3)));
     setPan({
-      x: Math.round((vw - STAGE_W * fitZ) / 2),
+      x: Math.round((vw - w * fitZ) / 2),
       y: Math.round((vh - h * fitZ) / 2),
     });
   }, []);
 
-  const centerOnPercent = useCallback((xPct: number, yPct: number, targetZoom = 1.75) => {
+  const centerOnPercent = useCallback((xPct: number, yPct: number, targetZoom = 1.65) => {
     const vp = viewportRef.current;
     if (!vp) return;
     const vw = vp.clientWidth;
     const vh = vp.clientHeight;
     const clampedZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, targetZoom));
-    const stageX = (xPct / 100) * STAGE_W;
-    const stageY = (yPct / 100) * stageHRef.current;
+    const sx = (xPct / 100) * stageWRef.current;
+    const sy = (yPct / 100) * stageHRef.current;
     setZoom(clampedZoom);
     setPan({
-      x: Math.round(vw / 2 - stageX * clampedZoom),
-      y: Math.round(vh / 2 - stageY * clampedZoom),
+      x: Math.round(vw / 2 - sx * clampedZoom),
+      y: Math.round(vh / 2 - sy * clampedZoom),
     });
   }, []);
 
-  // Fit on initial mount, map switch or when the image proportions are known
   useEffect(() => {
-    const id = window.requestAnimationFrame(() => {
-      fitMapToViewport();
-    });
+    const id = window.requestAnimationFrame(() => fitMapToViewport());
     return () => window.cancelAnimationFrame(id);
-  }, [currentMap?.id, stageH, fitMapToViewport]);
+  }, [currentMap?.id, stageH, stageW, isFullscreen, fitMapToViewport]);
 
-  // Handle cross-module focus from Wiki ("Ver no Mapa")
+  // Clear transient state on map switch
+  useEffect(() => {
+    setSelectedShapeIds([]);
+    setDrawingPoints([]);
+    setRulerPoints([]);
+    setEditingShapeId(null);
+    setLiveShapesOverride(null);
+  }, [currentMap?.id]);
+
+  // Cross-module focus ("Ver no Mapa")
   useEffect(() => {
     if (!focusMapPin) return;
     const targetMap = maps.find((m) => m.id === focusMapPin.mapId);
     if (targetMap) {
-      if (selectedMapId !== targetMap.id) {
-        setSelectedMapId(targetMap.id);
-      }
+      if (selectedMapId !== targetMap.id) setSelectedMapId(targetMap.id);
       const targetPin = targetMap.pins.find((p) => p.id === focusMapPin.pinId);
       if (targetPin) {
         setSelectedPinId(targetPin.id);
-        window.requestAnimationFrame(() => {
-          centerOnPercent(targetPin.x, targetPin.y, 1.85);
-        });
+        window.requestAnimationFrame(() =>
+          centerOnPercent(targetPin.x, targetPin.y, 1.85)
+        );
       }
     }
     clearFocusMapPin();
   }, [focusMapPin, maps, selectedMapId, setSelectedMapId, centerOnPercent, clearFocusMapPin]);
 
-  // Spacebar shortcut for quick pan
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (
-        e.code === 'Space' &&
-        document.activeElement?.tagName !== 'INPUT' &&
-        document.activeElement?.tagName !== 'TEXTAREA' &&
-        document.activeElement?.tagName !== 'SELECT'
-      ) {
-        e.preventDefault();
-        setIsSpaceHeld(true);
+  // Coordinate Conversion + Optional Snap-to-Grid
+  const clientToStagePercent = useCallback(
+    (clientX: number, clientY: number, applySnap = false): Point | null => {
+      const vp = viewportRef.current;
+      if (!vp) return null;
+      const rect = vp.getBoundingClientRect();
+      let sx = (clientX - rect.left - pan.x) / zoom;
+      let sy = (clientY - rect.top - pan.y) / zoom;
+      if (applySnap && snapToGrid && gridSize > 4) {
+        const step = gridSize / 2;
+        sx = Math.round(sx / step) * step;
+        sy = Math.round(sy / step) * step;
       }
-      if (e.key === 'Escape') {
-        setDrawingPoints([]);
-        setRulerPoints([]);
-        setActiveTool('select');
-      }
-    };
-    const onKeyUp = (e: KeyboardEvent) => {
-      if (e.code === 'Space') {
-        setIsSpaceHeld(false);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
-    };
-  }, []);
+      // Allow drawing slightly outside 0..100 (-25..125) for infinite-board flexibility
+      const xPct = Math.max(-25, Math.min(125, round2((sx / stageW) * 100)));
+      const yPct = Math.max(-25, Math.min(125, round2((sy / stageH) * 100)));
+      return { x: xPct, y: yPct };
+    },
+    [pan.x, pan.y, zoom, stageW, stageH, snapToGrid, gridSize]
+  );
 
-  // Native non-passive wheel zoom centered on cursor
+  // Wheel Zoom (centered on cursor) & Trackpad Pan
   useEffect(() => {
     const vp = viewportRef.current;
     if (!vp) return;
-
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
+      // Shift+Wheel or trackpad horizontal delta pans smoothly
+      if (!e.ctrlKey && !e.metaKey && Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+        setPan((prev) => ({ x: prev.x - e.deltaX, y: prev.y - e.deltaY }));
+        return;
+      }
       const rect = vp.getBoundingClientRect();
       const cursorX = e.clientX - rect.left;
       const cursorY = e.clientY - rect.top;
-      const factor = e.deltaY < 0 ? 1.13 : 1 / 1.13;
-
+      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
       setZoom((prevZoom) => {
         const nextZoom = Math.max(
           MIN_ZOOM,
           Math.min(MAX_ZOOM, Number((prevZoom * factor).toFixed(3)))
         );
         setPan((prevPan) => {
-          const stagePointX = (cursorX - prevPan.x) / prevZoom;
-          const stagePointY = (cursorY - prevPan.y) / prevZoom;
+          const sx = (cursorX - prevPan.x) / prevZoom;
+          const sy = (cursorY - prevPan.y) / prevZoom;
           return {
-            x: cursorX - stagePointX * nextZoom,
-            y: cursorY - stagePointY * nextZoom,
+            x: cursorX - sx * nextZoom,
+            y: cursorY - sy * nextZoom,
           };
         });
         return nextZoom;
       });
     };
-
     vp.addEventListener('wheel', handleWheel, { passive: false });
     return () => vp.removeEventListener('wheel', handleWheel);
   }, [currentMap?.id]);
@@ -833,125 +464,476 @@ export const InteractiveMapsView: React.FC = () => {
         Math.min(MAX_ZOOM, Number((prevZoom * multiplier).toFixed(3)))
       );
       setPan((prevPan) => {
-        const stagePointX = (cx - prevPan.x) / prevZoom;
-        const stagePointY = (cy - prevPan.y) / prevZoom;
-        return {
-          x: cx - stagePointX * nextZoom,
-          y: cy - stagePointY * nextZoom,
-        };
+        const sx = (cx - prevPan.x) / prevZoom;
+        const sy = (cy - prevPan.y) / prevZoom;
+        return { x: cx - sx * nextZoom, y: cy - sy * nextZoom };
       });
       return nextZoom;
     });
   };
 
-  // Convert client pointer to stage 0..100% coordinates
-  const clientToStagePercent = useCallback(
-    (clientX: number, clientY: number): { x: number; y: number } | null => {
-      const vp = viewportRef.current;
-      if (!vp) return null;
-      const rect = vp.getBoundingClientRect();
-      const stageX = (clientX - rect.left - pan.x) / zoom;
-      const stageY = (clientY - rect.top - pan.y) / zoom;
-      const xPct = Math.max(0, Math.min(100, Number(((stageX / STAGE_W) * 100).toFixed(2))));
-      const yPct = Math.max(0, Math.min(100, Number(((stageY / stageH) * 100).toFixed(2))));
-      return { x: xPct, y: yPct };
-    },
-    [pan.x, pan.y, zoom, stageH]
-  );
-
-  // Visible Pins & Shapes
+  // Filtered Visible Pins & Shapes
   const visiblePins = useMemo(() => {
     return (currentMap?.pins || []).filter((p) => {
       if (!activeLayers[p.layer]) return false;
-      if (viewRole === 'player' && p.isSecret && !p.isRevealed) return false;
+      if (!isGm && p.isSecret && !p.isRevealed) return false;
       return true;
     });
-  }, [currentMap?.pins, activeLayers, viewRole]);
+  }, [currentMap?.pins, activeLayers, isGm]);
 
   const visibleShapes = useMemo(() => {
-    return (currentMap?.shapes || []).filter((s) => {
-      if (!showVectorShapes && s.type !== 'fog') return false;
-      if (viewRole === 'player' && s.isSecret && !s.isRevealed && s.type !== 'fog')
-        return false;
+    return effectiveShapes.filter((s) => {
+      const isFog = s.type === 'fog' || s.type === 'fog_poly';
+      if (!showVectorShapes && !isFog) return false;
+      if (!isGm && s.isSecret && !s.isRevealed && !isFog) return false;
       return true;
     });
-  }, [currentMap?.shapes, showVectorShapes, viewRole]);
+  }, [effectiveShapes, showVectorShapes, isGm]);
 
   const activePin: MapPin | undefined = useMemo(
     () => visiblePins.find((p) => p.id === selectedPinId),
     [visiblePins, selectedPinId]
   );
 
-  // Reset inline pin editor when switching selected pin
-  useEffect(() => {
-    setIsEditingPin(false);
-    setEditDraft(null);
-    setInspectorWikiSearch('');
-  }, [selectedPinId, currentMap?.id]);
+  const selectedShapes = useMemo(() => {
+    if (selectedShapeIds.length === 0) return [];
+    const set = new Set(selectedShapeIds);
+    return effectiveShapes.filter((s) => set.has(s.id));
+  }, [effectiveShapes, selectedShapeIds]);
 
-  const startEditingActivePin = () => {
-    if (!activePin) return;
-    setEditDraft({
-      label: activePin.label,
-      subtitle: activePin.subtitle,
-      layer: activePin.layer,
-      iconType: activePin.iconType,
-      description: activePin.description,
-      monsters: activePin.monsters.join(', '),
-      treasures: activePin.treasures.join(', '),
-      entityId: activePin.entityId || '',
-      linkedMapId: activePin.linkedMapId || '',
-    });
-    setIsEditingPin(true);
-  };
-
-  const saveEditedPin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!currentMap || !activePin || !editDraft || !editDraft.label.trim()) return;
-    updateMapPin(currentMap.id, activePin.id, {
-      label: editDraft.label.trim(),
-      subtitle: editDraft.subtitle.trim() || 'Local mapeado',
-      layer: editDraft.layer,
-      iconType: editDraft.iconType,
-      description: editDraft.description.trim(),
-      entityId: editDraft.entityId || undefined,
-      linkedMapId: editDraft.linkedMapId || undefined,
-      monsters: editDraft.monsters
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean),
-      treasures: editDraft.treasures
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean),
-    });
-    setIsEditingPin(false);
-    showToast('Marcador atualizado.');
-  };
-
-  // Start dragging a pin (60fps local state, commit to Convex on pointerUp)
-  const handleStartPinDrag = useCallback(
-    (e: React.PointerEvent<HTMLButtonElement>, pin: MapPin) => {
-      if (viewRole !== 'gm' || activeTool !== 'select') return;
-      e.currentTarget.setPointerCapture(e.pointerId);
-      setDraggingPin({ id: pin.id, x: pin.x, y: pin.y });
-    },
-    [viewRole, activeTool]
+  const framesList = useMemo(
+    () => visibleShapes.filter((s) => s.type === 'frame'),
+    [visibleShapes]
   );
 
-  // Viewport pointer handlers (Pan, Drag Pin, Tools)
+  // Finish Multi-Point Shape (Polygon, Road, River, Fog Poly)
+  const finishMultiPointDrawing = useCallback(() => {
+    if (!currentMap || !isGm) return;
+    const isPoly = activeTool === 'polygon' || activeTool === 'fog_poly';
+    const minPts = isPoly ? 3 : 2;
+    if (drawingPoints.length < minPts) {
+      setDrawingPoints([]);
+      return;
+    }
+
+    const id = `shape-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
+    let newShape: MapDrawingShape;
+    if (activeTool === 'fog_poly') {
+      newShape = {
+        id,
+        type: 'fog_poly',
+        label: 'Névoa de Guerra',
+        color: '#09090b',
+        strokeWidth: 1,
+        opacity: 0.95,
+        points: drawingPoints,
+        isSecret: true,
+        isRevealed: false,
+      };
+    } else {
+      const sType =
+        activeTool === 'polygon'
+          ? 'polygon'
+          : activeTool === 'river'
+          ? 'river'
+          : 'road';
+      newShape = {
+        id,
+        type: sType,
+        label: '',
+        color: sType === 'river' && brushColor === '#d4a853' ? '#0ea5e9' : brushColor,
+        fillColor: sType === 'polygon' ? brushFillColor || brushColor : undefined,
+        strokeWidth: brushWidth,
+        strokeStyle: sType === 'river' ? 'solid' : brushDash,
+        dashed: brushDash === 'dashed',
+        curved: sType === 'river',
+        opacity: sType === 'polygon' ? 0.22 : 0.95,
+        points: drawingPoints,
+        isSecret: false,
+        isRevealed: true,
+      };
+    }
+
+    commitShapesWithHistory([...serverShapes, newShape], 'criar forma');
+    setDrawingPoints([]);
+    setSelectedShapeIds([id]);
+  }, [
+    currentMap,
+    isGm,
+    activeTool,
+    drawingPoints,
+    brushColor,
+    brushFillColor,
+    brushWidth,
+    brushDash,
+    commitShapesWithHistory,
+    serverShapes,
+  ]);
+
+  // Selection Actions (Update, Z-Order, Duplicate, Delete)
+  const updateSelectedShapes = useCallback(
+    (patch: Partial<MapDrawingShape>) => {
+      if (!currentMap || selectedShapeIds.length === 0) return;
+      const set = new Set(selectedShapeIds);
+      const next = serverShapes.map((s) => (set.has(s.id) ? { ...s, ...patch } : s));
+      commitShapesWithHistory(next, 'editar elemento');
+    },
+    [currentMap, selectedShapeIds, serverShapes, commitShapesWithHistory]
+  );
+
+  const bringSelectedToFront = useCallback(() => {
+    if (!currentMap || selectedShapeIds.length === 0) return;
+    const maxZ = serverShapes.reduce((m, s) => Math.max(m, s.zIndex ?? 0), 0);
+    const set = new Set(selectedShapeIds);
+    const next = serverShapes.map((s) =>
+      set.has(s.id) ? { ...s, zIndex: maxZ + 1 } : s
+    );
+    commitShapesWithHistory(next, 'trazer para frente');
+  }, [currentMap, selectedShapeIds, serverShapes, commitShapesWithHistory]);
+
+  const sendSelectedToBack = useCallback(() => {
+    if (!currentMap || selectedShapeIds.length === 0) return;
+    const minZ = serverShapes.reduce((m, s) => Math.min(m, s.zIndex ?? 0), 0);
+    const set = new Set(selectedShapeIds);
+    const next = serverShapes.map((s) =>
+      set.has(s.id) ? { ...s, zIndex: minZ - 1 } : s
+    );
+    commitShapesWithHistory(next, 'enviar para trás');
+  }, [currentMap, selectedShapeIds, serverShapes, commitShapesWithHistory]);
+
+  const duplicateSelectedShapes = useCallback(() => {
+    if (!currentMap || selectedShapeIds.length === 0) return;
+    const set = new Set(selectedShapeIds);
+    const clones: MapDrawingShape[] = [];
+    for (const s of serverShapes) {
+      if (!set.has(s.id)) continue;
+      const moved = translateShape(s, 2.2, 2.2);
+      clones.push({
+        ...moved,
+        id: `shape-${Date.now()}-${Math.floor(Math.random() * 1e5)}`,
+        locked: false,
+      });
+    }
+    commitShapesWithHistory([...serverShapes, ...clones], 'duplicar elementos');
+    setSelectedShapeIds(clones.map((c) => c.id));
+  }, [currentMap, selectedShapeIds, serverShapes, commitShapesWithHistory]);
+
+  const deleteSelectedShapes = useCallback(() => {
+    if (!currentMap || selectedShapeIds.length === 0) return;
+    const set = new Set(selectedShapeIds);
+    const next = serverShapes.filter((s) => !set.has(s.id));
+    commitShapesWithHistory(next, 'remover elementos');
+    setSelectedShapeIds([]);
+  }, [currentMap, selectedShapeIds, serverShapes, commitShapesWithHistory]);
+
+  // Inline Text Commit (Double-Click on Sticky, Text, Frame, Shape)
+  const commitInlineTextEdit = useCallback(() => {
+    if (!editingShapeId || !currentMap) {
+      setEditingShapeId(null);
+      return;
+    }
+    const next = serverShapes.map((s) =>
+      s.id === editingShapeId ? { ...s, label: editingShapeText } : s
+    );
+    commitShapesWithHistory(next, 'editar texto');
+    setEditingShapeId(null);
+  }, [editingShapeId, editingShapeText, currentMap, serverShapes, commitShapesWithHistory]);
+
+  // Global Keyboard Shortcuts (Miro Standard!)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const tag = document.activeElement?.tagName;
+      const inInput =
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        (document.activeElement as HTMLElement | null)?.isContentEditable;
+
+      if (inInput) {
+        if (e.key === 'Escape' && editingShapeId) {
+          commitInlineTextEdit();
+        }
+        return;
+      }
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        setIsSpaceHeld(true);
+        return;
+      }
+
+      if (e.key === 'Escape') {
+        if (drawingPoints.length > 0) {
+          setDrawingPoints([]);
+          return;
+        }
+        if (rulerPoints.length > 0) {
+          setRulerPoints([]);
+          return;
+        }
+        setSelectedShapeIds([]);
+        setOpenDockMenu(null);
+        setActiveTool('select');
+        return;
+      }
+
+      if (e.key === 'Enter' && drawingPoints.length >= 2) {
+        e.preventDefault();
+        finishMultiPointDrawing();
+        return;
+      }
+
+      // Ctrl/Cmd shortcuts
+      if (e.ctrlKey || e.metaKey) {
+        const k = e.key.toLowerCase();
+        if (k === 'z' && !e.shiftKey) {
+          e.preventDefault();
+          handleUndo();
+          return;
+        }
+        if (k === 'y' || (k === 'z' && e.shiftKey)) {
+          e.preventDefault();
+          handleRedo();
+          return;
+        }
+        if (k === 'd' && selectedShapeIds.length > 0 && isGm) {
+          e.preventDefault();
+          duplicateSelectedShapes();
+          return;
+        }
+        if (k === 'c' && selectedShapeIds.length > 0 && isGm) {
+          e.preventDefault();
+          const set = new Set(selectedShapeIds);
+          clipboardRef.current = serverShapes.filter((s) => set.has(s.id));
+          showToast(`${clipboardRef.current.length} elemento(s) copiado(s).`);
+          return;
+        }
+        if (k === 'v' && clipboardRef.current.length > 0 && isGm && currentMap) {
+          e.preventDefault();
+          const pasted = clipboardRef.current.map((s) => ({
+            ...translateShape(s, 2.5, 2.5),
+            id: `shape-${Date.now()}-${Math.floor(Math.random() * 1e5)}`,
+            locked: false,
+          }));
+          commitShapesWithHistory([...serverShapes, ...pasted], 'colar elementos');
+          setSelectedShapeIds(pasted.map((p) => p.id));
+          return;
+        }
+        if (k === 'a' && isGm) {
+          e.preventDefault();
+          setSelectedShapeIds(
+            visibleShapes.filter((s) => !s.locked).map((s) => s.id)
+          );
+          return;
+        }
+      }
+
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedShapeIds.length > 0 && isGm) {
+        e.preventDefault();
+        deleteSelectedShapes();
+        return;
+      }
+
+      // Single-letter Miro tool hotkeys
+      const key = e.key.toLowerCase();
+      if (key === 'v') setActiveTool('select');
+      else if (key === 'h') setActiveTool('pan');
+      else if (key === 'r') setActiveTool('ruler');
+      else if (isGm) {
+        if (key === 'p') setActiveTool('freehand');
+        else if (key === 'e') setActiveTool('eraser');
+        else if (key === 'n') setActiveTool('sticky');
+        else if (key === 't') setActiveTool('text');
+        else if (key === 's') setActiveTool('rect');
+        else if (key === 'o') setActiveTool('circle');
+        else if (key === 'l') setActiveTool('arrow');
+        else if (key === 'g') setActiveTool('stamp');
+        else if (key === 'm') setActiveTool('pin');
+        else if (key === 'f') setActiveTool('fog');
+      }
+    };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') setIsSpaceHeld(false);
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+    };
+  }, [
+    editingShapeId,
+    commitInlineTextEdit,
+    drawingPoints.length,
+    rulerPoints.length,
+    finishMultiPointDrawing,
+    handleUndo,
+    handleRedo,
+    selectedShapeIds,
+    isGm,
+    duplicateSelectedShapes,
+    deleteSelectedShapes,
+    serverShapes,
+    visibleShapes,
+    currentMap,
+    commitShapesWithHistory,
+    showToast,
+  ]);
+
+  // ==========================================================================
+  // POINTER INTERACTIONS (60FPS ZERO-LAG ENGINE)
+  // ==========================================================================
+
+  const buildDraftShapeFromDrag = useCallback(
+    (
+      tool: 'rect' | 'circle' | 'sticky' | 'frame' | 'stamp' | 'fog' | 'arrow',
+      startPt: Point,
+      endPt: Point
+    ): MapDrawingShape => {
+      if (tool === 'arrow') {
+        return {
+          id: 'draft-shape',
+          type: 'arrow',
+          label: '',
+          color: brushColor,
+          strokeWidth: brushWidth,
+          strokeStyle: brushDash,
+          dashed: brushDash === 'dashed',
+          arrowEnd: true,
+          points: [startPt, endPt],
+          isSecret: false,
+          isRevealed: true,
+        };
+      }
+      const x = round2(Math.min(startPt.x, endPt.x));
+      const y = round2(Math.min(startPt.y, endPt.y));
+      const dist = Math.hypot(endPt.x - startPt.x, endPt.y - startPt.y);
+      const defaultW =
+        tool === 'stamp' ? 7 : tool === 'sticky' ? 14 : tool === 'frame' ? 28 : 14;
+      const defaultH =
+        tool === 'stamp' ? 7 : tool === 'sticky' ? 14 : tool === 'frame' ? 20 : 10;
+      const w = dist < 1.2 ? defaultW : round2(Math.max(2, Math.abs(endPt.x - startPt.x)));
+      const h = dist < 1.2 ? defaultH : round2(Math.max(2, Math.abs(endPt.y - startPt.y)));
+      const px = dist < 1.2 ? round2(startPt.x - w / 2) : x;
+      const py = dist < 1.2 ? round2(startPt.y - h / 2) : y;
+
+      if (tool === 'fog') {
+        return {
+          id: 'draft-shape',
+          type: 'fog',
+          label: 'Névoa de Guerra',
+          color: '#09090b',
+          strokeWidth: 1,
+          opacity: 0.95,
+          points: [{ x: px, y: py }],
+          width: w,
+          height: h,
+          isSecret: true,
+          isRevealed: false,
+        };
+      }
+      if (tool === 'sticky') {
+        return {
+          id: 'draft-shape',
+          type: 'sticky',
+          label: '',
+          color: stickyColor,
+          fillColor: stickyColor,
+          strokeWidth: 1,
+          opacity: 0.97,
+          fontSize: 1.55,
+          textAlign: 'left',
+          points: [{ x: px, y: py }],
+          width: w,
+          height: h,
+          isSecret: false,
+          isRevealed: true,
+        };
+      }
+      if (tool === 'frame') {
+        const frameNum = framesList.length + 1;
+        return {
+          id: 'draft-shape',
+          type: 'frame',
+          label: `Quadro ${frameNum}`,
+          color: '#6366f1',
+          fillColor: '#6366f1',
+          strokeWidth: 2,
+          opacity: 0.05,
+          zIndex: -10,
+          points: [{ x: px, y: py }],
+          width: w,
+          height: h,
+          isSecret: false,
+          isRevealed: true,
+        };
+      }
+      if (tool === 'stamp') {
+        return {
+          id: 'draft-shape',
+          type: 'stamp',
+          stampType: activeStampId,
+          label: '',
+          color: brushColor,
+          fillColor: brushFillColor || undefined,
+          strokeWidth: brushWidth,
+          opacity: 0.95,
+          points: [{ x: px, y: py }],
+          width: w,
+          height: h,
+          isSecret: false,
+          isRevealed: true,
+        };
+      }
+      return {
+        id: 'draft-shape',
+        type: tool,
+        label: '',
+        color: brushColor,
+        fillColor: brushFillColor || brushColor,
+        strokeWidth: brushWidth,
+        strokeStyle: brushDash,
+        dashed: brushDash === 'dashed',
+        opacity: brushFillColor === 'transparent' ? 0 : 0.18,
+        points: [{ x: px, y: py }],
+        width: w,
+        height: h,
+        radius: round2(Math.max(w, h) / 2),
+        isSecret: false,
+        isRevealed: true,
+      };
+    },
+    [
+      brushColor,
+      brushFillColor,
+      brushWidth,
+      brushDash,
+      stickyColor,
+      activeStampId,
+      framesList.length,
+    ]
+  );
+
   const handleViewportPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!currentMap) return;
+    setOpenDockMenu(null);
+    if (editingShapeId) {
+      commitInlineTextEdit();
+    }
 
+    // Middle mouse, Right mouse, Spacebar, Hand tool, or Player select -> Pan
     const shouldPan =
       e.button === 1 ||
+      e.button === 2 ||
       isSpaceHeld ||
       activeTool === 'pan' ||
-      (activeTool === 'select' && e.button === 0);
+      (!isGm && activeTool === 'select');
 
     if (shouldPan) {
-      panDragRef.current = {
-        active: true,
+      interactionRef.current = {
+        kind: 'pan',
         startClientX: e.clientX,
         startClientY: e.clientY,
         originPanX: pan.x,
@@ -962,36 +944,305 @@ export const InteractiveMapsView: React.FC = () => {
       return;
     }
 
-    if (activeTool === 'ruler' && e.button === 0) {
-      const pt = clientToStagePercent(e.clientX, e.clientY);
-      if (!pt) return;
-      setRulerPoints((prev) => (prev.length === 1 ? [prev[0], pt] : [pt]));
+    if (e.button !== 0) return;
+
+    const pt = clientToStagePercent(
+      e.clientX,
+      e.clientY,
+      activeTool !== 'freehand' && activeTool !== 'highlighter'
+    );
+    if (!pt) return;
+
+    // Ruler (works for both GM and Players!)
+    if (activeTool === 'ruler') {
+      setRulerPoints((prev) => [...prev, pt]);
+      return;
+    }
+
+    if (!isGm) return;
+
+    // Select on empty canvas -> Miro Marquee Selection Box!
+    if (activeTool === 'select') {
+      if (!e.shiftKey) {
+        setSelectedShapeIds([]);
+        setSelectedPinId(null);
+      }
+      interactionRef.current = {
+        kind: 'marquee',
+        startPt: pt,
+        currentPt: pt,
+        additive: e.shiftKey,
+        initialSelected: e.shiftKey ? selectedShapeIds : [],
+      };
+      e.currentTarget.setPointerCapture(e.pointerId);
+      return;
+    }
+
+    // Freehand Pen & Highlighter
+    if (activeTool === 'freehand' || activeTool === 'highlighter') {
+      interactionRef.current = {
+        kind: 'freehand',
+        tool: activeTool,
+        rawPoints: [pt],
+      };
+      setDrawingPoints([pt]);
+      e.currentTarget.setPointerCapture(e.pointerId);
+      return;
+    }
+
+    // Eraser drag
+    if (activeTool === 'eraser') {
+      interactionRef.current = {
+        kind: 'eraser',
+        erasedIds: new Set(),
+        baseShapes: serverShapes,
+      };
+      e.currentTarget.setPointerCapture(e.pointerId);
+      return;
+    }
+
+    // Drag-to-create tools (Rect, Circle, Sticky, Frame, Stamp, Fog, Arrow)
+    if (
+      activeTool === 'rect' ||
+      activeTool === 'circle' ||
+      activeTool === 'sticky' ||
+      activeTool === 'frame' ||
+      activeTool === 'stamp' ||
+      activeTool === 'fog' ||
+      activeTool === 'arrow'
+    ) {
+      interactionRef.current = {
+        kind: 'drag_create',
+        tool: activeTool,
+        startPt: pt,
+        currentPt: pt,
+      };
+      setDragDraftShape(buildDraftShapeFromDrag(activeTool, pt, pt));
+      e.currentTarget.setPointerCapture(e.pointerId);
+      return;
+    }
+
+    // Click-to-place Text
+    if (activeTool === 'text') {
+      const id = `shape-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
+      const newText: MapDrawingShape = {
+        id,
+        type: 'text',
+        label: 'Novo texto',
+        color: brushColor,
+        strokeWidth: 1,
+        fontSize: 2.6,
+        fontFamily: 'serif',
+        fontWeight: 'bold',
+        textAlign: 'center',
+        points: [pt],
+        isSecret: false,
+        isRevealed: true,
+      };
+      commitShapesWithHistory([...serverShapes, newText], 'adicionar texto');
+      setSelectedShapeIds([id]);
+      setEditingShapeId(id);
+      setEditingShapeText('Novo texto');
+      setActiveTool('select');
+      return;
+    }
+
+    // Click-to-place RPG Pin
+    if (activeTool === 'pin') {
+      setPendingPinCoords(pt);
+      return;
+    }
+
+    // Multi-point tools (Polygon, Road, River, Fog Polygon)
+    if (
+      activeTool === 'polygon' ||
+      activeTool === 'road' ||
+      activeTool === 'river' ||
+      activeTool === 'fog_poly'
+    ) {
+      // Clicking near the first vertex closes a polygon automatically!
+      if (
+        (activeTool === 'polygon' || activeTool === 'fog_poly') &&
+        drawingPoints.length >= 3 &&
+        Math.hypot(pt.x - drawingPoints[0].x, pt.y - drawingPoints[0].y) < 1.8
+      ) {
+        finishMultiPointDrawing();
+        return;
+      }
+      setDrawingPoints((prev) => [...prev, pt]);
     }
   };
 
   const handleViewportPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (draggingPin) {
-      const pt = clientToStagePercent(e.clientX, e.clientY);
-      if (pt) {
-        setDraggingPin({ id: draggingPin.id, x: pt.x, y: pt.y });
+      const pt = clientToStagePercent(e.clientX, e.clientY, true);
+      if (pt) setDraggingPin({ id: draggingPin.id, x: pt.x, y: pt.y });
+      return;
+    }
+
+    const inter = interactionRef.current;
+
+    if (inter.kind === 'pan') {
+      const dx = e.clientX - inter.startClientX;
+      const dy = e.clientY - inter.startClientY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) inter.moved = true;
+      setPan({ x: inter.originPanX + dx, y: inter.originPanY + dy });
+      return;
+    }
+
+    const rawPt = clientToStagePercent(
+      e.clientX,
+      e.clientY,
+      inter.kind !== 'freehand'
+    );
+    if (!rawPt) return;
+
+    if (
+      drawingPoints.length > 0 ||
+      (activeTool === 'ruler' && rulerPoints.length > 0)
+    ) {
+      setLiveCursorPoint(rawPt);
+    }
+
+    if (inter.kind === 'freehand') {
+      const last = inter.rawPoints[inter.rawPoints.length - 1];
+      if (!last || Math.hypot(rawPt.x - last.x, rawPt.y - last.y) >= 0.18) {
+        inter.rawPoints.push(rawPt);
+        setDrawingPoints([...inter.rawPoints]);
       }
       return;
     }
 
-    if (panDragRef.current.active) {
-      const dx = e.clientX - panDragRef.current.startClientX;
-      const dy = e.clientY - panDragRef.current.startClientY;
-      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
-        panDragRef.current.moved = true;
+    if (inter.kind === 'eraser') {
+      // Hit-test shapes under cursor while dragging eraser
+      let changed = false;
+      for (const s of inter.baseShapes) {
+        if (inter.erasedIds.has(s.id)) continue;
+        const b = getShapeBounds(s);
+        if (
+          rawPt.x >= b.x - 0.8 &&
+          rawPt.x <= b.x + b.width + 0.8 &&
+          rawPt.y >= b.y - 0.8 &&
+          rawPt.y <= b.y + b.height + 0.8
+        ) {
+          inter.erasedIds.add(s.id);
+          changed = true;
+        }
       }
-      setPan({
-        x: panDragRef.current.originPanX + dx,
-        y: panDragRef.current.originPanY + dy,
-      });
+      if (changed) {
+        setLiveShapesOverride(
+          inter.baseShapes.filter((s) => !inter.erasedIds.has(s.id))
+        );
+      }
+      return;
+    }
+
+    if (inter.kind === 'drag_create') {
+      inter.currentPt = rawPt;
+      setDragDraftShape(
+        buildDraftShapeFromDrag(inter.tool, inter.startPt, rawPt)
+      );
+      return;
+    }
+
+    if (inter.kind === 'marquee') {
+      inter.currentPt = rawPt;
+      const x = Math.min(inter.startPt.x, rawPt.x);
+      const y = Math.min(inter.startPt.y, rawPt.y);
+      const w = Math.abs(rawPt.x - inter.startPt.x);
+      const h = Math.abs(rawPt.y - inter.startPt.y);
+      const box: BoundingBox = { x, y, width: w, height: h, cx: x + w / 2, cy: y + h / 2 };
+      setMarqueeBox(box);
+      const hits = visibleShapes
+        .filter((s) => !s.locked && boxesIntersect(box, getShapeBounds(s)))
+        .map((s) => s.id);
+      setSelectedShapeIds(
+        inter.additive ? Array.from(new Set([...inter.initialSelected, ...hits])) : hits
+      );
+      return;
+    }
+
+    if (inter.kind === 'move_shapes') {
+      const dx = rawPt.x - inter.startPt.x;
+      const dy = rawPt.y - inter.startPt.y;
+      if (Math.abs(dx) > 0.08 || Math.abs(dy) > 0.08) inter.moved = true;
+      setLiveShapesOverride(
+        inter.baseShapes.map((s) =>
+          inter.selectedIds.has(s.id) && !s.locked ? translateShape(s, dx, dy) : s
+        )
+      );
+      return;
+    }
+
+    if (inter.kind === 'resize_shapes') {
+      const dx = rawPt.x - inter.startPt.x;
+      const dy = rawPt.y - inter.startPt.y;
+      const ub = inter.initialUnionBounds;
+      let nx = ub.x;
+      let ny = ub.y;
+      let nw = ub.width;
+      let nh = ub.height;
+
+      if (inter.handle.includes('e')) nw = Math.max(1.5, ub.width + dx);
+      if (inter.handle.includes('s')) nh = Math.max(1.5, ub.height + dy);
+      if (inter.handle.includes('w')) {
+        const clampedDx = Math.min(dx, ub.width - 1.5);
+        nx = ub.x + clampedDx;
+        nw = ub.width - clampedDx;
+      }
+      if (inter.handle.includes('n')) {
+        const clampedDy = Math.min(dy, ub.height - 1.5);
+        ny = ub.y + clampedDy;
+        nh = ub.height - clampedDy;
+      }
+
+      const sx = ub.width > 0.1 ? nw / ub.width : 1;
+      const sy = ub.height > 0.1 ? nh / ub.height : 1;
+
+      setLiveShapesOverride(
+        inter.baseShapes.map((s) => {
+          if (!inter.selectedIds.has(s.id) || s.locked) return s;
+          const sb = inter.initialShapeBounds.get(s.id) || getShapeBounds(s);
+          const targetBox: BoundingBox = {
+            x: nx + (sb.x - ub.x) * sx,
+            y: ny + (sb.y - ub.y) * sy,
+            width: sb.width * sx,
+            height: sb.height * sy,
+            cx: 0,
+            cy: 0,
+          };
+          return resizeShapeToBounds(s, sb, targetBox);
+        })
+      );
+      return;
+    }
+
+    if (inter.kind === 'rotate_shape') {
+      const angleRad = Math.atan2(rawPt.y - inter.center.y, rawPt.x - inter.center.x);
+      let deg = Math.round((angleRad * 180) / Math.PI + 90);
+      if (e.shiftKey) deg = Math.round(deg / 15) * 15;
+      setLiveShapesOverride(
+        inter.baseShapes.map((s) =>
+          s.id === inter.shapeId ? { ...s, rotation: deg } : s
+        )
+      );
+      return;
+    }
+
+    if (inter.kind === 'move_vertex') {
+      setLiveShapesOverride(
+        inter.baseShapes.map((s) => {
+          if (s.id !== inter.shapeId) return s;
+          const nextPts = s.points.map((p, idx) =>
+            idx === inter.vertexIndex ? { x: round2(rawPt.x), y: round2(rawPt.y) } : p
+          );
+          return { ...s, points: nextPts };
+        })
+      );
     }
   };
 
-  const handleViewportPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+  const handleViewportPointerUp = () => {
     if (draggingPin && currentMap) {
       const existing = currentMap.pins.find((p) => p.id === draggingPin.id);
       if (
@@ -999,7 +1250,7 @@ export const InteractiveMapsView: React.FC = () => {
         (Math.abs(existing.x - draggingPin.x) > 0.05 ||
           Math.abs(existing.y - draggingPin.y) > 0.05)
       ) {
-        updateMapPin(currentMap.id, draggingPin.id, {
+        void updateMapPin(currentMap.id, draggingPin.id, {
           x: draggingPin.x,
           y: draggingPin.y,
         });
@@ -1008,230 +1259,325 @@ export const InteractiveMapsView: React.FC = () => {
       return;
     }
 
-    const wasPanning = panDragRef.current.active;
-    const didMove = panDragRef.current.moved;
-    panDragRef.current.active = false;
+    const inter = interactionRef.current;
+    interactionRef.current = { kind: 'none' };
 
-    if (wasPanning && didMove) {
+    if (inter.kind === 'freehand' && currentMap) {
+      const simplified = simplifyPoints(
+        inter.rawPoints,
+        inter.tool === 'highlighter' ? 0.22 : 0.13
+      );
+      setDrawingPoints([]);
+      if (simplified.length >= 1) {
+        const id = `shape-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
+        const newStroke: MapDrawingShape = {
+          id,
+          type: inter.tool,
+          label: '',
+          color: brushColor,
+          fillColor: brushCloseFreehand ? brushFillColor || brushColor : undefined,
+          strokeWidth: inter.tool === 'highlighter' ? Math.max(6, brushWidth * 2.5) : brushWidth,
+          strokeStyle: brushDash,
+          dashed: brushDash === 'dashed',
+          opacity: inter.tool === 'highlighter' ? 0.36 : brushCloseFreehand ? 0.22 : 0.95,
+          closed: inter.tool === 'freehand' ? brushCloseFreehand : false,
+          points: simplified,
+          isSecret: false,
+          isRevealed: true,
+        };
+        commitShapesWithHistory([...serverShapes, newStroke], 'desenho livre');
+      }
       return;
     }
 
-    if (activeTool === 'select' || activeTool === 'pan' || activeTool === 'ruler') {
+    if (inter.kind === 'eraser' && currentMap) {
+      if (inter.erasedIds.size > 0) {
+        const remaining = inter.baseShapes.filter((s) => !inter.erasedIds.has(s.id));
+        commitShapesWithHistory(remaining, 'apagar traços');
+      } else {
+        setLiveShapesOverride(null);
+      }
       return;
     }
 
-    if (viewRole !== 'gm' || !currentMap || e.button !== 0) return;
+    if (inter.kind === 'drag_create' && currentMap) {
+      const draft = buildDraftShapeFromDrag(
+        inter.tool,
+        inter.startPt,
+        inter.currentPt
+      );
+      setDragDraftShape(null);
+      // Avoid zero-length accidental arrow click
+      if (
+        inter.tool === 'arrow' &&
+        Math.hypot(
+          inter.currentPt.x - inter.startPt.x,
+          inter.currentPt.y - inter.startPt.y
+        ) < 1.2
+      ) {
+        draft.points = [
+          inter.startPt,
+          { x: round2(inter.startPt.x + 12), y: round2(inter.startPt.y) },
+        ];
+      }
+      const id = `shape-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
+      const finalShape: MapDrawingShape = { ...draft, id };
+      commitShapesWithHistory([...serverShapes, finalShape], 'adicionar elemento');
+      setSelectedShapeIds([id]);
+      if (inter.tool === 'sticky') {
+        setEditingShapeId(id);
+        setEditingShapeText('');
+      }
+      if (inter.tool !== 'stamp') {
+        setActiveTool('select');
+      }
+      return;
+    }
 
-    const coords = clientToStagePercent(e.clientX, e.clientY);
-    if (!coords) return;
-
-    const { x, y } = coords;
-
-    if (activeTool === 'pin') {
-      setPendingCoords({ x, y });
+    if (inter.kind === 'marquee') {
+      setMarqueeBox(null);
       return;
     }
 
     if (
-      activeTool === 'road' ||
-      activeTool === 'river' ||
-      activeTool === 'polygon'
+      (inter.kind === 'move_shapes' && inter.moved) ||
+      inter.kind === 'resize_shapes' ||
+      inter.kind === 'rotate_shape' ||
+      inter.kind === 'move_vertex'
     ) {
-      setDrawingPoints((prev) => [...prev, { x, y }]);
+      if (liveShapesOverride) {
+        commitShapesWithHistory(liveShapesOverride, 'transformar elemento');
+      }
+    } else {
+      setLiveShapesOverride(null);
+    }
+  };
+
+  const handleViewportDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!currentMap || !isGm) return;
+    if (
+      activeTool === 'polygon' ||
+      activeTool === 'fog_poly' ||
+      activeTool === 'road' ||
+      activeTool === 'river'
+    ) {
+      e.preventDefault();
+      finishMultiPointDrawing();
       return;
     }
-
-    if (activeTool === 'text') {
-      addMapShape(currentMap.id, {
+    if (activeTool === 'ruler') {
+      setRulerPoints([]);
+      return;
+    }
+    // Miro-style double-click on empty canvas -> instant Sticky Note or Text!
+    if (activeTool === 'select') {
+      const pt = clientToStagePercent(e.clientX, e.clientY, true);
+      if (!pt) return;
+      const id = `shape-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
+      const newText: MapDrawingShape = {
+        id,
         type: 'text',
-        label: shapeLabel.trim() || 'Região Desconhecida',
-        color: shapeColor,
+        label: ' Rótulo',
+        color: themeMeta.textDefault,
         strokeWidth: 1,
-        fontSize: shapeFontSize,
-        entityId: shapeEntityId || undefined,
-        points: [{ x, y }],
+        fontSize: 2.4,
+        fontFamily: 'sans',
+        fontWeight: 'bold',
+        textAlign: 'center',
+        points: [pt],
         isSecret: false,
         isRevealed: true,
-      });
-      setActiveTool('select');
-      return;
-    }
-
-    if (activeTool === 'circle') {
-      addMapShape(currentMap.id, {
-        type: 'circle',
-        label: shapeLabel.trim() || 'Zona demarcada',
-        color: shapeColor,
-        strokeWidth: shapeStrokeWidth,
-        dashed: shapeDashed,
-        opacity: 0.18,
-        entityId: shapeEntityId || undefined,
-        points: [{ x, y }],
-        radius: shapeRadius,
-        isSecret: false,
-        isRevealed: true,
-      });
-      setActiveTool('select');
-      return;
-    }
-
-    if (activeTool === 'rect') {
-      addMapShape(currentMap.id, {
-        type: 'rect',
-        label: shapeLabel.trim() || 'Estrutura / Quarteirão',
-        color: shapeColor,
-        strokeWidth: shapeStrokeWidth,
-        dashed: shapeDashed,
-        opacity: 0.18,
-        entityId: shapeEntityId || undefined,
-        points: [{ x: Math.max(1, x - 9), y: Math.max(1, y - 7) }],
-        width: 18,
-        height: 14,
-        isSecret: false,
-        isRevealed: true,
-      });
-      setActiveTool('select');
-      return;
-    }
-
-    if (activeTool === 'fog') {
-      addMapShape(currentMap.id, {
-        type: 'fog',
-        label: shapeLabel.trim() || 'Área Inexplorada',
-        color: '#09090b',
-        strokeWidth: 1,
-        opacity: 0.95,
-        points: [{ x: Math.max(0, x - 12), y: Math.max(0, y - 10) }],
-        width: 24,
-        height: 20,
-        isSecret: true,
-        isRevealed: false,
-      });
-      showToast('Área de névoa adicionada.');
-      setActiveTool('select');
+      };
+      commitShapesWithHistory([...serverShapes, newText], 'adicionar texto');
+      setSelectedShapeIds([id]);
+      setEditingShapeId(id);
+      setEditingShapeText('');
     }
   };
 
-  const handleFinishMultiPointShape = () => {
-    if (!currentMap) return;
-    const minPts = activeTool === 'polygon' ? 3 : 2;
-    if (drawingPoints.length < minPts) return;
+  // Shape / Handle Callbacks passed into CanvasVectorStage
+  const handleShapePointerDown = useCallback(
+    (e: React.PointerEvent<SVGElement>, shape: MapDrawingShape) => {
+      if (!isGm) return;
+      e.stopPropagation();
 
-    const shapeType: MapDrawingShape['type'] =
-      activeTool === 'polygon'
-        ? 'polygon'
-        : activeTool === 'river'
-        ? 'river'
-        : 'road';
+      if (activeTool === 'eraser') {
+        interactionRef.current = {
+          kind: 'eraser',
+          erasedIds: new Set([shape.id]),
+          baseShapes: serverShapes,
+        };
+        setLiveShapesOverride(serverShapes.filter((s) => s.id !== shape.id));
+        viewportRef.current?.setPointerCapture(e.pointerId);
+        return;
+      }
 
-    addMapShape(currentMap.id, {
-      type: shapeType,
-      label:
-        shapeLabel.trim() ||
-        (shapeType === 'polygon'
-          ? 'Território'
-          : shapeType === 'river'
-          ? 'Rio'
-          : 'Rota'),
-      color: shapeType === 'river' && shapeColor === '#d4a853' ? '#38bdf8' : shapeColor,
-      strokeWidth: shapeStrokeWidth,
-      dashed: shapeType === 'river' ? false : shapeDashed,
-      opacity: shapeType === 'polygon' ? 0.18 : 0.9,
-      entityId: shapeEntityId || undefined,
-      points: drawingPoints,
-      isSecret: false,
-      isRevealed: true,
-    });
-    setDrawingPoints([]);
-    setActiveTool('select');
-  };
+      if (activeTool !== 'select') return;
 
-  // Ruler distance calculation based on map scale
-  const rulerDistanceLabel = useMemo(() => {
-    if (rulerPoints.length < 2) return '';
-    const dx = rulerPoints[1].x - rulerPoints[0].x;
-    // y em % da altura → converte para a mesma escala de % da largura
-    const dy = ((rulerPoints[1].y - rulerPoints[0].y) * stageH) / STAGE_W;
-    const pctDist = Math.hypot(dx, dy);
+      setSelectedPinId(null);
+      let nextSelection: string[];
+      if (e.shiftKey) {
+        nextSelection = selectedShapeIds.includes(shape.id)
+          ? selectedShapeIds.filter((id) => id !== shape.id)
+          : [...selectedShapeIds, shape.id];
+      } else {
+        nextSelection = selectedShapeIds.includes(shape.id)
+          ? selectedShapeIds
+          : [shape.id];
+      }
+      setSelectedShapeIds(nextSelection);
 
-    if (currentMap?.regionType === 'tactical') {
-      // 100% width = 40 tactical squares (60m / 200ft)
-      const squares = Math.max(1, Math.round(pctDist * 0.4));
-      const meters = (squares * 1.5).toFixed(1).replace('.0', '');
-      return `${meters}m (${squares} quad.)`;
-    }
-    if (currentMap?.regionType === 'city') {
-      const meters = Math.round(pctDist * 18);
-      return `${meters} m`;
-    }
-    // Regional: 100% = ~240 km (38 km/dia marcha normal D&D)
-    const km = Math.max(1, Math.round(pctDist * 2.4));
-    const days = (km / 38).toFixed(1).replace('.0', '');
-    return `${km} km (~${days}d)`;
-  }, [rulerPoints, currentMap?.regionType, stageH]);
+      if (shape.locked) return;
+      const pt = clientToStagePercent(e.clientX, e.clientY, true);
+      if (!pt) return;
+      interactionRef.current = {
+        kind: 'move_shapes',
+        startPt: pt,
+        baseShapes: serverShapes,
+        selectedIds: new Set(nextSelection),
+        moved: false,
+      };
+      viewportRef.current?.setPointerCapture(e.pointerId);
+    },
+    [isGm, activeTool, serverShapes, selectedShapeIds, clientToStagePercent]
+  );
 
-  // Create Pin Submit (with optional 1-click Wiki Entity creation + multi-entity links)
-  const handleCreatePin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!currentMap || !pendingCoords || !pinLabel.trim()) return;
+  const handleShapePointerEnter = useCallback(
+    (_e: React.PointerEvent<SVGElement>, shape: MapDrawingShape) => {
+      const inter = interactionRef.current;
+      if (inter.kind === 'eraser' && !inter.erasedIds.has(shape.id)) {
+        inter.erasedIds.add(shape.id);
+        setLiveShapesOverride(
+          inter.baseShapes.filter((s) => !inter.erasedIds.has(s.id))
+        );
+      }
+    },
+    []
+  );
 
-    let finalPrimaryEntityId = pinEntityId || undefined;
+  const handleShapeDoubleClick = useCallback(
+    (e: React.MouseEvent<SVGElement>, shape: MapDrawingShape) => {
+      if (!isGm) return;
+      e.stopPropagation();
+      setSelectedShapeIds([shape.id]);
+      setEditingShapeId(shape.id);
+      setEditingShapeText(shape.label || '');
+    },
+    [isGm]
+  );
 
-    if (!finalPrimaryEntityId && pinAutoCreateWiki) {
+  const handleResizeHandlePointerDown = useCallback(
+    (
+      e: React.PointerEvent<SVGElement>,
+      handle: ResizeHandleId,
+      unionBounds: BoundingBox
+    ) => {
+      e.stopPropagation();
+      const pt = clientToStagePercent(e.clientX, e.clientY, true);
+      if (!pt) return;
+      const boundsMap = new Map<string, BoundingBox>();
+      const set = new Set(selectedShapeIds);
+      for (const s of serverShapes) {
+        if (set.has(s.id)) boundsMap.set(s.id, getShapeBounds(s));
+      }
+      interactionRef.current = {
+        kind: 'resize_shapes',
+        handle,
+        startPt: pt,
+        initialUnionBounds: unionBounds,
+        initialShapeBounds: boundsMap,
+        baseShapes: serverShapes,
+        selectedIds: set,
+      };
+      viewportRef.current?.setPointerCapture(e.pointerId);
+    },
+    [clientToStagePercent, selectedShapeIds, serverShapes]
+  );
+
+  const handleRotateHandlePointerDown = useCallback(
+    (
+      e: React.PointerEvent<SVGElement>,
+      shape: MapDrawingShape,
+      bounds: BoundingBox
+    ) => {
+      e.stopPropagation();
+      interactionRef.current = {
+        kind: 'rotate_shape',
+        shapeId: shape.id,
+        center: { x: bounds.cx, y: bounds.cy },
+        baseShapes: serverShapes,
+      };
+      viewportRef.current?.setPointerCapture(e.pointerId);
+    },
+    [serverShapes]
+  );
+
+  const handleVertexPointerDown = useCallback(
+    (
+      e: React.PointerEvent<SVGElement>,
+      shape: MapDrawingShape,
+      vertexIndex: number
+    ) => {
+      e.stopPropagation();
+      interactionRef.current = {
+        kind: 'move_vertex',
+        shapeId: shape.id,
+        vertexIndex,
+        baseShapes: serverShapes,
+      };
+      viewportRef.current?.setPointerCapture(e.pointerId);
+    },
+    [serverShapes]
+  );
+
+  // Pin Dragging & Creation
+  const handleStartPinDrag = useCallback(
+    (e: React.PointerEvent<HTMLButtonElement>, pin: MapPin) => {
+      if (!isGm || activeTool !== 'select') return;
+      setSelectedShapeIds([]);
+      e.currentTarget.setPointerCapture(e.pointerId);
+      setDraggingPin({ id: pin.id, x: pin.x, y: pin.y });
+    },
+    [isGm, activeTool]
+  );
+
+  const handleCreatePinSubmit = async (data: CreatePinSubmitData) => {
+    if (!currentMap || !pendingPinCoords) return;
+    let finalEntityId = data.entityId;
+    if (!finalEntityId && data.autoCreateWiki) {
       const created = await addEntity({
-        name: pinLabel.trim(),
-        subtitle: pinSubtitle.trim() || `Local em ${currentMap.name}`,
+        name: data.label,
+        subtitle: data.subtitle,
         category: 'location',
-        summary: pinDesc.trim() || `Ponto cartografado em ${currentMap.name}.`,
-        publicContent:
-          pinDesc.trim() ||
-          `Local registrado através do mapa **${currentMap.name}**.`,
-        isPublicToPlayers: !pinSecret,
+        summary: data.description,
+        publicContent: data.description,
+        isPublicToPlayers: !data.isSecret,
       });
-      if (created) finalPrimaryEntityId = created.id;
+      if (created) finalEntityId = created.id;
     }
-
-    addMapPin(currentMap.id, {
-      x: pendingCoords.x,
-      y: pendingCoords.y,
-      label: pinLabel.trim(),
-      subtitle: pinSubtitle.trim() || PIN_ICON_META[pinIcon].label,
-      layer: pinLayer,
-      iconType: pinIcon,
-      entityId: finalPrimaryEntityId,
+    const createdPinId = await addMapPin(currentMap.id, {
+      x: pendingPinCoords.x,
+      y: pendingPinCoords.y,
+      label: data.label,
+      subtitle: data.subtitle,
+      layer: data.layer,
+      iconType: data.iconType,
+      entityId: finalEntityId,
       linkedEntityIds:
-        pinLinkedEntityIds.length > 0 ? pinLinkedEntityIds : undefined,
-      linkedMapId: pinLinkedMapId || undefined,
-      description: pinDesc.trim() || `Ponto de interesse em ${currentMap.name}.`,
-      monsters: pinMonsters
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean),
-      treasures: pinTreasures
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean),
-      isSecret: pinSecret,
-      isRevealed: !pinSecret,
+        data.linkedEntityIds.length > 0 ? data.linkedEntityIds : undefined,
+      linkedMapId: data.linkedMapId,
+      description: data.description,
+      monsters: data.monsters,
+      treasures: data.treasures,
+      isSecret: data.isSecret,
+      isRevealed: !data.isSecret,
     });
-
-    setPendingCoords(null);
+    setPendingPinCoords(null);
     setActiveTool('select');
-    setPinLabel('');
-    setPinSubtitle('');
-    setPinEntityId('');
-    setPinLinkedEntityIds([]);
-    setPinLinkedMapId('');
-    setPinDesc('');
-    setPinMonsters('');
-    setPinTreasures('');
-    setPinSecret(false);
-    setPinAutoCreateWiki(false);
-    setModalWikiSearch('');
+    if (createdPinId) setSelectedPinId(createdPinId);
   };
 
-  // Generate Wiki Page from an already-existing Pin
-  const handleCreateWikiPageFromActivePin = async () => {
+  const handleCreateWikiFromActivePin = async () => {
     if (!currentMap || !activePin) return;
     const created = await addEntity({
       name: activePin.label,
@@ -1239,64 +1585,175 @@ export const InteractiveMapsView: React.FC = () => {
       category: 'location',
       summary: activePin.description || `Ponto cartografado em ${currentMap.name}.`,
       publicContent:
-        activePin.description ||
-        `Local registrado no mapa **${currentMap.name}**.`,
+        activePin.description || `Local registrado no mapa **${currentMap.name}**.`,
       isPublicToPlayers: !(activePin.isSecret && !activePin.isRevealed),
     });
     if (!created) return;
-    updateMapPin(currentMap.id, activePin.id, { entityId: created.id });
-    showToast(`Página #${created.handle} criada no códice e vinculada ao marcador.`);
+    void updateMapPin(currentMap.id, activePin.id, { entityId: created.id });
+    showToast(`Página #${created.handle} criada no Códice.`);
   };
 
-  // Toggle secondary Wiki entity link on existing pin
-  const handleToggleLinkedEntityOnActivePin = (entityId: string) => {
-    if (!currentMap || !activePin) return;
-    const current = activePin.linkedEntityIds || [];
-    const exists = current.includes(entityId);
-    const next = exists
-      ? current.filter((id) => id !== entityId)
-      : [...current, entityId];
-    updateMapPin(currentMap.id, activePin.id, { linkedEntityIds: next });
-  };
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setIsUploadingMap(true);
-    try {
-      const uploaded = await uploadImageToCloudStorage(file);
-      setNewMapUrl(uploaded.url);
-      setUploadedStorageId(uploaded.storageId);
-      if (!newMapName.trim()) {
-        setNewMapName(file.name.replace(/\.[^/.]+$/, ''));
-      }
-      showToast(
-        uploaded.usedCloudStorage
-          ? 'Imagem enviada para o armazenamento em nuvem.'
-          : 'Imagem otimizada localmente.'
+  // Map Create / Settings Submit & Quick Presets
+  const handleSettingsSubmit = async (payload: MapSettingsSubmitPayload) => {
+    const extra = {
+      isPublicToPlayers: payload.isPublicToPlayers,
+      canvasTheme: payload.canvasTheme,
+      gridMode: payload.gridMode,
+      gridSize: payload.gridSize,
+      gridOpacity: payload.gridOpacity,
+      imageOpacity: payload.imageOpacity,
+      stageWidth: payload.stageWidth,
+      stageHeight: payload.stageHeight,
+      scalePer100Pct: payload.scalePer100Pct,
+    };
+    if (settingsModal === 'create') {
+      await addMap(
+        payload.name,
+        payload.subtitle,
+        payload.customImageUrl,
+        payload.regionType,
+        payload.storageId,
+        extra
       );
-    } catch {
-      showToast('Falha ao processar imagem de mapa.');
-    } finally {
-      setIsUploadingMap(false);
+    } else if (settingsModal === 'edit' && currentMap) {
+      await updateMap(currentMap.id, {
+        name: payload.name,
+        subtitle: payload.subtitle,
+        regionType: payload.regionType,
+        customImageUrl: payload.customImageUrl || undefined,
+        storageId: payload.storageId,
+        clearImage: payload.clearImage,
+        ...extra,
+      });
+      showToast('Configurações do canvas salvas.');
     }
   };
 
-  const handleCreateMap = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMapName.trim() || isUploadingMap) return;
-    addMap(
-      newMapName.trim(),
-      newMapSubtitle.trim() || 'Mapa da campanha',
-      newMapUrl,
-      newMapRegionType,
-      uploadedStorageId
-    );
-    setNewMapName('');
-    setNewMapSubtitle('');
-    setNewMapUrl('');
-    setUploadedStorageId(undefined);
-    setShowUploadModal(false);
+  const createQuickPresetMap = async (
+    preset: 'miro' | 'parchment' | 'tactical'
+  ) => {
+    if (preset === 'miro') {
+      await addMap('Quadro Cartográfico', 'Canvas livre', '', 'regional', undefined, {
+        canvasTheme: 'paper',
+        gridMode: 'dots',
+        gridSize: 36,
+        gridOpacity: 0.45,
+        stageWidth: 2400,
+        stageHeight: 1500,
+      });
+    } else if (preset === 'parchment') {
+      await addMap('Mapa Regional', 'Exploração continental', '', 'regional', undefined, {
+        canvasTheme: 'parchment',
+        gridMode: 'hex',
+        gridSize: 52,
+        gridOpacity: 0.35,
+        stageWidth: 2400,
+        stageHeight: 1500,
+      });
+    } else {
+      await addMap('Arena Tática', 'Combate em grade de 1,5m', '', 'tactical', undefined, {
+        canvasTheme: 'obsidian',
+        gridMode: 'square',
+        gridSize: 40,
+        gridOpacity: 0.4,
+        stageWidth: 1600,
+        stageHeight: 1200,
+        scalePer100Pct: 60,
+      });
+    }
+  };
+
+  // Export Canvas SVG + Background as High-Res PNG
+  const handleExportPng = async () => {
+    if (!currentMap || !stageRef.current) return;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = stageW;
+      canvas.height = stageH;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      // 1. Fill theme background
+      ctx.fillStyle = themeMeta.stageBg;
+      ctx.fillRect(0, 0, stageW, stageH);
+
+      // 2. Draw background map image if present (and CORS allows)
+      if (currentMap.customImageUrl) {
+        await new Promise<void>((resolve) => {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => {
+            ctx.save();
+            ctx.globalAlpha = imageOpacity;
+            ctx.drawImage(img, 0, 0, stageW, stageH);
+            ctx.restore();
+            resolve();
+          };
+          img.onerror = () => resolve();
+          img.src = currentMap.customImageUrl!;
+        });
+      }
+
+      // 3. Serialize vector SVG layer(s)
+      const svgs = stageRef.current.querySelectorAll('svg');
+      for (const svgEl of Array.from(svgs)) {
+        const clone = svgEl.cloneNode(true) as SVGSVGElement;
+        clone.setAttribute('width', String(stageW));
+        clone.setAttribute('height', String(stageH));
+        const xml = new XMLSerializer().serializeToString(clone);
+        const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(xml)}`;
+        await new Promise<void>((resolve) => {
+          const sImg = new Image();
+          sImg.onload = () => {
+            ctx.drawImage(sImg, 0, 0, stageW, stageH);
+            resolve();
+          };
+          sImg.onerror = () => resolve();
+          sImg.src = url;
+        });
+      }
+
+      // 4. Draw pins markers onto exported PNG
+      for (const p of visiblePins) {
+        const px = (p.x / 100) * stageW;
+        const py = (p.y / 100) * stageH;
+        const col = LAYER_CONFIG[p.layer]?.color || '#22a06b';
+        ctx.beginPath();
+        ctx.arc(px, py, 12, 0, Math.PI * 2);
+        ctx.fillStyle = '#18181b';
+        ctx.fill();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = col;
+        ctx.stroke();
+        ctx.font = '600 13px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffffff';
+        ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+        ctx.lineWidth = 3;
+        ctx.strokeText(p.label, px, py + 26);
+        ctx.fillText(p.label, px, py + 26);
+      }
+
+      const dataUrl = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = `${currentMap.name.toLowerCase().replace(/\s+/g, '-')}.png`;
+      a.click();
+      showToast('Mapa exportado como PNG.');
+    } catch {
+      showToast('Não foi possível exportar este mapa como PNG.');
+    }
+  };
+
+  const handleDeleteCurrentMap = async () => {
+    if (!currentMap) return;
+    const ok = await confirm({
+      title: `Excluir "${currentMap.name}"?`,
+      message:
+        'O mapa, todos os desenhos vetoriais, quadros e marcadores serão removidos permanentemente.',
+      confirmLabel: 'Excluir mapa',
+    });
+    if (ok) await deleteMap(currentMap.id);
   };
 
   const openEntityInWiki = useCallback(
@@ -1307,643 +1764,1125 @@ export const InteractiveMapsView: React.FC = () => {
     [setSelectedEntityId, setWorldSubTab]
   );
 
-  // Counter-scale so pins stay readable at 3x-4x zoom without covering the map
   const pinCounterScale = useMemo(
-    () => Number((1 / Math.pow(Math.max(0.55, zoom), 0.58)).toFixed(3)),
+    () => Number((1 / Math.pow(Math.max(0.45, zoom), 0.58)).toFixed(3)),
     [zoom]
   );
 
-  const primaryPinEntity = activePin?.entityId
-    ? entitiesMap.get(activePin.entityId)
-    : undefined;
+  const rulerDistanceLabel = useMemo(() => {
+    const pts =
+      rulerPoints.length === 1 && liveCursorPoint
+        ? [rulerPoints[0], liveCursorPoint]
+        : rulerPoints;
+    return formatPathDistance(pts, currentMap, stageW, stageH);
+  }, [rulerPoints, liveCursorPoint, currentMap, stageW, stageH]);
 
-  const secondaryPinEntities = useMemo(() => {
-    if (!activePin?.linkedEntityIds) return [];
-    return activePin.linkedEntityIds
-      .map((id) => entitiesMap.get(id))
-      .filter((e): e is Entity => Boolean(e))
-      .filter((e) => viewRole === 'gm' || e.isPublicToPlayers);
-  }, [activePin?.linkedEntityIds, entitiesMap, viewRole]);
+  const editingShape = useMemo(
+    () => (editingShapeId ? effectiveShapes.find((s) => s.id === editingShapeId) : null),
+    [editingShapeId, effectiveShapes]
+  );
 
-  const linkedSubMap = useMemo(() => {
-    if (!activePin?.linkedMapId) return undefined;
-    return maps.find((m) => m.id === activePin.linkedMapId);
-  }, [activePin?.linkedMapId, maps]);
+  const editingBounds = useMemo(
+    () => (editingShape ? getShapeBounds(editingShape) : null),
+    [editingShape]
+  );
 
-  const filteredInspectorEntities = useMemo(() => {
-    const q = inspectorWikiSearch.trim().toLowerCase();
-    return entities
-      .filter((e) => e.id !== activePin?.entityId)
-      .filter((e) => {
-        if (!q) return true;
-        return (
-          e.name.toLowerCase().includes(q) ||
-          e.handle.toLowerCase().includes(q) ||
-          e.category.toLowerCase().includes(q)
-        );
-      })
-      .slice(0, 12);
-  }, [entities, activePin?.entityId, inspectorWikiSearch]);
+  // Mini-map viewport indicator calculations
+  const minimapViewport = useMemo(() => {
+    const vp = viewportRef.current;
+    const vw = vp?.clientWidth || 900;
+    const vh = vp?.clientHeight || 600;
+    const leftPct = ((-pan.x / zoom) / stageW) * 100;
+    const topPct = ((-pan.y / zoom) / stageH) * 100;
+    const widthPct = ((vw / zoom) / stageW) * 100;
+    const heightPct = ((vh / zoom) / stageH) * 100;
+    return {
+      x: Math.max(-20, Math.min(110, leftPct)),
+      y: Math.max(-20, Math.min(110, topPct)),
+      w: Math.max(4, Math.min(140, widthPct)),
+      h: Math.max(4, Math.min(140, heightPct)),
+    };
+  }, [pan.x, pan.y, zoom, stageW, stageH]);
 
-  const filteredModalEntities = useMemo(() => {
-    const q = modalWikiSearch.trim().toLowerCase();
-    return entities
-      .filter((e) => e.id !== pinEntityId)
-      .filter((e) => {
-        if (!q) return true;
-        return (
-          e.name.toLowerCase().includes(q) ||
-          e.handle.toLowerCase().includes(q)
-        );
-      })
-      .slice(0, 15);
-  }, [entities, pinEntityId, modalWikiSearch]);
+  const containerClass = isFullscreen
+    ? 'fixed inset-0 z-50 flex flex-col bg-surface overflow-hidden'
+    : 'flex flex-col h-[calc(100vh-7.5rem)] min-h-[560px] card overflow-hidden relative';
 
-  const isActiveToolClass = 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent';
-  const showShapeOptions =
-    viewRole === 'gm' &&
-    activeTool !== 'select' &&
-    activeTool !== 'pan' &&
-    activeTool !== 'pin' &&
-    activeTool !== 'ruler';
-  const showPinStamps = viewRole === 'gm' && activeTool === 'pin';
+  const isMultiPointTool =
+    activeTool === 'polygon' ||
+    activeTool === 'fog_poly' ||
+    activeTool === 'road' ||
+    activeTool === 'river';
 
   return (
-    <div className="flex flex-col h-[calc(100vh-7.5rem)] min-h-[520px] card overflow-hidden relative">
-      {/* Linha 1: mapas e camadas */}
-      <div className="px-3 border-b border-line flex flex-wrap items-center justify-between gap-x-3 gap-y-2 bg-surface">
-        <div className="flex items-center gap-1 overflow-x-auto min-w-0 -mb-px">
+    <div className={containerClass}>
+      {/* =================================================================== */}
+      {/* TOP STUDIO HEADER: MAP TABS, JUMP TO FRAME/PIN, FILTERS & ACTIONS   */}
+      {/* =================================================================== */}
+      <header className="h-11 px-3 border-b border-line bg-surface flex items-center justify-between gap-2 shrink-0 z-30">
+        {/* Left: Map Tabs + New Map */}
+        <div className="flex items-center gap-1 overflow-x-auto min-w-0">
           {maps.map((m) => {
             const active = m.id === currentMap?.id;
+            const count = m.pins.length + (m.shapes?.length || 0);
             return (
               <button
                 key={m.id}
+                type="button"
                 onClick={() => {
                   setSelectedMapId(m.id);
-                  setSelectedPinId(m.pins[0]?.id || null);
-                  setDrawingPoints([]);
-                  setRulerPoints([]);
+                  setSelectedPinId(null);
                 }}
-                className={`tab shrink-0 ${active ? 'tab-active' : ''}`}
-              >
-                <span>{m.name}</span>
-                <span className="text-xs text-fg-subtle tabular-nums">{m.pins.length}</span>
-              </button>
-            );
-          })}
-
-          {viewRole === 'gm' && (
-            <button
-              onClick={() => setShowUploadModal(true)}
-              className="btn btn-ghost btn-sm shrink-0 ml-1"
-            >
-              <Upload className="w-4 h-4" />
-              <span>Novo mapa</span>
-            </button>
-          )}
-        </div>
-
-        {/* Filtros de camada */}
-        <div className="flex flex-wrap items-center gap-1 py-2">
-          {(Object.keys(LAYER_CONFIG) as MapLayer[]).map((layer) => {
-            if (viewRole === 'player' && layer === 'secrets') return null;
-            const active = activeLayers[layer];
-            return (
-              <button
-                key={layer}
-                onClick={() =>
-                  setActiveLayers((prev) => ({ ...prev, [layer]: !prev[layer] }))
-                }
-                aria-pressed={active}
-                className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-xs font-medium border transition-colors ${
+                className={`h-8 px-2.5 rounded-md text-xs font-medium inline-flex items-center gap-1.5 shrink-0 transition-colors ${
                   active
-                    ? 'bg-surface border-line-strong text-fg'
-                    : 'bg-transparent border-transparent text-fg-subtle hover:text-fg-muted'
+                    ? 'bg-accent-soft text-accent font-semibold'
+                    : 'text-fg-muted hover:bg-surface-2 hover:text-fg'
                 }`}
-                title={LAYER_CONFIG[layer].label}
               >
-                <span
-                  className="w-2 h-2 rounded-full"
-                  style={{
-                    backgroundColor: active ? LAYER_CONFIG[layer].color : 'transparent',
-                    boxShadow: `inset 0 0 0 1.5px ${LAYER_CONFIG[layer].color}`,
-                  }}
-                />
-                <span>{LAYER_CONFIG[layer].shortLabel}</span>
+                <span className="truncate max-w-[140px]">{m.name}</span>
+                {count > 0 && (
+                  <span className="text-[11px] opacity-75 tabular-nums">{count}</span>
+                )}
               </button>
             );
           })}
 
-          <button
-            onClick={() => setShowVectorShapes(!showVectorShapes)}
-            aria-pressed={showVectorShapes}
-            className={`inline-flex items-center gap-1.5 h-7 px-2.5 rounded-md text-xs font-medium border transition-colors ${
-              showVectorShapes
-                ? 'bg-surface border-line-strong text-fg'
-                : 'bg-transparent border-transparent text-fg-subtle hover:text-fg-muted'
-            }`}
-            title="Mostrar desenhos"
-          >
-            <PenTool className="w-3.5 h-3.5" />
-            <span>Desenhos</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Linha 2: ferramentas */}
-      {currentMap && (
-        <div className="px-2 py-1.5 border-b border-line bg-surface flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-0.5">
-            {(
-              [
-                { id: 'select', label: 'Selecionar', icon: MousePointer, gmOnly: false },
-                { id: 'pan', label: 'Mover', icon: Hand, gmOnly: false },
-                { id: 'ruler', label: 'Régua', icon: Ruler, gmOnly: false },
-                { id: 'pin', label: 'Marcador', icon: Plus, gmOnly: true },
-                { id: 'text', label: 'Rótulo', icon: Type, defaultName: 'Reino do Norte', gmOnly: true },
-                { id: 'road', label: 'Estrada', icon: PenTool, defaultName: 'Estrada Real', gmOnly: true },
-                { id: 'river', label: 'Rio', icon: Waves, defaultName: 'Rio Cinzento', gmOnly: true },
-                { id: 'polygon', label: 'Território', icon: Hexagon, defaultName: 'Domínio', gmOnly: true },
-                { id: 'circle', label: 'Raio', icon: CircleIcon, defaultName: 'Zona de Risco', gmOnly: true },
-                { id: 'rect', label: 'Estrutura', icon: Square, defaultName: 'Quarteirão', gmOnly: true },
-                { id: 'fog', label: 'Névoa', icon: CloudOff, defaultName: 'Névoa de Guerra', gmOnly: true },
-              ] as const
-            )
-              .filter((t) => !t.gmOnly || viewRole === 'gm')
-              .map((tool) => {
-                const Icon = tool.icon;
-                const isActive = activeTool === tool.id;
-                return (
-                  <React.Fragment key={tool.id}>
-                    {tool.id === 'pin' && <span className="w-px h-5 bg-line mx-1" />}
-                    <button
-                      onClick={() => {
-                        setActiveTool(tool.id);
-                        setDrawingPoints([]);
-                        if (tool.id !== 'ruler') setRulerPoints([]);
-                        if ('defaultName' in tool && tool.defaultName) {
-                          setShapeLabel(tool.defaultName);
-                        }
-                      }}
-                      title={tool.label}
-                      aria-label={tool.label}
-                      aria-pressed={isActive}
-                      className={`btn btn-ghost btn-sm px-2 ${isActive ? isActiveToolClass : ''}`}
-                    >
-                      <Icon className="w-4 h-4" />
-                      <span className="hidden xl:inline">{tool.label}</span>
-                    </button>
-                  </React.Fragment>
-                );
-              })}
-          </div>
-
-          {viewRole === 'gm' && maps.length >= 1 && (
+          {isGm && (
             <button
-              onClick={() => deleteMap(currentMap.id)}
-              className="btn btn-danger-ghost btn-sm"
-              title="Excluir mapa atual"
+              type="button"
+              onClick={() => setSettingsModal('create')}
+              className="btn btn-ghost btn-sm h-7 px-2 text-xs shrink-0"
+              title="Criar novo mapa ou quadro branco"
             >
-              <Trash2 className="w-4 h-4" />
-              <span className="hidden sm:inline">Excluir mapa</span>
+              <Plus className="w-3.5 h-3.5" />
+              <span>Novo quadro</span>
             </button>
           )}
         </div>
-      )}
 
-      {/* Linha 3: opções contextuais da ferramenta */}
-      {currentMap && (showPinStamps || showShapeOptions || activeTool === 'ruler') && (
-        <div className="px-3 py-2 border-b border-line bg-surface-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px]">
-          {/* Ícones rápidos do marcador */}
-          {showPinStamps && (
-            <div className="flex flex-wrap items-center gap-1">
-              <span className="text-fg-muted mr-1">Ícone</span>
-              {(
-                [
-                  'city',
-                  'village',
-                  'tavern',
-                  'dungeon',
-                  'skull',
-                  'shrine',
-                  'port',
-                  'portal',
-                  'party',
-                  'secret',
-                ] as MapPinIcon[]
-              ).map((ic) => {
-                const meta = PIN_ICON_META[ic];
-                const Icon = meta.icon;
-                const selected = pinIcon === ic;
+        {/* Right: Layer Toggles, Undo/Redo, Settings, Export, Fullscreen */}
+        {currentMap && (
+          <div className="flex items-center gap-1 shrink-0">
+            {/* Quick Jump to Frame or Pin */}
+            {(framesList.length > 0 || visiblePins.length > 0) && (
+              <select
+                value=""
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (!val) return;
+                  if (val.startsWith('pin:')) {
+                    const pid = val.slice(4);
+                    const p = visiblePins.find((x) => x.id === pid);
+                    if (p) {
+                      setSelectedPinId(p.id);
+                      centerOnPercent(p.x, p.y, Math.max(zoom, 1.55));
+                    }
+                  } else if (val.startsWith('frame:')) {
+                    const fid = val.slice(6);
+                    const f = framesList.find((x) => x.id === fid);
+                    if (f) {
+                      const b = getShapeBounds(f);
+                      centerOnPercent(b.cx, b.cy, 1.15);
+                      if (isGm) setSelectedShapeIds([f.id]);
+                    }
+                  }
+                }}
+                className="hidden lg:block input h-7 w-40 text-xs py-0"
+              >
+                <option value="">Ir para área / pin…</option>
+                {framesList.length > 0 && (
+                  <optgroup label="Quadros (Frames)">
+                    {framesList.map((f) => (
+                      <option key={f.id} value={`frame:${f.id}`}>
+                        ▢ {f.label || 'Quadro'}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {visiblePins.length > 0 && (
+                  <optgroup label="Marcadores">
+                    {visiblePins.map((p) => (
+                      <option key={p.id} value={`pin:${p.id}`}>
+                        📍 {p.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+            )}
+
+            {/* Compact Layer Filter Dots */}
+            <div className="hidden xl:flex items-center gap-0.5 px-1 border-x border-line">
+              {(Object.keys(LAYER_CONFIG) as MapLayer[]).map((layer) => {
+                if (!isGm && layer === 'secrets') return null;
+                const on = activeLayers[layer];
                 return (
                   <button
-                    key={ic}
+                    key={layer}
                     type="button"
-                    onClick={() => {
-                      setPinIcon(ic);
-                      setPinLayer(meta.defaultLayer);
-                    }}
-                    title={meta.label}
-                    aria-pressed={selected}
-                    className={`btn btn-icon h-7 w-7 border ${
-                      selected
-                        ? 'bg-accent-soft text-accent border-accent/30'
-                        : 'bg-surface text-fg-muted border-line hover:text-fg hover:border-line-strong'
+                    onClick={() =>
+                      setActiveLayers((prev) => ({ ...prev, [layer]: !prev[layer] }))
+                    }
+                    className={`h-7 px-2 rounded text-[11px] font-medium inline-flex items-center gap-1 ${
+                      on ? 'text-fg bg-surface-2' : 'text-fg-subtle opacity-60'
                     }`}
+                    title={LAYER_CONFIG[layer].label}
                   >
-                    <Icon className="w-4 h-4" />
+                    <span
+                      className="w-2 h-2 rounded-full"
+                      style={{ backgroundColor: LAYER_CONFIG[layer].color }}
+                    />
+                    <span>{LAYER_CONFIG[layer].shortLabel}</span>
                   </button>
                 );
               })}
-              <span className="text-fg-subtle ml-2">Clique no mapa para posicionar.</span>
-            </div>
-          )}
-
-          {/* Opções de forma */}
-          {showShapeOptions && (
-            <>
-              <label className="flex items-center gap-2">
-                <span className="text-fg-muted">Rótulo</span>
-                <input
-                  type="text"
-                  value={shapeLabel}
-                  onChange={(e) => setShapeLabel(e.target.value)}
-                  placeholder="Rótulo no mapa"
-                  className="input h-8 w-40"
-                />
-              </label>
-
-              {activeTool !== 'fog' && (
-                <>
-                  <div className="flex items-center gap-2">
-                    <span className="text-fg-muted">Cor</span>
-                    <div className="flex items-center gap-1.5">
-                      {SHAPE_COLORS.map((c) => (
-                        <button
-                          key={c.hex}
-                          type="button"
-                          onClick={() => setShapeColor(c.hex)}
-                          className={`w-5 h-5 rounded-full border border-black/10 transition-shadow ${
-                            shapeColor === c.hex
-                              ? 'ring-2 ring-accent ring-offset-2 ring-offset-surface-2'
-                              : 'hover:ring-2 hover:ring-line-strong'
-                          }`}
-                          style={{ backgroundColor: c.hex }}
-                          title={c.label}
-                          aria-label={c.label}
-                        />
-                      ))}
-                    </div>
-                  </div>
-
-                  <label className="flex items-center gap-2">
-                    <span className="text-fg-muted">Vínculo</span>
-                    <select
-                      value={shapeEntityId}
-                      onChange={(e) => setShapeEntityId(e.target.value)}
-                      className="input h-8 w-auto max-w-[180px]"
-                      title="Vincular desenho a uma entrada do códice"
-                    >
-                      <option value="">Nenhum</option>
-                      {entities.map((ent) => (
-                        <option key={ent.id} value={ent.id}>
-                          {ent.mentionPrefix}
-                          {ent.handle} ({ent.name})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </>
-              )}
-
-              {activeTool === 'circle' && (
-                <label className="flex items-center gap-2">
-                  <span className="text-fg-muted">Raio</span>
-                  <input
-                    type="number"
-                    min={3}
-                    max={40}
-                    value={shapeRadius}
-                    onChange={(e) => setShapeRadius(Number(e.target.value) || 10)}
-                    className="input h-8 w-16 tabular-nums"
-                  />
-                </label>
-              )}
-
-              {activeTool === 'text' && (
-                <label className="flex items-center gap-2">
-                  <span className="text-fg-muted">Tamanho</span>
-                  <select
-                    value={shapeFontSize}
-                    onChange={(e) => setShapeFontSize(Number(e.target.value))}
-                    className="input h-8 w-auto"
-                  >
-                    <option value={1.8}>Pequeno</option>
-                    <option value={2.6}>Médio</option>
-                    <option value={3.8}>Grande</option>
-                  </select>
-                </label>
-              )}
-
-              {(activeTool === 'road' ||
-                activeTool === 'polygon' ||
-                activeTool === 'circle' ||
-                activeTool === 'rect') && (
-                <label className="flex items-center gap-2 text-fg-muted cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    className="checkbox"
-                    checked={shapeDashed}
-                    onChange={(e) => setShapeDashed(e.target.checked)}
-                  />
-                  <span>Tracejado</span>
-                </label>
-              )}
-
-              {(activeTool === 'road' ||
-                activeTool === 'river' ||
-                activeTool === 'polygon') && (
-                <button
-                  type="button"
-                  onClick={handleFinishMultiPointShape}
-                  disabled={
-                    drawingPoints.length < (activeTool === 'polygon' ? 3 : 2)
-                  }
-                  className="btn btn-primary btn-sm ml-auto"
-                >
-                  <Check className="w-4 h-4" />
-                  <span>Concluir</span>
-                  <span className="tabular-nums opacity-80">({drawingPoints.length})</span>
-                </button>
-              )}
-            </>
-          )}
-
-          {activeTool === 'ruler' && (
-            <div className="flex items-center gap-2 text-fg-muted">
-              <Ruler className="w-4 h-4 text-fg-subtle" />
-              <span>
-                {rulerPoints.length === 0
-                  ? 'Clique no ponto de origem.'
-                  : rulerPoints.length === 1
-                  ? 'Clique no ponto de destino.'
-                  : (
-                    <>
-                      Distância:{' '}
-                      <span className="font-medium text-fg tabular-nums">
-                        {rulerDistanceLabel}
-                      </span>
-                    </>
-                  )}
-              </span>
-              {rulerPoints.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setRulerPoints([])}
-                  className="btn btn-ghost btn-sm"
-                >
-                  Limpar
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Área do mapa + inspetor */}
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
-        {!currentMap ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-4 bg-surface-2">
-            <div className="w-10 h-10 rounded-lg bg-surface border border-line flex items-center justify-center text-fg-subtle">
-              <MapIcon className="w-5 h-5" />
-            </div>
-            <div className="space-y-1 max-w-sm">
-              <h3 className="section-title">Nenhum mapa cadastrado</h3>
-              <p className="text-[13px] text-fg-muted">
-                Envie uma imagem de mapa regional, urbano ou tático, ou use uma grade em branco,
-                para posicionar marcadores e vinculá-los ao códice.
-              </p>
-            </div>
-            {viewRole === 'gm' && (
               <button
                 type="button"
-                onClick={() => setShowUploadModal(true)}
-                className="btn btn-primary"
+                onClick={() => setShowVectorShapes((v) => !v)}
+                className={`h-7 px-2 rounded text-[11px] font-medium inline-flex items-center gap-1 ${
+                  showVectorShapes ? 'text-fg bg-surface-2' : 'text-fg-subtle opacity-60'
+                }`}
+                title="Mostrar/ocultar desenhos vetoriais"
               >
-                <Upload className="w-4 h-4" />
-                <span>Criar mapa</span>
+                <PenTool className="w-3 h-3" />
+                <span>Desenhos</span>
               </button>
+            </div>
+
+            {isGm && (
+              <>
+                <button
+                  type="button"
+                  disabled={!canUndo}
+                  onClick={handleUndo}
+                  className="btn btn-ghost btn-icon h-7 w-7 disabled:opacity-35"
+                  title="Desfazer (Ctrl+Z)"
+                >
+                  <Undo2 className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  disabled={!canRedo}
+                  onClick={handleRedo}
+                  className="btn btn-ghost btn-icon h-7 w-7 disabled:opacity-35"
+                  title="Refazer (Ctrl+Y)"
+                >
+                  <Redo2 className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSettingsModal('edit')}
+                  className="btn btn-ghost btn-icon h-7 w-7"
+                  title="Configurações do canvas (tema, grade, escala, imagem)"
+                >
+                  <SlidersHorizontal className="w-4 h-4" />
+                </button>
+              </>
+            )}
+
+            <button
+              type="button"
+              onClick={handleExportPng}
+              className="btn btn-ghost btn-icon h-7 w-7"
+              title="Exportar mapa como PNG"
+            >
+              <Download className="w-4 h-4" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsFullscreen((f) => !f)}
+              className="btn btn-ghost btn-icon h-7 w-7"
+              title={isFullscreen ? 'Sair da tela cheia' : 'Expandir em tela cheia'}
+            >
+              {isFullscreen ? (
+                <Minimize2 className="w-4 h-4" />
+              ) : (
+                <Maximize2 className="w-4 h-4" />
+              )}
+            </button>
+
+            {isGm && (
+              <button
+                type="button"
+                onClick={handleDeleteCurrentMap}
+                className="btn btn-danger-ghost btn-icon h-7 w-7"
+                title="Excluir mapa atual"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        )}
+      </header>
+
+      {/* =================================================================== */}
+      {/* MAIN STUDIO WORKSPACE: MIRO CANVAS + FLOATING DOCKS + PIN INSPECTOR */}
+      {/* =================================================================== */}
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+        {!currentMap ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-5 bg-surface-2">
+            <div className="w-12 h-12 rounded-xl bg-surface border border-line flex items-center justify-center text-accent shadow-card">
+              <MapIcon className="w-6 h-6" />
+            </div>
+            <div className="space-y-1.5 max-w-md">
+              <h3 className="text-base font-semibold text-fg">
+                Estúdio Cartográfico & Quadro Livre
+              </h3>
+              <p className="text-[13px] text-fg-muted leading-relaxed">
+                Desenhe mapas regionais, masmorras táticas, fluxos e territórios livremente como no Miro, ou envie uma imagem de mapa para anotar e cobrir com Névoa de Guerra.
+              </p>
+            </div>
+            {isGm && (
+              <div className="flex flex-wrap items-center justify-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => void createQuickPresetMap('miro')}
+                  className="btn btn-primary"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Quadro em Branco (Miro)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void createQuickPresetMap('parchment')}
+                  className="btn btn-secondary"
+                >
+                  <Compass className="w-4 h-4" />
+                  <span>Pergaminho Hexagonal</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void createQuickPresetMap('tactical')}
+                  className="btn btn-secondary"
+                >
+                  <Grid3X3 className="w-4 h-4" />
+                  <span>Grade Tática (1,5m)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSettingsModal('create')}
+                  className="btn btn-ghost"
+                >
+                  <span>Personalizar / Enviar imagem…</span>
+                </button>
+              </div>
             )}
           </div>
         ) : (
           <div
             ref={viewportRef}
+            onContextMenu={(e) => e.preventDefault()}
             onPointerDown={handleViewportPointerDown}
             onPointerMove={handleViewportPointerMove}
             onPointerUp={handleViewportPointerUp}
-            className={`flex-1 min-h-[280px] relative overflow-hidden select-none bg-surface-2 ${
+            onDoubleClick={handleViewportDoubleClick}
+            style={{ backgroundColor: themeMeta.viewportBg }}
+            className={`flex-1 min-h-[340px] relative overflow-hidden select-none ${
               isSpaceHeld || activeTool === 'pan'
                 ? 'cursor-grab active:cursor-grabbing'
+                : activeTool === 'eraser'
+                ? 'cursor-cell'
                 : activeTool !== 'select'
                 ? 'cursor-crosshair'
-                : 'cursor-grab active:cursor-grabbing'
+                : 'cursor-default'
             }`}
           >
-            {/* Palco com zoom e pan */}
+            {/* ============================================================= */}
+            {/* LEFT FLOATING MIRO TOOL DOCK                                  */}
+            {/* ============================================================= */}
             <div
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              className="absolute left-3 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-1 p-1.5 rounded-xl bg-surface/95 backdrop-blur border border-line-strong shadow-elevated pointer-events-auto"
+            >
+              {/* Select (V) */}
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTool('select');
+                  setOpenDockMenu(null);
+                }}
+                title="Selecionar / Caixa de seleção (V)"
+                className={`btn btn-icon h-9 w-9 rounded-lg ${
+                  activeTool === 'select'
+                    ? 'bg-accent text-accent-fg shadow-sm'
+                    : 'btn-ghost text-fg-muted hover:text-fg'
+                }`}
+              >
+                <MousePointer2 className="w-4 h-4" />
+              </button>
+
+              {/* Hand / Pan (H / Space) */}
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTool('pan');
+                  setOpenDockMenu(null);
+                }}
+                title="Mover visão / Pan (H ou Espaço)"
+                className={`btn btn-icon h-9 w-9 rounded-lg ${
+                  activeTool === 'pan'
+                    ? 'bg-accent text-accent-fg shadow-sm'
+                    : 'btn-ghost text-fg-muted hover:text-fg'
+                }`}
+              >
+                <Hand className="w-4 h-4" />
+              </button>
+
+              {isGm && (
+                <>
+                  <span className="h-px bg-line mx-1 my-0.5" />
+
+                  {/* Freehand Pen & Highlighter (P) */}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (activeTool !== 'freehand' && activeTool !== 'highlighter') {
+                          setActiveTool('freehand');
+                        }
+                        setOpenDockMenu((m) => (m === 'pen' ? null : 'pen'));
+                      }}
+                      title="Desenho livre / Pincel e Marca-texto (P)"
+                      className={`btn btn-icon h-9 w-9 rounded-lg ${
+                        activeTool === 'freehand' || activeTool === 'highlighter'
+                          ? 'bg-accent text-accent-fg shadow-sm'
+                          : 'btn-ghost text-fg-muted hover:text-fg'
+                      }`}
+                    >
+                      {activeTool === 'highlighter' ? (
+                        <Highlighter className="w-4 h-4" />
+                      ) : (
+                        <Brush className="w-4 h-4" />
+                      )}
+                    </button>
+
+                    {openDockMenu === 'pen' && (
+                      <div className="absolute left-full top-0 ml-2.5 p-3 rounded-xl bg-surface border border-line-strong shadow-elevated w-60 space-y-3 z-40">
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setActiveTool('freehand')}
+                            className={`h-8 rounded-md text-xs font-medium inline-flex items-center justify-center gap-1.5 border ${
+                              activeTool === 'freehand'
+                                ? 'bg-accent-soft text-accent border-accent/40'
+                                : 'border-line text-fg-muted'
+                            }`}
+                          >
+                            <Brush className="w-3.5 h-3.5" />
+                            Caneta
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setActiveTool('highlighter')}
+                            className={`h-8 rounded-md text-xs font-medium inline-flex items-center justify-center gap-1.5 border ${
+                              activeTool === 'highlighter'
+                                ? 'bg-accent-soft text-accent border-accent/40'
+                                : 'border-line text-fg-muted'
+                            }`}
+                          >
+                            <Highlighter className="w-3.5 h-3.5" />
+                            Marca-texto
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-6 gap-1.5">
+                          {STROKE_PALETTE.map((c) => (
+                            <button
+                              key={c.hex}
+                              type="button"
+                              onClick={() => setBrushColor(c.hex)}
+                              className={`w-6 h-6 rounded-full border border-black/20 ${
+                                brushColor === c.hex ? 'ring-2 ring-accent' : ''
+                              }`}
+                              style={{ backgroundColor: c.hex }}
+                              title={c.label}
+                            />
+                          ))}
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2 text-xs text-fg-muted">
+                          <span>Cor livre</span>
+                          <input
+                            type="color"
+                            value={brushColor}
+                            onChange={(e) => setBrushColor(e.target.value)}
+                            className="w-8 h-6 rounded cursor-pointer bg-transparent border-0"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-xs text-fg-muted">
+                            <span>Espessura</span>
+                            <span className="tabular-nums">{brushWidth}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min={1}
+                            max={16}
+                            value={brushWidth}
+                            onChange={(e) => setBrushWidth(Number(e.target.value))}
+                            className="w-full accent-accent"
+                          />
+                        </div>
+
+                        {activeTool === 'freehand' && (
+                          <label className="flex items-center gap-2 text-xs text-fg-muted cursor-pointer">
+                            <input
+                              type="checkbox"
+                              className="checkbox"
+                              checked={brushCloseFreehand}
+                              onChange={(e) => setBrushCloseFreehand(e.target.checked)}
+                            />
+                            <span>Fechar e preencher ilha/massa</span>
+                          </label>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Eraser (E) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTool('eraser');
+                      setOpenDockMenu(null);
+                    }}
+                    title="Borracha — arraste sobre traços para apagar (E)"
+                    className={`btn btn-icon h-9 w-9 rounded-lg ${
+                      activeTool === 'eraser'
+                        ? 'bg-accent text-accent-fg shadow-sm'
+                        : 'btn-ghost text-fg-muted hover:text-fg'
+                    }`}
+                  >
+                    <Eraser className="w-4 h-4" />
+                  </button>
+
+                  {/* Shapes & Frames (S) */}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (
+                          activeTool !== 'rect' &&
+                          activeTool !== 'circle' &&
+                          activeTool !== 'polygon' &&
+                          activeTool !== 'frame'
+                        ) {
+                          setActiveTool('rect');
+                        }
+                        setOpenDockMenu((m) => (m === 'shapes' ? null : 'shapes'));
+                      }}
+                      title="Formas geométricas, Territórios e Quadros (S)"
+                      className={`btn btn-icon h-9 w-9 rounded-lg ${
+                        activeTool === 'rect' ||
+                        activeTool === 'circle' ||
+                        activeTool === 'polygon' ||
+                        activeTool === 'frame'
+                          ? 'bg-accent text-accent-fg shadow-sm'
+                          : 'btn-ghost text-fg-muted hover:text-fg'
+                      }`}
+                    >
+                      {activeTool === 'circle' ? (
+                        <CircleIcon className="w-4 h-4" />
+                      ) : activeTool === 'polygon' ? (
+                        <Hexagon className="w-4 h-4" />
+                      ) : activeTool === 'frame' ? (
+                        <Frame className="w-4 h-4" />
+                      ) : (
+                        <Square className="w-4 h-4" />
+                      )}
+                    </button>
+
+                    {openDockMenu === 'shapes' && (
+                      <div className="absolute left-full top-0 ml-2.5 p-2.5 rounded-xl bg-surface border border-line-strong shadow-elevated w-56 space-y-2.5 z-40">
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {(
+                            [
+                              { id: 'rect', label: 'Retângulo / Sala', icon: Square },
+                              { id: 'circle', label: 'Círculo / Área', icon: CircleIcon },
+                              { id: 'polygon', label: 'Polígono / Reino', icon: Hexagon },
+                              { id: 'frame', label: 'Quadro (Frame)', icon: Frame },
+                            ] as const
+                          ).map((it) => {
+                            const Icon = it.icon;
+                            return (
+                              <button
+                                key={it.id}
+                                type="button"
+                                onClick={() => {
+                                  setActiveTool(it.id);
+                                  setDrawingPoints([]);
+                                  setOpenDockMenu(null);
+                                }}
+                                className={`h-9 px-2 rounded-md text-xs font-medium flex items-center gap-1.5 border ${
+                                  activeTool === it.id
+                                    ? 'bg-accent-soft text-accent border-accent/40'
+                                    : 'border-line text-fg-muted hover:text-fg'
+                                }`}
+                              >
+                                <Icon className="w-3.5 h-3.5 shrink-0" />
+                                <span className="truncate">{it.label}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <div className="grid grid-cols-6 gap-1.5 pt-1 border-t border-line">
+                          {STROKE_PALETTE.map((c) => (
+                            <button
+                              key={c.hex}
+                              type="button"
+                              onClick={() => setBrushColor(c.hex)}
+                              className={`w-6 h-6 rounded-full border border-black/20 ${
+                                brushColor === c.hex ? 'ring-2 ring-accent' : ''
+                              }`}
+                              style={{ backgroundColor: c.hex }}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Lines, Arrows, Roads & Rivers (L) */}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (
+                          activeTool !== 'arrow' &&
+                          activeTool !== 'road' &&
+                          activeTool !== 'river'
+                        ) {
+                          setActiveTool('arrow');
+                        }
+                        setOpenDockMenu((m) => (m === 'lines' ? null : 'lines'));
+                      }}
+                      title="Setas, Estradas e Rios (L)"
+                      className={`btn btn-icon h-9 w-9 rounded-lg ${
+                        activeTool === 'arrow' ||
+                        activeTool === 'road' ||
+                        activeTool === 'river'
+                          ? 'bg-accent text-accent-fg shadow-sm'
+                          : 'btn-ghost text-fg-muted hover:text-fg'
+                      }`}
+                    >
+                      {activeTool === 'river' ? (
+                        <Waves className="w-4 h-4" />
+                      ) : activeTool === 'road' ? (
+                        <PenTool className="w-4 h-4" />
+                      ) : (
+                        <MoveUpRight className="w-4 h-4" />
+                      )}
+                    </button>
+
+                    {openDockMenu === 'lines' && (
+                      <div className="absolute left-full top-0 ml-2.5 p-2.5 rounded-xl bg-surface border border-line-strong shadow-elevated w-52 space-y-1.5 z-40">
+                        {(
+                          [
+                            { id: 'arrow', label: 'Seta / Conector (arraste)', icon: MoveUpRight },
+                            { id: 'road', label: 'Estrada / Trilha (pontos)', icon: PenTool },
+                            { id: 'river', label: 'Rio / Curso d’água (curvo)', icon: Waves },
+                          ] as const
+                        ).map((it) => {
+                          const Icon = it.icon;
+                          return (
+                            <button
+                              key={it.id}
+                              type="button"
+                              onClick={() => {
+                                setActiveTool(it.id);
+                                setDrawingPoints([]);
+                                setOpenDockMenu(null);
+                              }}
+                              className={`w-full h-8 px-2.5 rounded-md text-xs font-medium flex items-center gap-2 border ${
+                                activeTool === it.id
+                                  ? 'bg-accent-soft text-accent border-accent/40'
+                                  : 'border-transparent text-fg-muted hover:bg-surface-2 hover:text-fg'
+                              }`}
+                            >
+                              <Icon className="w-3.5 h-3.5 shrink-0" />
+                              <span>{it.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Sticky Note (N) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTool('sticky');
+                      setOpenDockMenu(null);
+                    }}
+                    title="Nota adesiva estilo Miro (N)"
+                    className={`btn btn-icon h-9 w-9 rounded-lg ${
+                      activeTool === 'sticky'
+                        ? 'bg-accent text-accent-fg shadow-sm'
+                        : 'btn-ghost text-fg-muted hover:text-fg'
+                    }`}
+                  >
+                    <StickyNote className="w-4 h-4" />
+                  </button>
+
+                  {/* Text (T) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTool('text');
+                      setOpenDockMenu(null);
+                    }}
+                    title="Texto / Nome de região (T ou duplo clique)"
+                    className={`btn btn-icon h-9 w-9 rounded-lg ${
+                      activeTool === 'text'
+                        ? 'bg-accent text-accent-fg shadow-sm'
+                        : 'btn-ghost text-fg-muted hover:text-fg'
+                    }`}
+                  >
+                    <Type className="w-4 h-4" />
+                  </button>
+
+                  {/* Terrain & Cartography Stamps (G) */}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTool('stamp');
+                        setOpenDockMenu((m) => (m === 'stamps' ? null : 'stamps'));
+                      }}
+                      title="Carimbos de terreno e cartografia (G)"
+                      className={`btn btn-icon h-9 w-9 rounded-lg ${
+                        activeTool === 'stamp'
+                          ? 'bg-accent text-accent-fg shadow-sm'
+                          : 'btn-ghost text-fg-muted hover:text-fg'
+                      }`}
+                    >
+                      <Compass className="w-4 h-4" />
+                    </button>
+
+                    {openDockMenu === 'stamps' && (
+                      <div className="absolute left-full top-0 ml-2.5 p-2.5 rounded-xl bg-surface border border-line-strong shadow-elevated w-64 space-y-2 z-40">
+                        <div className="text-[11px] font-medium text-fg-subtle">
+                          Carimbos cartográficos (clique ou arraste)
+                        </div>
+                        <div className="grid grid-cols-6 gap-1">
+                          {MAP_STAMPS.map((st) => (
+                            <button
+                              key={st.id}
+                              type="button"
+                              onClick={() => {
+                                setActiveStampId(st.id);
+                                setActiveTool('stamp');
+                                setOpenDockMenu(null);
+                              }}
+                              title={st.label}
+                              className={`h-9 w-9 rounded-md flex items-center justify-center border ${
+                                activeStampId === st.id
+                                  ? 'bg-accent-soft text-accent border-accent/40'
+                                  : 'border-transparent hover:bg-surface-2 text-fg'
+                              }`}
+                            >
+                              <svg viewBox="0 0 24 24" className="w-5 h-5">
+                                {st.paths.map((p, idx) => (
+                                  <path
+                                    key={idx}
+                                    d={p}
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="1.8"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                  />
+                                ))}
+                              </svg>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Interactive RPG Map Pin (M) */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTool('pin');
+                      setOpenDockMenu(null);
+                    }}
+                    title="Marcador interativo com Códice / Submapa / Combate (M)"
+                    className={`btn btn-icon h-9 w-9 rounded-lg ${
+                      activeTool === 'pin'
+                        ? 'bg-accent text-accent-fg shadow-sm'
+                        : 'btn-ghost text-fg-muted hover:text-fg'
+                    }`}
+                  >
+                    <MapPinIconLucide className="w-4 h-4" />
+                  </button>
+
+                  {/* Fog of War (F) */}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (activeTool !== 'fog' && activeTool !== 'fog_poly') {
+                          setActiveTool('fog');
+                        }
+                        setOpenDockMenu((m) => (m === 'fog' ? null : 'fog'));
+                      }}
+                      title="Névoa de Guerra (F)"
+                      className={`btn btn-icon h-9 w-9 rounded-lg ${
+                        activeTool === 'fog' || activeTool === 'fog_poly'
+                          ? 'bg-accent text-accent-fg shadow-sm'
+                          : 'btn-ghost text-fg-muted hover:text-fg'
+                      }`}
+                    >
+                      <CloudOff className="w-4 h-4" />
+                    </button>
+
+                    {openDockMenu === 'fog' && (
+                      <div className="absolute left-full bottom-0 ml-2.5 p-2.5 rounded-xl bg-surface border border-line-strong shadow-elevated w-56 space-y-1.5 z-40">
+                        <div className="text-[11px] font-medium text-fg-subtle">
+                          Névoa de Guerra
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTool('fog');
+                            setOpenDockMenu(null);
+                          }}
+                          className={`w-full h-8 px-2.5 rounded-md text-xs font-medium flex items-center gap-2 ${
+                            activeTool === 'fog'
+                              ? 'bg-accent-soft text-accent'
+                              : 'hover:bg-surface-2 text-fg'
+                          }`}
+                        >
+                          <Square className="w-3.5 h-3.5" />
+                          <span>Área retangular (arraste)</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTool('fog_poly');
+                            setDrawingPoints([]);
+                            setOpenDockMenu(null);
+                          }}
+                          className={`w-full h-8 px-2.5 rounded-md text-xs font-medium flex items-center gap-2 ${
+                            activeTool === 'fog_poly'
+                              ? 'bg-accent-soft text-accent'
+                              : 'hover:bg-surface-2 text-fg'
+                          }`}
+                        >
+                          <Hexagon className="w-3.5 h-3.5" />
+                          <span>Polígono livre (pontos)</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+
+              <span className="h-px bg-line mx-1 my-0.5" />
+
+              {/* Multi-waypoint Ruler (R) */}
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTool('ruler');
+                  setOpenDockMenu(null);
+                }}
+                title="Régua de distância em rota (R)"
+                className={`btn btn-icon h-9 w-9 rounded-lg ${
+                  activeTool === 'ruler'
+                    ? 'bg-accent text-accent-fg shadow-sm'
+                    : 'btn-ghost text-fg-muted hover:text-fg'
+                }`}
+              >
+                <Ruler className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* ============================================================= */}
+            {/* TOP FLOATING CONTEXTUAL BARS (SELECTION OR ACTIVE TOOL HINT)  */}
+            {/* ============================================================= */}
+            {isGm && selectedShapes.length > 0 && activeTool === 'select' && (
+              <FloatingShapeToolbar
+                selectedShapes={selectedShapes}
+                entities={entities}
+                onUpdateSelected={updateSelectedShapes}
+                onBringToFront={bringSelectedToFront}
+                onSendToBack={sendSelectedToBack}
+                onDuplicate={duplicateSelectedShapes}
+                onDelete={deleteSelectedShapes}
+                onOpenEntity={openEntityInWiki}
+              />
+            )}
+
+            {/* Helper Pill for Multi-point / Pin / Sticky / Ruler Tools */}
+            {(isMultiPointTool || activeTool === 'ruler' || activeTool === 'pin' || activeTool === 'sticky') && (
+              <div
+                onPointerDown={(e) => e.stopPropagation()}
+                className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface/95 backdrop-blur border border-line-strong shadow-card text-xs pointer-events-auto"
+              >
+                {activeTool === 'pin' && (
+                  <>
+                    <span className="text-fg-muted">Ícone rápido:</span>
+                    {(
+                      ['castle', 'city', 'village', 'tavern', 'dungeon', 'skull', 'quest', 'party', 'secret'] as MapPinIcon[]
+                    ).map((ic) => {
+                      const Meta = PIN_ICON_META[ic];
+                      const Ic = Meta.icon;
+                      return (
+                        <button
+                          key={ic}
+                          type="button"
+                          onClick={() => {
+                            setDefaultPinIcon(ic);
+                            setDefaultPinLayer(Meta.defaultLayer);
+                          }}
+                          title={Meta.label}
+                          className={`w-6 h-6 rounded flex items-center justify-center ${
+                            defaultPinIcon === ic
+                              ? 'bg-accent-soft text-accent'
+                              : 'text-fg-muted hover:text-fg'
+                          }`}
+                        >
+                          <Ic className="w-3.5 h-3.5" />
+                        </button>
+                      );
+                    })}
+                    <span className="text-fg-subtle">· Clique no mapa</span>
+                  </>
+                )}
+
+                {activeTool === 'sticky' && (
+                  <>
+                    <span className="text-fg-muted">Cor da nota:</span>
+                    {STICKY_PALETTE.map((sc) => (
+                      <button
+                        key={sc.hex}
+                        type="button"
+                        onClick={() => setStickyColor(sc.hex)}
+                        className={`w-4 h-4 rounded border border-black/20 ${
+                          stickyColor === sc.hex ? 'ring-2 ring-accent' : ''
+                        }`}
+                        style={{ backgroundColor: sc.hex }}
+                        title={sc.label}
+                      />
+                    ))}
+                    <span className="text-fg-subtle">· Clique ou arraste</span>
+                  </>
+                )}
+
+                {isMultiPointTool && (
+                  <>
+                    <span className="text-fg-muted">
+                      Clique para marcar vértices ({drawingPoints.length}) · Duplo clique ou Enter para concluir
+                    </span>
+                    {drawingPoints.length >= (activeTool === 'polygon' || activeTool === 'fog_poly' ? 3 : 2) && (
+                      <button
+                        type="button"
+                        onClick={finishMultiPointDrawing}
+                        className="btn btn-primary btn-sm h-6 px-2 text-xs"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Concluir</span>
+                      </button>
+                    )}
+                    {drawingPoints.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setDrawingPoints([])}
+                        className="btn btn-ghost btn-sm h-6 px-2 text-xs"
+                      >
+                        Cancelar
+                      </button>
+                    )}
+                  </>
+                )}
+
+                {activeTool === 'ruler' && (
+                  <>
+                    <Ruler className="w-3.5 h-3.5 text-accent" />
+                    <span className="text-fg">
+                      {rulerDistanceLabel
+                        ? `Distância total: ${rulerDistanceLabel}`
+                        : 'Clique no mapa para medir rotas com múltiplos pontos'}
+                    </span>
+                    {rulerPoints.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setRulerPoints([])}
+                        className="btn btn-ghost btn-sm h-6 px-2 text-xs"
+                      >
+                        Limpar
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* ============================================================= */}
+            {/* TRANSFORMED STAGE (THE BOARD)                                 */}
+            {/* ============================================================= */}
+            <div
+              ref={stageRef}
               style={{
-                width: `${STAGE_W}px`,
+                width: `${stageW}px`,
                 height: `${stageH}px`,
                 transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
                 transformOrigin: '0 0',
                 willChange: 'transform',
+                backgroundColor: themeMeta.stageBg,
+                borderColor: themeMeta.borderColor,
               }}
-              className="relative shadow-card border border-line rounded-sm overflow-hidden bg-surface"
+              className="relative shadow-elevated border rounded-md overflow-visible"
             >
-              {/* Imagem do mapa ou fundo procedural */}
-              {currentMap.customImageUrl ? (
+              {/* Optional Base Image */}
+              {currentMap.customImageUrl && (
                 <img
                   src={currentMap.customImageUrl}
                   alt={currentMap.name}
                   draggable={false}
                   decoding="async"
-                  className="w-full h-full object-contain pointer-events-none select-none"
+                  style={{ opacity: imageOpacity }}
+                  className="absolute inset-0 w-full h-full object-contain pointer-events-none select-none rounded-md"
                 />
-              ) : currentMap.regionType === 'tactical' ? (
-                <svg
-                  viewBox="0 0 1280 820"
-                  className="w-full h-full pointer-events-none"
-                >
-                  <rect width="1280" height="820" className="fill-surface" />
-                  <defs>
-                    <pattern
-                      id="baseTacticalGrid"
-                      width="32"
-                      height="32"
-                      patternUnits="userSpaceOnUse"
-                    >
-                      <path
-                        d="M 32 0 L 0 0 0 32"
-                        fill="none"
-                        className="stroke-line"
-                        strokeWidth="1"
-                      />
-                    </pattern>
-                  </defs>
-                  <rect width="1280" height="820" fill="url(#baseTacticalGrid)" />
-                  <rect
-                    x="160"
-                    y="120"
-                    width="960"
-                    height="580"
-                    rx="6"
-                    className="fill-surface-2 stroke-line-strong"
-                    fillOpacity="0.6"
-                    strokeWidth="2"
-                  />
-                  <text
-                    x="640"
-                    y="84"
-                    textAnchor="middle"
-                    className="fill-fg-subtle"
-                    fontSize="20"
-                    fontWeight="500"
-                    fontFamily="IBM Plex Sans, sans-serif"
-                  >
-                    {currentMap.name}
-                  </text>
-                </svg>
-              ) : (
-                <svg
-                  viewBox="0 0 1280 820"
-                  className="w-full h-full pointer-events-none"
-                >
-                  <defs>
-                    <pattern
-                      id="studioSubtleGrid"
-                      width="48"
-                      height="48"
-                      patternUnits="userSpaceOnUse"
-                    >
-                      <path
-                        d="M 48 0 L 0 0 0 48"
-                        fill="none"
-                        className="stroke-line"
-                        strokeWidth="1"
-                      />
-                    </pattern>
-                  </defs>
-                  <rect width="1280" height="820" className="fill-surface" />
-                  <rect width="1280" height="820" fill="url(#studioSubtleGrid)" />
-                  <text
-                    x="640"
-                    y="400"
-                    textAnchor="middle"
-                    className="fill-fg-subtle"
-                    fontSize="26"
-                    fontWeight="500"
-                    fontFamily="IBM Plex Sans, sans-serif"
-                  >
-                    {currentMap.name}
-                  </text>
-                  {currentMap.subtitle && (
-                    <text
-                      x="640"
-                      y="432"
-                      textAnchor="middle"
-                      className="fill-fg-subtle"
-                      fontSize="15"
-                      fontFamily="IBM Plex Sans, sans-serif"
-                      opacity="0.8"
-                    >
-                      {currentMap.subtitle}
-                    </text>
-                  )}
-                </svg>
               )}
 
-              {/* Grade opcional (quadrada / hexagonal), legível sobre imagens claras e escuras */}
+              {/* Grid Overlay (Dots Miro-style / Square / Hex) */}
               {gridMode !== 'off' && (
                 <svg
-                  viewBox={`0 0 ${STAGE_W} ${stageH}`}
+                  viewBox={`0 0 ${stageW} ${stageH}`}
+                  style={{ opacity: gridOpacity }}
                   className="absolute inset-0 w-full h-full pointer-events-none z-[5]"
                 >
                   <defs>
-                    {gridMode === 'square' ? (
+                    {gridMode === 'dots' && (
                       <pattern
-                        id="overlaySquareGrid"
-                        width="40"
-                        height="40"
+                        id="miroDotsPattern"
+                        width={gridSize}
+                        height={gridSize}
                         patternUnits="userSpaceOnUse"
                       >
-                        <path
-                          d="M 40 0 L 0 0 0 40"
-                          fill="none"
-                          stroke="rgba(0,0,0,0.22)"
-                          strokeWidth="1.5"
-                        />
-                        <path
-                          d="M 40 0 L 0 0 0 40"
-                          fill="none"
-                          stroke="rgba(255,255,255,0.28)"
-                          strokeWidth="0.75"
+                        <circle
+                          cx={gridSize / 2}
+                          cy={gridSize / 2}
+                          r={Math.max(1.2, gridSize * 0.042)}
+                          fill={themeMeta.dotFill}
                         />
                       </pattern>
-                    ) : (
+                    )}
+                    {gridMode === 'square' && (
                       <pattern
-                        id="overlayHexGrid"
-                        width="56"
-                        height="48.5"
+                        id="miroSquarePattern"
+                        width={gridSize}
+                        height={gridSize}
                         patternUnits="userSpaceOnUse"
                       >
                         <path
-                          d="M28 0 L56 14 L56 34.5 L28 48.5 L0 34.5 L0 14 Z"
+                          d={`M ${gridSize} 0 L 0 0 0 ${gridSize}`}
                           fill="none"
-                          stroke="rgba(0,0,0,0.22)"
-                          strokeWidth="1.5"
+                          stroke={themeMeta.gridStroke}
+                          strokeWidth="1.2"
                         />
+                      </pattern>
+                    )}
+                    {gridMode === 'hex' && (
+                      <pattern
+                        id="miroHexPattern"
+                        width={gridSize * 1.5}
+                        height={gridSize * 1.299}
+                        patternUnits="userSpaceOnUse"
+                      >
                         <path
-                          d="M28 0 L56 14 L56 34.5 L28 48.5 L0 34.5 L0 14 Z"
+                          d={`M ${gridSize * 0.75} 0 L ${gridSize * 1.5} ${gridSize * 0.375} L ${gridSize * 1.5} ${gridSize * 0.924} L ${gridSize * 0.75} ${gridSize * 1.299} L 0 ${gridSize * 0.924} L 0 ${gridSize * 0.375} Z`}
                           fill="none"
-                          stroke="rgba(255,255,255,0.28)"
-                          strokeWidth="0.75"
+                          stroke={themeMeta.gridStroke}
+                          strokeWidth="1.2"
                         />
                       </pattern>
                     )}
                   </defs>
                   <rect
-                    width={STAGE_W}
+                    width={stageW}
                     height={stageH}
                     fill={
-                      gridMode === 'square'
-                        ? 'url(#overlaySquareGrid)'
-                        : 'url(#overlayHexGrid)'
+                      gridMode === 'dots'
+                        ? 'url(#miroDotsPattern)'
+                        : gridMode === 'square'
+                        ? 'url(#miroSquarePattern)'
+                        : 'url(#miroHexPattern)'
                     }
                   />
                 </svg>
               )}
 
-              {/* Camada vetorial e névoa */}
-              <MapVectorLayer
+              {/* Vector Stage (Freehand, Shapes, Sticky Notes, Stamps, Frames, Fog, Handles) */}
+              <CanvasVectorStage
                 shapes={visibleShapes}
-                drawingPoints={drawingPoints}
+                selectedShapeIds={selectedShapeIds}
                 activeTool={activeTool}
-                shapeColor={shapeColor}
+                viewRole={viewRole}
+                zoom={zoom}
+                entitiesMap={entitiesMap}
+                drawingPoints={drawingPoints}
+                liveCursorPoint={liveCursorPoint}
+                dragDraftShape={dragDraftShape}
+                marqueeBox={marqueeBox}
                 rulerPoints={rulerPoints}
                 rulerDistanceLabel={rulerDistanceLabel}
-                viewRole={viewRole}
-                entitiesMap={entitiesMap}
+                activeStrokeColor={brushColor}
+                activeFillColor={brushFillColor}
+                activeStrokeWidth={brushWidth}
+                onShapePointerDown={handleShapePointerDown}
+                onShapePointerEnter={handleShapePointerEnter}
+                onShapeDoubleClick={handleShapeDoubleClick}
+                onResizeHandlePointerDown={handleResizeHandlePointerDown}
+                onRotateHandlePointerDown={handleRotateHandlePointerDown}
+                onVertexPointerDown={handleVertexPointerDown}
                 onSelectEntity={openEntityInWiki}
               />
 
-              {/* Marcadores */}
+              {/* Inline On-Canvas Textarea Editor (Sticky Notes, Text, Labels) */}
+              {editingShape && editingBounds && (
+                <div
+                  onPointerDown={(e) => e.stopPropagation()}
+                  style={{
+                    left: `${editingBounds.x}%`,
+                    top: `${editingBounds.y}%`,
+                    width: `${Math.max(12, editingBounds.width)}%`,
+                    minHeight: `${Math.max(5, editingBounds.height)}%`,
+                  }}
+                  className="absolute z-40"
+                >
+                  <textarea
+                    autoFocus
+                    value={editingShapeText}
+                    onChange={(e) => setEditingShapeText(e.target.value)}
+                    onBlur={commitInlineTextEdit}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && (e.ctrlKey || editingShape.type !== 'sticky')) {
+                        e.preventDefault();
+                        commitInlineTextEdit();
+                      }
+                    }}
+                    placeholder="Digite o texto…"
+                    className="w-full h-full min-h-[72px] p-2 rounded-md border-2 border-accent shadow-elevated bg-surface text-fg text-sm resize-both focus:outline-none"
+                  />
+                </div>
+              )}
+
+              {/* RPG Interactive Pins */}
               {visiblePins.map((pin) => {
                 const isDraggingThis = draggingPin?.id === pin.id;
                 const displayX = isDraggingThis ? draggingPin.x : pin.x;
                 const displayY = isDraggingThis ? draggingPin.y : pin.y;
                 const linkedCount =
                   (pin.entityId ? 1 : 0) + (pin.linkedEntityIds?.length || 0);
-
                 return (
                   <MapPinMarker
                     key={pin.id}
@@ -1954,1085 +2893,399 @@ export const InteractiveMapsView: React.FC = () => {
                     counterScale={pinCounterScale}
                     linkedCount={linkedCount}
                     hasSubMap={Boolean(pin.linkedMapId)}
-                    canDrag={viewRole === 'gm' && activeTool === 'select'}
-                    onSelect={setSelectedPinId}
+                    canDrag={isGm && activeTool === 'select'}
+                    viewRole={viewRole}
+                    onSelect={(id) => {
+                      setSelectedPinId(id);
+                      setSelectedShapeIds([]);
+                    }}
                     onStartDrag={handleStartPinDrag}
                   />
                 );
               })}
             </div>
 
-            {/* Ir para marcador */}
-            <div
-              className="absolute top-3 left-3 z-20 flex items-center gap-2 pointer-events-auto"
-            >
-              {visiblePins.length > 0 && (
-                <select
-                  value={selectedPinId || ''}
-                  onChange={(e) => {
-                    const pid = e.target.value;
-                    if (!pid) return;
-                    setSelectedPinId(pid);
-                    const p = visiblePins.find((item) => item.id === pid);
-                    if (p) centerOnPercent(p.x, p.y, Math.max(zoom, 1.55));
-                  }}
-                  className="input h-8 w-auto max-w-[220px] shadow-card"
-                >
-                  <option value="">Ir para marcador ({visiblePins.length})</option>
-                  {visiblePins.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
-
-            {/* Gerenciador de desenhos e névoa (mestre) */}
-            {visibleShapes.length > 0 && viewRole === 'gm' && (
+            {/* ============================================================= */}
+            {/* BOTTOM-LEFT: OBJECTS, LAYERS & FOG DRAWER                     */}
+            {/* ============================================================= */}
+            {isGm && (
               <div
-                className="absolute bottom-3 left-3 z-20 pointer-events-auto"
+                onPointerDown={(e) => e.stopPropagation()}
+                className="absolute bottom-3 left-3 z-30 pointer-events-auto"
               >
-                {!showShapesDrawer ? (
+                {!showLayersDrawer ? (
                   <button
                     type="button"
-                    onClick={() => setShowShapesDrawer(true)}
-                    className="btn btn-secondary btn-sm shadow-card"
+                    onClick={() => setShowLayersDrawer(true)}
+                    className="btn btn-secondary btn-sm shadow-card bg-surface/95 backdrop-blur"
                   >
                     <Layers className="w-4 h-4 text-fg-subtle" />
-                    <span>Desenhos</span>
-                    <span className="text-fg-subtle tabular-nums">{visibleShapes.length}</span>
+                    <span>Elementos</span>
+                    <span className="text-fg-subtle tabular-nums">
+                      {serverShapes.length}
+                    </span>
                   </button>
                 ) : (
-                  <div className="card shadow-elevated w-72 max-w-[calc(100vw-3rem)]">
+                  <div className="card shadow-elevated w-80 max-w-[calc(100vw-3rem)] bg-surface/95 backdrop-blur">
                     <div className="flex items-center justify-between px-3 py-2 border-b border-line">
-                      <span className="text-[13px] font-medium text-fg">
-                        Desenhos e névoa{' '}
-                        <span className="text-fg-subtle tabular-nums">({visibleShapes.length})</span>
+                      <span className="text-xs font-semibold text-fg">
+                        Elementos do canvas ({serverShapes.length})
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => setShowShapesDrawer(false)}
-                        className="btn btn-ghost btn-icon h-7 w-7"
-                        title="Fechar"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                    <div className="max-h-48 overflow-y-auto p-1">
-                      {visibleShapes.map((sh) => {
-                        const linkedEnt = sh.entityId
-                          ? entitiesMap.get(sh.entityId)
-                          : undefined;
-                        return (
-                          <div
-                            key={sh.id}
-                            className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-md hover:bg-surface-2 text-[13px] text-fg"
+                      <div className="flex items-center gap-1">
+                        {serverShapes.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const ok = await confirm({
+                                title: 'Limpar todos os desenhos?',
+                                message:
+                                  'Todos os traços, formas, notas e névoas deste mapa serão apagados (você pode desfazer com Ctrl+Z).',
+                                confirmLabel: 'Limpar canvas',
+                              });
+                              if (ok) {
+                                commitShapesWithHistory([], 'limpar canvas');
+                                setSelectedShapeIds([]);
+                              }
+                            }}
+                            className="text-[11px] text-danger hover:underline px-1.5"
                           >
-                            <div className="min-w-0 flex-1 flex items-center gap-2">
-                              <span
-                                className="w-2.5 h-2.5 rounded-full shrink-0 border border-black/10"
-                                style={{
-                                  backgroundColor:
-                                    sh.type === 'fog' ? '#71717a' : sh.color,
-                                }}
-                              />
-                              <span className="truncate">{sh.label}</span>
-                            </div>
+                            Limpar tudo
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setShowLayersDrawer(false)}
+                          className="btn btn-ghost btn-icon h-6 w-6"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
 
-                            <div className="flex items-center gap-0.5 shrink-0">
-                              {linkedEnt && (
-                                <button
-                                  type="button"
-                                  onClick={() => openEntityInWiki(linkedEnt.id)}
-                                  className="text-xs font-mono text-fg-muted hover:text-accent px-1"
-                                  title="Abrir no códice"
-                                >
-                                  {linkedEnt.mentionPrefix}
-                                  {linkedEnt.handle}
-                                </button>
-                              )}
-                              {sh.type === 'fog' && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    updateMapShape(currentMap.id, sh.id, {
-                                      isRevealed: !sh.isRevealed,
-                                    })
-                                  }
-                                  className="btn btn-ghost h-7 px-2 text-xs"
-                                  title={
-                                    sh.isRevealed
-                                      ? 'Ocultar área novamente'
-                                      : 'Revelar área aos jogadores'
-                                  }
-                                >
-                                  {sh.isRevealed ? 'Ocultar' : 'Revelar'}
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() => deleteMapShape(currentMap.id, sh.id)}
-                                className="btn btn-danger-ghost btn-icon h-7 w-7"
-                                title="Remover desenho"
+                    <div className="max-h-56 overflow-y-auto p-1.5 space-y-0.5">
+                      {serverShapes.length === 0 ? (
+                        <p className="text-xs text-fg-subtle p-3 text-center">
+                          Use a barra à esquerda para desenhar livremente, criar formas, notas adesivas, carimbos ou névoa.
+                        </p>
+                      ) : (
+                        [...serverShapes].reverse().map((sh) => {
+                          const selected = selectedShapeIds.includes(sh.id);
+                          const isFog = sh.type === 'fog' || sh.type === 'fog_poly';
+                          return (
+                            <div
+                              key={sh.id}
+                              onClick={() => {
+                                setSelectedShapeIds([sh.id]);
+                                const b = getShapeBounds(sh);
+                                centerOnPercent(b.cx, b.cy, Math.max(zoom, 1.1));
+                              }}
+                              className={`flex items-center justify-between gap-2 px-2 py-1.5 rounded-md cursor-pointer text-xs ${
+                                selected
+                                  ? 'bg-accent-soft text-accent font-medium'
+                                  : 'hover:bg-surface-2 text-fg'
+                              }`}
+                            >
+                              <div className="min-w-0 flex-1 flex items-center gap-2">
+                                <span
+                                  className="w-2.5 h-2.5 rounded-full shrink-0 border border-black/20"
+                                  style={{
+                                    backgroundColor: isFog
+                                      ? '#52525b'
+                                      : sh.fillColor || sh.color,
+                                  }}
+                                />
+                                <span className="truncate">
+                                  {sh.label || `[${sh.type}]`}
+                                </span>
+                              </div>
+
+                              <div
+                                className="flex items-center gap-0.5 shrink-0"
+                                onClick={(e) => e.stopPropagation()}
                               >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const next = serverShapes.map((item) =>
+                                      item.id === sh.id
+                                        ? { ...item, locked: !item.locked }
+                                        : item
+                                    );
+                                    commitShapesWithHistory(next, 'travar/destravar');
+                                  }}
+                                  className="btn btn-ghost btn-icon h-6 w-6"
+                                  title={sh.locked ? 'Destravar' : 'Travar'}
+                                >
+                                  {sh.locked ? (
+                                    <Lock className="w-3 h-3 text-accent" />
+                                  ) : (
+                                    <Unlock className="w-3 h-3 text-fg-subtle" />
+                                  )}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const next = serverShapes.map((item) => {
+                                      if (item.id !== sh.id) return item;
+                                      if (isFog) {
+                                        return { ...item, isRevealed: !item.isRevealed };
+                                      }
+                                      const hidden = item.isSecret && !item.isRevealed;
+                                      return hidden
+                                        ? { ...item, isSecret: false, isRevealed: true }
+                                        : { ...item, isSecret: true, isRevealed: false };
+                                    });
+                                    commitShapesWithHistory(next, 'visibilidade');
+                                  }}
+                                  className="btn btn-ghost btn-icon h-6 w-6"
+                                  title="Alternar visibilidade aos jogadores"
+                                >
+                                  {(isFog ? !sh.isRevealed : sh.isSecret && !sh.isRevealed) ? (
+                                    <EyeOff className="w-3 h-3 text-warning" />
+                                  ) : (
+                                    <Eye className="w-3 h-3 text-fg-subtle" />
+                                  )}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    commitShapesWithHistory(
+                                      serverShapes.filter((item) => item.id !== sh.id),
+                                      'remover elemento'
+                                    );
+                                  }}
+                                  className="btn btn-danger-ghost btn-icon h-6 w-6"
+                                  title="Remover"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        })
+                      )}
                     </div>
                   </div>
                 )}
               </div>
             )}
 
-            {/* Zoom e grade */}
+            {/* ============================================================= */}
+            {/* BOTTOM-RIGHT: MINI-MAP NAVIGATOR + GRID/SNAP/ZOOM BAR         */}
+            {/* ============================================================= */}
             <div
-              className="absolute bottom-3 right-3 z-20 flex items-center gap-0.5 p-1 rounded-lg bg-surface border border-line shadow-card pointer-events-auto"
+              onPointerDown={(e) => e.stopPropagation()}
+              className="absolute bottom-3 right-3 z-30 flex flex-col items-end gap-2 pointer-events-auto"
             >
-              <button
-                type="button"
-                onClick={() =>
-                  setGridMode((prev) =>
-                    prev === 'off' ? 'square' : prev === 'square' ? 'hex' : 'off'
-                  )
-                }
-                className={`btn btn-ghost btn-sm px-2 ${gridMode !== 'off' ? isActiveToolClass : ''}`}
-                title="Alternar grade (desligada / quadrada / hexagonal)"
-              >
-                <Grid3X3 className="w-4 h-4" />
-                <span className="text-xs">
-                  {gridMode === 'off'
-                    ? 'Grade'
-                    : gridMode === 'square'
-                    ? 'Quadrada'
-                    : 'Hexagonal'}
-                </span>
-              </button>
+              {showMinimap && (
+                <div
+                  onClick={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const xp = ((e.clientX - rect.left) / rect.width) * 100;
+                    const yp = ((e.clientY - rect.top) / rect.height) * 100;
+                    centerOnPercent(xp, yp, zoom);
+                  }}
+                  title="Minimapa de navegação (clique para saltar)"
+                  style={{ backgroundColor: themeMeta.stageBg }}
+                  className="w-40 h-24 rounded-lg border border-line-strong shadow-elevated overflow-hidden relative cursor-pointer"
+                >
+                  {currentMap.customImageUrl && (
+                    <img
+                      src={currentMap.customImageUrl}
+                      alt=""
+                      className="absolute inset-0 w-full h-full object-contain opacity-65 pointer-events-none"
+                    />
+                  )}
+                  <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 w-full h-full">
+                    {visibleShapes.slice(0, 80).map((s) => {
+                      const b = getShapeBounds(s);
+                      return (
+                        <rect
+                          key={s.id}
+                          x={b.x}
+                          y={b.y}
+                          width={Math.max(1.5, b.width)}
+                          height={Math.max(1.5, b.height)}
+                          fill={s.fillColor || s.color}
+                          fillOpacity={0.55}
+                        />
+                      );
+                    })}
+                    {visiblePins.map((p) => (
+                      <circle
+                        key={p.id}
+                        cx={p.x}
+                        cy={p.y}
+                        r={2}
+                        fill={LAYER_CONFIG[p.layer]?.color || '#22a06b'}
+                      />
+                    ))}
+                    <rect
+                      x={minimapViewport.x}
+                      y={minimapViewport.y}
+                      width={minimapViewport.w}
+                      height={minimapViewport.h}
+                      fill="rgba(59,130,246,0.16)"
+                      stroke="#3b82f6"
+                      strokeWidth={1.6}
+                    />
+                  </svg>
+                </div>
+              )}
 
-              <span className="w-px h-5 bg-line mx-0.5" />
+              <div className="flex items-center gap-0.5 p-1 rounded-xl bg-surface/95 backdrop-blur border border-line-strong shadow-elevated">
+                {isGm && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const order: MapGridMode[] = ['dots', 'square', 'hex', 'off'];
+                        const next =
+                          order[(order.indexOf(gridMode) + 1) % order.length];
+                        void updateMap(currentMap.id, { gridMode: next });
+                      }}
+                      className={`btn btn-ghost btn-sm h-7 px-2 text-xs ${
+                        gridMode !== 'off' ? 'text-accent' : 'text-fg-muted'
+                      }`}
+                      title="Alternar grade (Pontilhada Miro / Quadrada / Hexagonal / Desligada)"
+                    >
+                      <Grid3X3 className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">
+                        {gridMode === 'dots'
+                          ? 'Pontos'
+                          : gridMode === 'square'
+                          ? 'Quad.'
+                          : gridMode === 'hex'
+                          ? 'Hex'
+                          : 'Off'}
+                      </span>
+                    </button>
 
-              <button
-                type="button"
-                onClick={() => adjustZoomAroundCenter(1 / 1.25)}
-                className="btn btn-ghost btn-icon"
-                title="Reduzir zoom"
-              >
-                <ZoomOut className="w-4 h-4" />
-              </button>
+                    <button
+                      type="button"
+                      onClick={() => setSnapToGrid((s) => !s)}
+                      className={`btn btn-ghost btn-icon h-7 w-7 ${
+                        snapToGrid ? 'bg-accent-soft text-accent' : 'text-fg-muted'
+                      }`}
+                      title={
+                        snapToGrid
+                          ? 'Alinhamento magnético à grade ativado'
+                          : 'Ativar alinhamento magnético à grade (Snap)'
+                      }
+                    >
+                      <Magnet className="w-3.5 h-3.5" />
+                    </button>
 
-              <button
-                type="button"
-                onClick={fitMapToViewport}
-                className="btn btn-ghost h-8 px-1.5 text-xs tabular-nums min-w-[52px]"
-                title="Ajustar à tela"
-              >
-                {Math.round(zoom * 100)}%
-              </button>
+                    <span className="w-px h-4 bg-line mx-0.5" />
+                  </>
+                )}
 
-              <button
-                type="button"
-                onClick={() => adjustZoomAroundCenter(1.25)}
-                className="btn btn-ghost btn-icon"
-                title="Ampliar zoom"
-              >
-                <ZoomIn className="w-4 h-4" />
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setShowMinimap((m) => !m)}
+                  className={`btn btn-ghost btn-icon h-7 w-7 ${
+                    showMinimap ? 'text-accent' : 'text-fg-muted'
+                  }`}
+                  title="Mostrar/ocultar minimapa"
+                >
+                  <MapIcon className="w-3.5 h-3.5" />
+                </button>
 
-              <button
-                type="button"
-                onClick={fitMapToViewport}
-                className="btn btn-ghost btn-icon"
-                title="Ajustar à tela"
-              >
-                <Maximize2 className="w-4 h-4" />
-              </button>
+                <button
+                  type="button"
+                  onClick={() => adjustZoomAroundCenter(1 / 1.25)}
+                  className="btn btn-ghost btn-icon h-7 w-7"
+                  title="Reduzir zoom"
+                >
+                  <ZoomOut className="w-3.5 h-3.5" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={fitMapToViewport}
+                  className="btn btn-ghost h-7 px-1.5 text-xs tabular-nums min-w-[48px]"
+                  title="Ajustar quadro à tela"
+                >
+                  {Math.round(zoom * 100)}%
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => adjustZoomAroundCenter(1.25)}
+                  className="btn btn-ghost btn-icon h-7 w-7"
+                  title="Ampliar zoom"
+                >
+                  <ZoomIn className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
           </div>
         )}
 
-        {/* Inspetor do marcador */}
+        {/* Right Side RPG Pin Inspector Drawer */}
         {activePin && currentMap && (
-          <aside className="w-full md:w-80 lg:w-96 shrink-0 max-h-[55%] md:max-h-none bg-surface border-t md:border-t-0 md:border-l border-line flex flex-col overflow-y-auto z-20">
-            {isEditingPin && editDraft && viewRole === 'gm' ? (
-              <form onSubmit={saveEditedPin} className="flex flex-col min-h-full">
-                <div className="flex items-center justify-between px-4 py-3 border-b border-line">
-                  <span className="section-title">Editar marcador</span>
-                  <button
-                    type="button"
-                    onClick={() => setIsEditingPin(false)}
-                    className="btn btn-ghost btn-icon"
-                    title="Fechar"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-
-                <div className="p-4 space-y-4 flex-1">
-                  <div>
-                    <label className="label">Nome</label>
-                    <input
-                      type="text"
-                      required
-                      value={editDraft.label}
-                      onChange={(e) =>
-                        setEditDraft({ ...editDraft, label: e.target.value })
-                      }
-                      className="input"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="label">Subtítulo</label>
-                    <input
-                      type="text"
-                      value={editDraft.subtitle}
-                      onChange={(e) =>
-                        setEditDraft({ ...editDraft, subtitle: e.target.value })
-                      }
-                      className="input"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="label">Camada</label>
-                      <select
-                        value={editDraft.layer}
-                        onChange={(e) =>
-                          setEditDraft({
-                            ...editDraft,
-                            layer: e.target.value as MapLayer,
-                          })
-                        }
-                        className="input"
-                      >
-                        <option value="locations">Locais</option>
-                        <option value="dangers">Perigos</option>
-                        <option value="quests">Missões</option>
-                        <option value="secrets">Segredos</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="label">Ícone</label>
-                      <select
-                        value={editDraft.iconType}
-                        onChange={(e) =>
-                          setEditDraft({
-                            ...editDraft,
-                            iconType: e.target.value as MapPinIcon,
-                          })
-                        }
-                        className="input"
-                      >
-                        {(Object.keys(PIN_ICON_META) as MapPinIcon[]).map((k) => (
-                          <option key={k} value={k}>
-                            {PIN_ICON_META[k].label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="label">Página principal no códice</label>
-                    <select
-                      value={editDraft.entityId}
-                      onChange={(e) =>
-                        setEditDraft({ ...editDraft, entityId: e.target.value })
-                      }
-                      className="input"
-                    >
-                      <option value="">Nenhuma</option>
-                      {entities.map((ent) => (
-                        <option key={ent.id} value={ent.id}>
-                          {ent.mentionPrefix}
-                          {ent.handle} — {ent.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="label">Submapa</label>
-                    <select
-                      value={editDraft.linkedMapId}
-                      onChange={(e) =>
-                        setEditDraft({ ...editDraft, linkedMapId: e.target.value })
-                      }
-                      className="input"
-                    >
-                      <option value="">Nenhum</option>
-                      {maps
-                        .filter((m) => m.id !== currentMap.id)
-                        .map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.name} ({m.regionType})
-                          </option>
-                        ))}
-                    </select>
-                    <p className="hint">Ex.: interior de um edifício ou mapa da cidade.</p>
-                  </div>
-
-                  <div>
-                    <label className="label">Descrição</label>
-                    <MentionTextarea
-                      value={editDraft.description}
-                      onChange={(val) =>
-                        setEditDraft({ ...editDraft, description: val })
-                      }
-                      rows={4}
-                    />
-                    <p className="hint">Aceita menções com @ e #.</p>
-                  </div>
-
-                  <div>
-                    <label className="label">Ameaças</label>
-                    <input
-                      type="text"
-                      value={editDraft.monsters}
-                      onChange={(e) =>
-                        setEditDraft({ ...editDraft, monsters: e.target.value })
-                      }
-                      className="input"
-                    />
-                    <p className="hint">Separe por vírgula.</p>
-                  </div>
-
-                  <div>
-                    <label className="label">Espólios</label>
-                    <input
-                      type="text"
-                      value={editDraft.treasures}
-                      onChange={(e) =>
-                        setEditDraft({ ...editDraft, treasures: e.target.value })
-                      }
-                      className="input"
-                    />
-                    <p className="hint">Separe por vírgula.</p>
-                  </div>
-                </div>
-
-                <div className="sticky bottom-0 flex justify-end gap-2 px-4 py-3 border-t border-line bg-surface">
-                  <button
-                    type="button"
-                    onClick={() => setIsEditingPin(false)}
-                    className="btn btn-secondary"
-                  >
-                    Cancelar
-                  </button>
-                  <button type="submit" className="btn btn-primary">
-                    <Save className="w-4 h-4" />
-                    <span>Salvar</span>
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <>
-                <div className="flex items-start justify-between gap-2 px-4 py-3 border-b border-line">
-                  <div className="space-y-1 min-w-0">
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-fg-muted">
-                      <span className="inline-flex items-center gap-1.5">
-                        <span
-                          className="w-2 h-2 rounded-full"
-                          style={{ backgroundColor: LAYER_CONFIG[activePin.layer].color }}
-                        />
-                        {LAYER_CONFIG[activePin.layer].label}
-                      </span>
-                      <span className="font-mono text-fg-subtle tabular-nums">
-                        {activePin.x.toFixed(1)}%, {activePin.y.toFixed(1)}%
-                      </span>
-                    </div>
-                    <h3 className="text-base font-semibold text-fg break-words">
-                      {activePin.label}
-                    </h3>
-                    <p className="text-[13px] text-fg-muted">{activePin.subtitle}</p>
-                  </div>
-
-                  <div className="flex items-center shrink-0">
-                    {viewRole === 'gm' && (
-                      <button
-                        type="button"
-                        onClick={startEditingActivePin}
-                        className="btn btn-ghost btn-icon"
-                        title="Editar marcador"
-                      >
-                        <Edit3 className="w-4 h-4" />
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setSelectedPinId(null)}
-                      className="btn btn-ghost btn-icon"
-                      title="Fechar"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="p-4 space-y-5 flex-1">
-                  {/* Submapa */}
-                  {linkedSubMap && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedMapId(linkedSubMap.id);
-                        setSelectedPinId(linkedSubMap.pins[0]?.id || null);
-                      }}
-                      className="btn btn-secondary w-full justify-between"
-                    >
-                      <span className="inline-flex items-center gap-2 min-w-0">
-                        <CornerDownRight className="w-4 h-4 text-fg-subtle shrink-0" />
-                        <span className="truncate">Abrir submapa: {linkedSubMap.name}</span>
-                      </span>
-                      <ExternalLink className="w-4 h-4 text-fg-subtle shrink-0" />
-                    </button>
-                  )}
-
-                  {/* Descrição */}
-                  <div className="text-sm text-fg leading-relaxed">
-                    <MentionText text={activePin.description} />
-                  </div>
-
-                  {/* Vínculos com o códice */}
-                  <section className="space-y-2.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <h4 className="text-[13px] font-semibold text-fg flex items-center gap-2">
-                        <Link2 className="w-4 h-4 text-fg-subtle" />
-                        Códice
-                      </h4>
-                      {viewRole === 'gm' && !primaryPinEntity && (
-                        <button
-                          type="button"
-                          onClick={handleCreateWikiPageFromActivePin}
-                          className="btn btn-ghost btn-sm"
-                          title="Cria uma entrada de local no códice com os dados deste marcador"
-                        >
-                          <BookPlus className="w-4 h-4" />
-                          <span>Criar página</span>
-                        </button>
-                      )}
-                    </div>
-
-                    {primaryPinEntity && (
-                      <button
-                        type="button"
-                        onClick={() => openEntityInWiki(primaryPinEntity.id)}
-                        className="w-full px-3 py-2 rounded-md border border-line bg-surface hover:bg-surface-2 hover:border-line-strong flex items-center justify-between gap-2 text-left transition-colors"
-                      >
-                        <div className="min-w-0">
-                          <div className="text-xs text-fg-subtle">
-                            Página principal ·{' '}
-                            <span className="font-mono">
-                              {primaryPinEntity.mentionPrefix}
-                              {primaryPinEntity.handle}
-                            </span>
-                          </div>
-                          <div className="text-sm font-medium text-fg truncate">
-                            {primaryPinEntity.name}
-                          </div>
-                        </div>
-                        <ExternalLink className="w-4 h-4 text-fg-subtle shrink-0" />
-                      </button>
-                    )}
-
-                    {secondaryPinEntities.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {secondaryPinEntities.map((ent) => (
-                          <div
-                            key={ent.id}
-                            className="inline-flex items-center gap-1 h-7 pl-2 pr-1 rounded-md bg-surface-2 border border-line text-[13px] text-fg"
-                          >
-                            <button
-                              type="button"
-                              onClick={() => openEntityInWiki(ent.id)}
-                              className="hover:text-accent truncate max-w-[180px]"
-                            >
-                              {ent.name}{' '}
-                              <span className="font-mono text-xs text-fg-subtle">
-                                {ent.mentionPrefix}
-                                {ent.handle}
-                              </span>
-                            </button>
-                            {viewRole === 'gm' && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleToggleLinkedEntityOnActivePin(ent.id)
-                                }
-                                className="p-0.5 rounded text-fg-subtle hover:text-danger"
-                                title="Desvincular"
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {!primaryPinEntity && secondaryPinEntities.length === 0 && (
-                      <p className="text-[13px] text-fg-subtle">Nenhuma entrada vinculada.</p>
-                    )}
-
-                    {viewRole === 'gm' && entities.length > 0 && (
-                      <div className="space-y-1.5">
-                        <input
-                          type="text"
-                          value={inspectorWikiSearch}
-                          onChange={(e) => setInspectorWikiSearch(e.target.value)}
-                          placeholder="Vincular entrada do códice"
-                          className="input h-8"
-                        />
-                        {inspectorWikiSearch.trim().length > 0 && (
-                          <div className="max-h-40 overflow-y-auto p-1 rounded-md border border-line bg-surface shadow-card">
-                            {filteredInspectorEntities.length === 0 ? (
-                              <div className="text-[13px] text-fg-subtle px-2 py-1.5">
-                                Nenhuma entrada encontrada.
-                              </div>
-                            ) : (
-                              filteredInspectorEntities.map((ent) => {
-                                const alreadyLinked = Boolean(
-                                  activePin.linkedEntityIds?.includes(ent.id)
-                                );
-                                return (
-                                  <button
-                                    key={ent.id}
-                                    type="button"
-                                    onClick={() => {
-                                      handleToggleLinkedEntityOnActivePin(ent.id);
-                                      setInspectorWikiSearch('');
-                                    }}
-                                    className="w-full px-2 py-1.5 rounded text-left text-[13px] hover:bg-surface-2 flex items-center justify-between gap-2"
-                                  >
-                                    <span className="truncate text-fg">
-                                      {ent.name}{' '}
-                                      <span className="font-mono text-xs text-fg-subtle">
-                                        {ent.mentionPrefix}
-                                        {ent.handle}
-                                      </span>
-                                    </span>
-                                    <span className="text-xs text-fg-muted shrink-0">
-                                      {alreadyLinked ? 'Remover' : 'Vincular'}
-                                    </span>
-                                  </button>
-                                );
-                              })
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </section>
-
-                  {/* Ameaças */}
-                  <section className="space-y-2">
-                    <h4 className="text-[13px] font-semibold text-fg flex items-center gap-2">
-                      <Swords className="w-4 h-4 text-fg-subtle" />
-                      Ameaças
-                    </h4>
-                    {activePin.monsters.length === 0 ? (
-                      <p className="text-[13px] text-fg-subtle">Nenhuma ameaça registrada.</p>
-                    ) : (
-                      <div className="rounded-md border border-line divide-y divide-line">
-                        {activePin.monsters.map((m, idx) => (
-                          <div
-                            key={idx}
-                            className="px-3 py-2 flex items-center justify-between gap-2 text-sm"
-                          >
-                            <div className="text-fg min-w-0">
-                              <MentionText text={m} />
-                            </div>
-                            {viewRole === 'gm' && (
-                              <button
-                                onClick={() => {
-                                  addCombatant({
-                                    name: m.replace(/^[@#]/, ''),
-                                    type: 'monster',
-                                    initiative: Math.floor(Math.random() * 20) + 3,
-                                    hp: 45,
-                                    maxHp: 45,
-                                    armorClass: 15,
-                                    conditions: [],
-                                    notes: `Originado de ${activePin.label}`,
-                                  });
-                                  showToast(`"${m}" adicionado ao combate.`);
-                                }}
-                                className="btn btn-secondary btn-sm shrink-0"
-                              >
-                                <Plus className="w-4 h-4" />
-                                <span>Combate</span>
-                              </button>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </section>
-
-                  {/* Espólios */}
-                  <section className="space-y-2">
-                    <h4 className="text-[13px] font-semibold text-fg flex items-center gap-2">
-                      <Coins className="w-4 h-4 text-fg-subtle" />
-                      Espólios
-                    </h4>
-                    {activePin.treasures.length === 0 ? (
-                      <p className="text-[13px] text-fg-subtle">Nenhum item listado.</p>
-                    ) : (
-                      <div className="rounded-md border border-line divide-y divide-line">
-                        {activePin.treasures.map((tr, idx) => (
-                          <div key={idx} className="px-3 py-2 text-sm text-fg">
-                            <MentionText text={tr} />
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </section>
-                </div>
-
-                {viewRole === 'gm' && (
-                  <div className="sticky bottom-0 px-4 py-3 border-t border-line bg-surface flex items-center gap-2">
-                    <button
-                      onClick={() => toggleRevealMapPin(currentMap.id, activePin.id)}
-                      className={`btn flex-1 ${
-                        activePin.isSecret && !activePin.isRevealed
-                          ? 'btn-primary'
-                          : 'btn-secondary'
-                      }`}
-                    >
-                      {activePin.isSecret && !activePin.isRevealed ? (
-                        <>
-                          <Eye className="w-4 h-4" />
-                          <span>Revelar aos jogadores</span>
-                        </>
-                      ) : (
-                        <>
-                          <EyeOff className="w-4 h-4" />
-                          <span>Ocultar dos jogadores</span>
-                        </>
-                      )}
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        deleteMapPin(currentMap.id, activePin.id);
-                        setSelectedPinId(null);
-                      }}
-                      className="btn btn-danger-ghost btn-icon h-9 w-9"
-                      title="Remover marcador"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-          </aside>
+          <MapPinInspector
+            activePin={activePin}
+            currentMap={currentMap}
+            maps={maps}
+            entities={entities}
+            entitiesMap={entitiesMap}
+            viewRole={viewRole}
+            onClose={() => setSelectedPinId(null)}
+            onSelectMap={(mapId, firstPinId) => {
+              setSelectedMapId(mapId);
+              setSelectedPinId(firstPinId);
+            }}
+            onOpenEntity={openEntityInWiki}
+            onUpdatePin={(mapId, pinId, updates) =>
+              void updateMapPin(mapId, pinId, updates)
+            }
+            onDeletePin={(mapId, pinId) => void deleteMapPin(mapId, pinId)}
+            onToggleRevealPin={(mapId, pinId) =>
+              void toggleRevealMapPin(mapId, pinId)
+            }
+            onCreateWikiFromPin={() => void handleCreateWikiFromActivePin()}
+            onAddMonsterToCombat={(m, pinLabel) => {
+              void addCombatant({
+                name: m.replace(/^[@#]/, ''),
+                type: 'monster',
+                initiative: Math.floor(Math.random() * 20) + 3,
+                hp: 45,
+                maxHp: 45,
+                armorClass: 15,
+                conditions: [],
+                notes: `Originado de ${pinLabel}`,
+              });
+              showToast(`"${m}" adicionado ao combate.`);
+            }}
+            onToast={showToast}
+          />
         )}
       </div>
 
-      {/* Modal: novo marcador */}
-      {pendingCoords && currentMap && (
-        <div className="modal-backdrop">
-          <form onSubmit={handleCreatePin} className="modal max-w-lg max-h-[90vh]">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-line">
-              <h3 className="section-title">
-                Novo marcador{' '}
-                <span className="font-mono text-xs text-fg-subtle font-normal tabular-nums">
-                  {pendingCoords.x.toFixed(1)}%, {pendingCoords.y.toFixed(1)}%
-                </span>
-              </h3>
-              <button
-                type="button"
-                onClick={() => setPendingCoords(null)}
-                className="btn btn-ghost btn-icon"
-                title="Fechar"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="p-5 space-y-4 overflow-y-auto">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="label">Nome</label>
-                  <input
-                    type="text"
-                    required
-                    value={pinLabel}
-                    onChange={(e) => setPinLabel(e.target.value)}
-                    placeholder="Ex.: Fortaleza Cinza"
-                    className="input"
-                  />
-                </div>
-                <div>
-                  <label className="label">Subtítulo</label>
-                  <input
-                    type="text"
-                    value={pinSubtitle}
-                    onChange={(e) => setPinSubtitle(e.target.value)}
-                    placeholder="Ex.: Posto da guarda norte"
-                    className="input"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="label">Camada</label>
-                  <select
-                    value={pinLayer}
-                    onChange={(e) => setPinLayer(e.target.value as MapLayer)}
-                    className="input"
-                  >
-                    <option value="locations">Locais e assentamentos</option>
-                    <option value="dangers">Perigos e masmorras</option>
-                    <option value="quests">Ganchos e missões</option>
-                    <option value="secrets">Segredos do mestre</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="label">Ícone</label>
-                  <select
-                    value={pinIcon}
-                    onChange={(e) => {
-                      const ic = e.target.value as MapPinIcon;
-                      setPinIcon(ic);
-                    }}
-                    className="input"
-                  >
-                    {(Object.keys(PIN_ICON_META) as MapPinIcon[]).map((k) => (
-                      <option key={k} value={k}>
-                        {PIN_ICON_META[k].label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Vínculo com o códice */}
-              <div className="card-muted p-3 space-y-3">
-                <div>
-                  <label className="label">Página principal no códice</label>
-                  <select
-                    value={pinEntityId}
-                    onChange={(e) => {
-                      setPinEntityId(e.target.value);
-                      if (e.target.value) setPinAutoCreateWiki(false);
-                    }}
-                    className="input"
-                  >
-                    <option value="">Nenhuma</option>
-                    {entities.map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {e.mentionPrefix}
-                        {e.handle} — {e.name}
-                      </option>
-                    ))}
-                  </select>
-                  {!pinEntityId && (
-                    <label className="mt-2 inline-flex items-center gap-2 text-[13px] text-fg-muted cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        className="checkbox"
-                        checked={pinAutoCreateWiki}
-                        onChange={(e) => setPinAutoCreateWiki(e.target.checked)}
-                      />
-                      <span>Criar entrada de local no códice</span>
-                    </label>
-                  )}
-                </div>
-
-                {entities.length > 0 && (
-                  <div className="space-y-1.5">
-                    <label className="label mb-0">Outras entradas presentes aqui</label>
-                    {pinLinkedEntityIds.length > 0 && (
-                      <div className="flex flex-wrap gap-1">
-                        {pinLinkedEntityIds.map((id) => {
-                          const ent = entitiesMap.get(id);
-                          if (!ent) return null;
-                          return (
-                            <span key={id} className="badge bg-surface font-mono">
-                              {ent.mentionPrefix}
-                              {ent.handle}
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setPinLinkedEntityIds((prev) =>
-                                    prev.filter((x) => x !== id)
-                                  )
-                                }
-                                className="text-fg-subtle hover:text-danger"
-                                title="Remover"
-                              >
-                                <X className="w-3 h-3" />
-                              </button>
-                            </span>
-                          );
-                        })}
-                      </div>
-                    )}
-                    <input
-                      type="text"
-                      value={modalWikiSearch}
-                      onChange={(e) => setModalWikiSearch(e.target.value)}
-                      placeholder="Buscar NPCs, facções, itens"
-                      className="input h-8"
-                    />
-                    {modalWikiSearch.trim().length > 0 && (
-                      <div className="max-h-32 overflow-y-auto p-1 rounded-md border border-line bg-surface">
-                        {filteredModalEntities.map((ent) => {
-                          const checked = pinLinkedEntityIds.includes(ent.id);
-                          return (
-                            <button
-                              key={ent.id}
-                              type="button"
-                              onClick={() =>
-                                setPinLinkedEntityIds((prev) =>
-                                  checked
-                                    ? prev.filter((x) => x !== ent.id)
-                                    : [...prev, ent.id]
-                                )
-                              }
-                              className="w-full px-2 py-1.5 rounded text-left text-[13px] hover:bg-surface-2 flex items-center justify-between gap-2"
-                            >
-                              <span className="truncate text-fg">
-                                {ent.name}{' '}
-                                <span className="font-mono text-xs text-fg-subtle">
-                                  {ent.mentionPrefix}
-                                  {ent.handle}
-                                </span>
-                              </span>
-                              <span
-                                className={`text-xs shrink-0 inline-flex items-center gap-1 ${
-                                  checked ? 'text-accent' : 'text-fg-muted'
-                                }`}
-                              >
-                                {checked && <Check className="w-3.5 h-3.5" />}
-                                {checked ? 'Vinculado' : 'Vincular'}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {maps.length > 1 && (
-                <div>
-                  <label className="label">Submapa</label>
-                  <select
-                    value={pinLinkedMapId}
-                    onChange={(e) => setPinLinkedMapId(e.target.value)}
-                    className="input"
-                  >
-                    <option value="">Nenhum</option>
-                    {maps
-                      .filter((m) => m.id !== currentMap.id)
-                      .map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.name}
-                        </option>
-                      ))}
-                  </select>
-                  <p className="hint">Ex.: da cidade para o mapa tático.</p>
-                </div>
-              )}
-
-              <div>
-                <label className="label">Descrição</label>
-                <MentionTextarea
-                  value={pinDesc}
-                  onChange={setPinDesc}
-                  rows={3}
-                  placeholder="Área, atmosfera e segredos locais"
-                />
-                <p className="hint">Digite @ ou # para mencionar entradas do códice.</p>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="label">Ameaças</label>
-                  <input
-                    type="text"
-                    value={pinMonsters}
-                    onChange={(e) => setPinMonsters(e.target.value)}
-                    placeholder="Ex.: 3 Carniçais, @Chefe"
-                    className="input"
-                  />
-                </div>
-                <div>
-                  <label className="label">Espólios</label>
-                  <input
-                    type="text"
-                    value={pinTreasures}
-                    onChange={(e) => setPinTreasures(e.target.value)}
-                    placeholder="Ex.: 120 PO, #ChaveAntiga"
-                    className="input"
-                  />
-                </div>
-              </div>
-
-              <label className="flex items-center gap-2 text-sm text-fg-muted cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  className="checkbox"
-                  checked={pinSecret}
-                  onChange={(e) => setPinSecret(e.target.checked)}
-                />
-                <span>Ocultar dos jogadores</span>
-              </label>
-            </div>
-
-            <div className="flex justify-end gap-2 px-5 py-4 border-t border-line bg-surface-2">
-              <button
-                type="button"
-                onClick={() => setPendingCoords(null)}
-                className="btn btn-secondary"
-              >
-                Cancelar
-              </button>
-              <button type="submit" className="btn btn-primary">
-                Salvar marcador
-              </button>
-            </div>
-          </form>
-        </div>
+      {/* Modals */}
+      {currentMap && (
+        <CreatePinModal
+          coords={pendingPinCoords}
+          defaultIcon={defaultPinIcon}
+          defaultLayer={defaultPinLayer}
+          currentMap={currentMap}
+          maps={maps}
+          entities={entities}
+          entitiesMap={entitiesMap}
+          onClose={() => setPendingPinCoords(null)}
+          onSubmit={handleCreatePinSubmit}
+        />
       )}
 
-      {/* Modal: novo mapa */}
-      {showUploadModal && (
-        <div className="modal-backdrop">
-          <form onSubmit={handleCreateMap} className="modal max-w-md max-h-[90vh]">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-line">
-              <h3 className="section-title">Novo mapa</h3>
-              <button
-                type="button"
-                onClick={() => setShowUploadModal(false)}
-                className="btn btn-ghost btn-icon"
-                title="Fechar"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="p-5 space-y-4 overflow-y-auto">
-              <div>
-                <label className="label">Nome</label>
-                <input
-                  type="text"
-                  required
-                  value={newMapName}
-                  onChange={(e) => setNewMapName(e.target.value)}
-                  placeholder="Ex.: Cripta — Nível 1"
-                  className="input"
-                />
-              </div>
-              <div>
-                <label className="label">Descrição</label>
-                <input
-                  type="text"
-                  value={newMapSubtitle}
-                  onChange={(e) => setNewMapSubtitle(e.target.value)}
-                  placeholder="Escala ou região"
-                  className="input"
-                />
-              </div>
-
-              <div>
-                <label className="label">Escala</label>
-                <select
-                  value={newMapRegionType}
-                  onChange={(e) =>
-                    setNewMapRegionType(
-                      e.target.value as 'regional' | 'tactical' | 'city'
-                    )
-                  }
-                  className="input"
-                >
-                  <option value="regional">Regional / mundo (km)</option>
-                  <option value="city">Cidade / assentamento (metros)</option>
-                  <option value="tactical">Masmorra / tático (quadrados de 1,5 m)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="label">Imagem</label>
-                <div className="rounded-lg border border-dashed border-line-strong bg-surface-2 p-4 space-y-3">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={handleFileUpload}
-                    className="hidden"
-                  />
-                  <div className="flex flex-wrap items-center gap-3">
-                    <button
-                      type="button"
-                      disabled={isUploadingMap}
-                      onClick={() => fileInputRef.current?.click()}
-                      className="btn btn-secondary"
-                    >
-                      {isUploadingMap ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          <span>Enviando…</span>
-                        </>
-                      ) : (
-                        <>
-                          <Upload className="w-4 h-4" />
-                          <span>Selecionar arquivo</span>
-                        </>
-                      )}
-                    </button>
-                    {uploadedStorageId && (
-                      <span className="badge badge-success">
-                        <Cloud className="w-3 h-3" />
-                        Enviado
-                      </span>
-                    )}
-                  </div>
-                  <div>
-                    <input
-                      type="text"
-                      value={newMapUrl}
-                      onChange={(e) => {
-                        setNewMapUrl(e.target.value);
-                        setUploadedStorageId(undefined);
-                      }}
-                      placeholder="https://exemplo.com/mapa.jpg"
-                      className="input"
-                    />
-                    <p className="hint">
-                      Ou informe uma URL. Deixe em branco para usar uma grade sem imagem.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2 px-5 py-4 border-t border-line bg-surface-2">
-              <button
-                type="button"
-                onClick={() => setShowUploadModal(false)}
-                className="btn btn-secondary"
-              >
-                Cancelar
-              </button>
-              <button type="submit" disabled={isUploadingMap} className="btn btn-primary">
-                Criar mapa
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+      <MapSettingsModal
+        isOpen={settingsModal !== null}
+        mode={settingsModal || 'create'}
+        initialMap={settingsModal === 'edit' ? currentMap : undefined}
+        onClose={() => setSettingsModal(null)}
+        onSubmit={handleSettingsSubmit}
+        onToast={showToast}
+      />
     </div>
   );
 };

@@ -20,14 +20,41 @@ const shapeValidator = v.object({
     v.literal("circle"),
     v.literal("rect"),
     v.literal("text"),
-    v.literal("fog")
+    v.literal("fog"),
+    v.literal("fog_poly"),
+    v.literal("freehand"),
+    v.literal("highlighter"),
+    v.literal("arrow"),
+    v.literal("sticky"),
+    v.literal("frame"),
+    v.literal("stamp")
   ),
   label: v.string(),
   color: v.string(),
+  fillColor: v.optional(v.string()),
   strokeWidth: v.number(),
+  strokeStyle: v.optional(
+    v.union(v.literal("solid"), v.literal("dashed"), v.literal("dotted"))
+  ),
   dashed: v.optional(v.boolean()),
   opacity: v.optional(v.number()),
   fontSize: v.optional(v.number()),
+  fontFamily: v.optional(
+    v.union(v.literal("sans"), v.literal("serif"), v.literal("mono"))
+  ),
+  fontWeight: v.optional(v.union(v.literal("normal"), v.literal("bold"))),
+  fontStyle: v.optional(v.union(v.literal("normal"), v.literal("italic"))),
+  textAlign: v.optional(
+    v.union(v.literal("left"), v.literal("center"), v.literal("right"))
+  ),
+  rotation: v.optional(v.number()),
+  arrowStart: v.optional(v.boolean()),
+  arrowEnd: v.optional(v.boolean()),
+  curved: v.optional(v.boolean()),
+  stampType: v.optional(v.string()),
+  locked: v.optional(v.boolean()),
+  zIndex: v.optional(v.number()),
+  closed: v.optional(v.boolean()),
   entityId: v.optional(v.string()),
   linkedEntityIds: v.optional(v.array(v.string())),
   points: v.array(v.object({ x: v.number(), y: v.number() })),
@@ -157,6 +184,14 @@ export const create = mutation({
     customImageUrl: v.optional(v.string()),
     storageId: v.optional(v.id("_storage")),
     isPublicToPlayers: v.optional(v.boolean()),
+    canvasTheme: v.optional(v.string()),
+    gridMode: v.optional(v.string()),
+    gridSize: v.optional(v.number()),
+    gridOpacity: v.optional(v.number()),
+    imageOpacity: v.optional(v.number()),
+    stageWidth: v.optional(v.number()),
+    stageHeight: v.optional(v.number()),
+    scalePer100Pct: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const { canonicalId, user } = await requireDm(ctx, args.sessionToken, args.campaignId);
@@ -167,6 +202,47 @@ export const create = mutation({
       campaignId: canonicalId,
       shapes: [],
     });
+  },
+});
+
+export const update = mutation({
+  args: {
+    sessionToken: v.string(),
+    mapId: v.string(),
+    name: v.optional(v.string()),
+    subtitle: v.optional(v.string()),
+    regionType: v.optional(v.union(v.literal("regional"), v.literal("tactical"), v.literal("city"))),
+    presetSvgType: v.optional(v.string()),
+    customImageUrl: v.optional(v.string()),
+    storageId: v.optional(v.id("_storage")),
+    clearImage: v.optional(v.boolean()),
+    isPublicToPlayers: v.optional(v.boolean()),
+    canvasTheme: v.optional(v.string()),
+    gridMode: v.optional(v.string()),
+    gridSize: v.optional(v.number()),
+    gridOpacity: v.optional(v.number()),
+    imageOpacity: v.optional(v.number()),
+    stageWidth: v.optional(v.number()),
+    stageHeight: v.optional(v.number()),
+    scalePer100Pct: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const { map, access } = await loadMapForDm(ctx, args.sessionToken, args.mapId);
+    if (args.storageId) await assertUploadOwnedBy(ctx, args.storageId, access.user.id);
+    const { sessionToken: _t, mapId: _m, clearImage, ...updates } = args;
+    const clean: Record<string, unknown> = Object.fromEntries(
+      Object.entries(updates).filter(([, val]) => val !== undefined)
+    );
+    if (clearImage) {
+      if (map.storageId) {
+        await ctx.storage.delete(map.storageId).catch(() => {});
+      }
+      clean.customImageUrl = undefined;
+      clean.storageId = undefined;
+    } else if (args.storageId && map.storageId && args.storageId !== map.storageId) {
+      await ctx.storage.delete(map.storageId).catch(() => {});
+    }
+    await ctx.db.patch(map._id, clean);
   },
 });
 

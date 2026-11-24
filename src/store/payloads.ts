@@ -87,7 +87,23 @@ export const entityUpdateBody = (u: Partial<Entity>) => ({
 });
 
 export const mapCreateBody = (
-  m: Pick<CampaignMap, 'name' | 'subtitle' | 'regionType' | 'presetSvgType' | 'customImageUrl'>,
+  m: Pick<
+    CampaignMap,
+    | 'name'
+    | 'subtitle'
+    | 'regionType'
+    | 'presetSvgType'
+    | 'customImageUrl'
+    | 'isPublicToPlayers'
+    | 'canvasTheme'
+    | 'gridMode'
+    | 'gridSize'
+    | 'gridOpacity'
+    | 'imageOpacity'
+    | 'stageWidth'
+    | 'stageHeight'
+    | 'scalePer100Pct'
+  >,
   storageId?: Id<'_storage'>
 ) => ({
   name: m.name,
@@ -95,6 +111,15 @@ export const mapCreateBody = (
   regionType: m.regionType,
   presetSvgType: m.presetSvgType,
   customImageUrl: m.customImageUrl,
+  isPublicToPlayers: m.isPublicToPlayers,
+  canvasTheme: m.canvasTheme,
+  gridMode: m.gridMode,
+  gridSize: m.gridSize,
+  gridOpacity: m.gridOpacity,
+  imageOpacity: m.imageOpacity,
+  stageWidth: m.stageWidth,
+  stageHeight: m.stageHeight,
+  scalePer100Pct: m.scalePer100Pct,
   storageId,
 });
 
