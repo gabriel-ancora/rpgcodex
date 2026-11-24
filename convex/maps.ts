@@ -1,10 +1,14 @@
-import { query, mutation } from "./_generated/server";
+import { query, mutation, MutationCtx } from "./_generated/server";
+import { Doc } from "./_generated/dataModel";
 import { v } from "convex/values";
 import {
-  matchesCampaign,
-  normalizeCampaignId,
-  resolveEffectiveRole,
-  assertDmPermission,
+  requireDm,
+  requireDmOfRecord,
+  memberOrNull,
+  effectiveRole,
+  collectByCampaign,
+  getOrThrow,
+  assertUploadOwnedBy,
 } from "./lib/tenancy";
 
 const shapeValidator = v.object({
@@ -59,24 +63,38 @@ const pinLayerValidator = v.union(
   v.literal("quests")
 );
 
+/** Mapas sem flag explícita (legado, sem controle na interface) continuam visíveis. */
+function isMapVisibleToPlayers(m: Doc<"campaignMaps">) {
+  return m.isPublicToPlayers !== false;
+}
+
 export const list = query({
   args: {
-    campaignId: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
     viewerRole: v.optional(v.union(v.literal("gm"), v.literal("player"))),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const role = await resolveEffectiveRole(ctx, {
-      sessionToken: args.sessionToken,
-      viewerRole: args.viewerRole,
-      campaignId: args.campaignId,
-    });
+    const access = await memberOrNull(ctx, args.sessionToken, args.campaignId);
+    if (!access) return [];
+    const role = effectiveRole(access, args.viewerRole);
+    const isPlayer = role === "player";
 
-    const allMaps = await ctx.db.query("campaignMaps").collect();
-    const maps = allMaps.filter((m) =>
-      matchesCampaign(m.campaignId, args.campaignId)
-    );
-    const pins = await ctx.db.query("mapPins").collect();
+    const allMaps = await collectByCampaign(ctx, "campaignMaps", access.keys);
+    const maps = isPlayer ? allMaps.filter(isMapVisibleToPlayers) : allMaps;
+    const visibleMapIds = new Set(maps.map((m) => m._id as string));
+
+    let publicEntityIds: Set<string> | null = null;
+    if (isPlayer) {
+      const entities = await collectByCampaign(ctx, "entities", access.keys);
+      publicEntityIds = new Set(
+        entities.filter((e) => e.isPublicToPlayers === true).map((e) => e._id as string)
+      );
+    }
+    const scrubEntityRef = (id?: string) =>
+      id && (!publicEntityIds || publicEntityIds.has(id)) ? id : undefined;
+    const scrubEntityRefs = (ids?: string[]) =>
+      ids && publicEntityIds ? ids.filter((id) => publicEntityIds!.has(id)) : ids;
 
     const results = [];
     for (const m of maps) {
@@ -86,26 +104,40 @@ export const list = query({
         if (storageUrl) resolvedUrl = storageUrl;
       }
 
-      const mapShapes = (m.shapes || []).filter((s) => {
-        if (role === "player" && s.isSecret && !s.isRevealed) return false;
-        return true;
-      });
+      const shapes = (m.shapes || [])
+        .filter((s) => !isPlayer || !s.isSecret || s.isRevealed === true)
+        .map((s) =>
+          isPlayer
+            ? {
+                ...s,
+                entityId: scrubEntityRef(s.entityId),
+                linkedEntityIds: scrubEntityRefs(s.linkedEntityIds),
+              }
+            : s
+        );
+
+      const pins = await ctx.db
+        .query("mapPins")
+        .withIndex("by_map", (q) => q.eq("mapId", m._id))
+        .collect();
 
       results.push({
         ...m,
         id: m._id,
         customImageUrl: resolvedUrl,
-        shapes: mapShapes,
+        shapes,
         pins: pins
-          .filter((p) => {
-            if (p.mapId !== m._id) return false;
-            if (role === "player" && p.isSecret && !p.isRevealed) return false;
-            return true;
-          })
+          .filter((p) => !isPlayer || !p.isSecret || p.isRevealed)
           .map((p) => ({
             ...p,
             id: p._id,
-            secretNote: role === "player" ? undefined : p.secretNote,
+            secretNote: isPlayer ? undefined : p.secretNote,
+            entityId: isPlayer ? scrubEntityRef(p.entityId) : p.entityId,
+            linkedEntityIds: isPlayer ? scrubEntityRefs(p.linkedEntityIds) : p.linkedEntityIds,
+            linkedMapId:
+              isPlayer && p.linkedMapId && !visibleMapIds.has(p.linkedMapId)
+                ? undefined
+                : p.linkedMapId,
           })),
       });
     }
@@ -116,75 +148,85 @@ export const list = query({
 
 export const create = mutation({
   args: {
-    campaignId: v.optional(v.string()),
-    sessionToken: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
     name: v.string(),
     subtitle: v.string(),
-    regionType: v.union(
-      v.literal("regional"),
-      v.literal("tactical"),
-      v.literal("city")
-    ),
+    regionType: v.union(v.literal("regional"), v.literal("tactical"), v.literal("city")),
     presetSvgType: v.optional(v.string()),
     customImageUrl: v.optional(v.string()),
     storageId: v.optional(v.id("_storage")),
+    isPublicToPlayers: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    await assertDmPermission(ctx, args.sessionToken, args.campaignId);
-    const { sessionToken: _, ...data } = args;
+    const { canonicalId, user } = await requireDm(ctx, args.sessionToken, args.campaignId);
+    if (args.storageId) await assertUploadOwnedBy(ctx, args.storageId, user.id);
+    const { sessionToken: _t, campaignId: _c, ...data } = args;
     return await ctx.db.insert("campaignMaps", {
       ...data,
-      campaignId: normalizeCampaignId(args.campaignId),
+      campaignId: canonicalId,
       shapes: [],
     });
   },
 });
 
+async function loadMapForDm(ctx: MutationCtx, sessionToken: string, mapId: string) {
+  const map = await getOrThrow(ctx, "campaignMaps", mapId);
+  const access = await requireDmOfRecord(ctx, sessionToken, map.campaignId);
+  return { map, access };
+}
+
 export const updateShapes = mutation({
   args: {
+    sessionToken: v.string(),
     mapId: v.string(),
     shapes: v.array(shapeValidator),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const mapId = ctx.db.normalizeId("campaignMaps", args.mapId);
-    if (!mapId) return;
-    const map = await ctx.db.get(mapId);
-    await assertDmPermission(ctx, args.sessionToken, map?.campaignId);
-
-    await ctx.db.patch(mapId, { shapes: args.shapes });
+    const { map } = await loadMapForDm(ctx, args.sessionToken, args.mapId);
+    await ctx.db.patch(map._id, { shapes: args.shapes });
   },
 });
 
 export const remove = mutation({
   args: {
+    sessionToken: v.string(),
     id: v.string(),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const mapId = ctx.db.normalizeId("campaignMaps", args.id);
-    if (!mapId) return;
-    const map = await ctx.db.get(mapId);
-    await assertDmPermission(ctx, args.sessionToken, map?.campaignId);
+    const { map, access } = await loadMapForDm(ctx, args.sessionToken, args.id);
+    const mapId = map._id as string;
 
-    if (map?.storageId) {
-      await ctx.storage.delete(map.storageId);
+    if (map.storageId) {
+      await ctx.storage.delete(map.storageId).catch(() => {});
     }
 
     const pins = await ctx.db
       .query("mapPins")
       .withIndex("by_map", (q) => q.eq("mapId", mapId))
       .collect();
-    for (const p of pins) {
-      await ctx.db.delete(p._id);
+    for (const p of pins) await ctx.db.delete(p._id);
+
+    // Limpa referências de outros mapas que apontavam para este.
+    const otherMaps = await collectByCampaign(ctx, "campaignMaps", access.keys);
+    for (const other of otherMaps) {
+      if (other._id === map._id) continue;
+      const otherPins = await ctx.db
+        .query("mapPins")
+        .withIndex("by_map", (q) => q.eq("mapId", other._id))
+        .collect();
+      for (const p of otherPins) {
+        if (p.linkedMapId === mapId) await ctx.db.patch(p._id, { linkedMapId: undefined });
+      }
     }
-    await ctx.db.delete(mapId);
+
+    await ctx.db.delete(map._id);
   },
 });
 
 export const addPin = mutation({
   args: {
-    sessionToken: v.optional(v.string()),
+    sessionToken: v.string(),
     mapId: v.string(),
     x: v.number(),
     y: v.number(),
@@ -199,21 +241,31 @@ export const addPin = mutation({
     monsters: v.array(v.string()),
     treasures: v.array(v.string()),
     secretNote: v.optional(v.string()),
-    isSecret: v.boolean(),
-    isRevealed: v.boolean(),
+    // Padrão: oculto dos jogadores até ser revelado.
+    isSecret: v.optional(v.boolean()),
+    isRevealed: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const mapDocId = ctx.db.normalizeId("campaignMaps", args.mapId);
-    const mapDoc = mapDocId ? await ctx.db.get(mapDocId) : null;
-    await assertDmPermission(ctx, args.sessionToken, mapDoc?.campaignId);
-    const { sessionToken: _, ...data } = args;
-    return await ctx.db.insert("mapPins", data);
+    const { map } = await loadMapForDm(ctx, args.sessionToken, args.mapId);
+    const { sessionToken: _t, mapId: _m, isSecret, isRevealed, ...data } = args;
+    return await ctx.db.insert("mapPins", {
+      ...data,
+      mapId: map._id,
+      isSecret: isSecret ?? true,
+      isRevealed: isRevealed ?? false,
+    });
   },
 });
 
+async function loadPinForDm(ctx: MutationCtx, sessionToken: string, pinId: string) {
+  const pin = await getOrThrow(ctx, "mapPins", pinId);
+  await loadMapForDm(ctx, sessionToken, pin.mapId);
+  return pin;
+}
+
 export const updatePin = mutation({
   args: {
-    sessionToken: v.optional(v.string()),
+    sessionToken: v.string(),
     pinId: v.string(),
     x: v.optional(v.number()),
     y: v.optional(v.number()),
@@ -232,52 +284,34 @@ export const updatePin = mutation({
     isRevealed: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const pinId = ctx.db.normalizeId("mapPins", args.pinId);
-    if (!pinId) return;
-    const pin = await ctx.db.get(pinId);
-    const mapDocId = pin ? ctx.db.normalizeId("campaignMaps", pin.mapId) : null;
-    const mapDoc = mapDocId ? await ctx.db.get(mapDocId) : null;
-    await assertDmPermission(ctx, args.sessionToken, mapDoc?.campaignId);
-    const { pinId: _, sessionToken: __, ...updates } = args;
-    const cleanUpdates = Object.fromEntries(
+    const pin = await loadPinForDm(ctx, args.sessionToken, args.pinId);
+    const { pinId: _p, sessionToken: _t, ...updates } = args;
+    const clean = Object.fromEntries(
       Object.entries(updates).filter(([, val]) => val !== undefined)
     );
-    await ctx.db.patch(pinId, cleanUpdates);
+    await ctx.db.patch(pin._id, clean);
   },
 });
 
 export const removePin = mutation({
   args: {
+    sessionToken: v.string(),
     pinId: v.string(),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const pinId = ctx.db.normalizeId("mapPins", args.pinId);
-    if (!pinId) return;
-    const pin = await ctx.db.get(pinId);
-    const mapDocId = pin ? ctx.db.normalizeId("campaignMaps", pin.mapId) : null;
-    const mapDoc = mapDocId ? await ctx.db.get(mapDocId) : null;
-    await assertDmPermission(ctx, args.sessionToken, mapDoc?.campaignId);
-    await ctx.db.delete(pinId);
+    const pin = await loadPinForDm(ctx, args.sessionToken, args.pinId);
+    await ctx.db.delete(pin._id);
   },
 });
 
+/** Alterna apenas `isRevealed`; `isSecret` nunca é alterado aqui. */
 export const toggleRevealPin = mutation({
   args: {
+    sessionToken: v.string(),
     pinId: v.string(),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const pinId = ctx.db.normalizeId("mapPins", args.pinId);
-    if (!pinId) return;
-    const pin = await ctx.db.get(pinId);
-    if (!pin) return;
-    const mapDocId = ctx.db.normalizeId("campaignMaps", pin.mapId);
-    const mapDoc = mapDocId ? await ctx.db.get(mapDocId) : null;
-    await assertDmPermission(ctx, args.sessionToken, mapDoc?.campaignId);
-    await ctx.db.patch(pinId, {
-      isRevealed: !pin.isRevealed,
-      isSecret: pin.isRevealed,
-    });
+    const pin = await loadPinForDm(ctx, args.sessionToken, args.pinId);
+    await ctx.db.patch(pin._id, { isRevealed: !pin.isRevealed });
   },
 });

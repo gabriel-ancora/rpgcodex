@@ -42,64 +42,58 @@ export const SecretsControlView: React.FC = () => {
   });
 
   return (
-    <div className="space-y-5 h-[calc(100vh-7.5rem)] overflow-y-auto pr-1">
-      {/* Header Bar */}
-      <div className="p-4 rounded-xl surface-panel flex flex-wrap items-center justify-between gap-4">
-        <div className="space-y-0.5">
-          <h2 className="text-base font-semibold text-zinc-100 tracking-tight">
-            {viewRole === 'gm'
-              ? 'Segredos & névoa de conhecimento'
-              : 'Conhecimento revelado em mesa'}
+    <div className="space-y-4 h-[calc(100vh-7.5rem)] overflow-y-auto pr-1">
+      {/* Cabeçalho */}
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="section-title">
+            {viewRole === 'gm' ? 'Visibilidade de segredos' : 'Conhecimento revelado'}
           </h2>
-          <p className="text-xs text-zinc-500 tabular-nums">
+          <p className="text-[13px] text-fg-muted tabular-nums">
             {viewRole === 'gm'
               ? `${revealedSecretsCount} de ${totalSecrets} segredos revelados aos jogadores.`
-              : `Exibindo registros públicos e ${revealedSecretsCount} descobertas confirmadas.`}
+              : `Registros públicos e ${revealedSecretsCount} descobertas confirmadas.`}
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+          <div className="relative flex-1 sm:flex-none">
+            <Search className="w-4 h-4 text-fg-subtle absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="text"
               value={filterText}
               onChange={(e) => setFilterText(e.target.value)}
-              placeholder="Filtrar entrada ou segredo..."
-              className="input-clean pl-8 pr-3 py-1.5 rounded-lg text-xs w-56"
+              placeholder="Filtrar entradas ou segredos"
+              className="input pl-8 sm:w-64"
             />
           </div>
 
           <button
             onClick={() => setViewRole(viewRole === 'gm' ? 'player' : 'gm')}
-            className={`px-3 py-1.5 rounded-lg text-xs inline-flex items-center gap-1.5 ${
-              viewRole === 'gm' ? 'btn-subtle' : 'btn-solid'
-            }`}
+            className={`btn ${viewRole === 'gm' ? 'btn-secondary' : 'btn-primary'}`}
           >
             {viewRole === 'gm' ? (
               <>
-                <Eye className="w-3.5 h-3.5" />
-                <span>Prévia do jogador</span>
+                <Eye className="w-4 h-4" />
+                <span>Ver como jogador</span>
               </>
             ) : (
               <>
-                <EyeOff className="w-3.5 h-3.5" />
-                <span>Voltar ao mestre</span>
+                <EyeOff className="w-4 h-4" />
+                <span>Voltar à visão do mestre</span>
               </>
             )}
           </button>
         </div>
       </div>
 
-      {/* Matrix */}
+      {/* Entradas */}
       {filteredEntities.length === 0 ? (
-        <div className="py-14 px-6 rounded-xl surface-panel text-center space-y-2">
-          <Lock className="w-6 h-6 text-zinc-600 mx-auto" />
-          <h3 className="text-sm font-medium text-zinc-300">
-            Nenhuma entrada correspondente
-          </h3>
-          <p className="text-xs text-zinc-500 max-w-sm mx-auto">
-            Adicione notas confidenciais às entradas do códice para controlar o que os jogadores enxergam.
+        <div className="card py-12 px-6 text-center">
+          <Lock className="w-5 h-5 text-fg-subtle mx-auto mb-3" />
+          <h3 className="text-sm font-medium text-fg">Nenhuma entrada encontrada</h3>
+          <p className="text-[13px] text-fg-muted max-w-sm mx-auto mt-1">
+            Adicione notas confidenciais às entradas do códice para controlar o que os jogadores veem.
           </p>
         </div>
       ) : (
@@ -111,104 +105,79 @@ export const SecretsControlView: React.FC = () => {
                 : ent.secrets.filter((s) => s.isRevealed);
 
             return (
-              <div
-                key={ent.id}
-                className="p-5 rounded-xl surface-panel space-y-4 flex flex-col justify-between"
-              >
-                <div className="space-y-3.5">
-                  <div className="flex items-start justify-between gap-2 border-b border-white/[0.06] pb-3">
-                    <div>
-                      <span className="text-[11px] font-mono text-zinc-500">
+              <div key={ent.id} className="card flex flex-col">
+                <div className="flex items-start justify-between gap-2 px-4 py-3 border-b border-line">
+                  <div className="min-w-0">
+                    <h3 className="text-[15px] font-semibold text-fg truncate">{ent.name}</h3>
+                    <p className="text-[13px] text-fg-muted">
+                      <span className="font-mono text-xs text-fg-subtle mr-1.5">
                         {ent.mentionPrefix}
                         {ent.handle}
                       </span>
-                      <h3 className="text-lg font-serif font-medium text-zinc-100">
-                        {ent.name}
-                      </h3>
-                      <p className="text-xs text-zinc-400">{ent.subtitle}</p>
-                    </div>
-
-                    <button
-                      onClick={() => {
-                        setSelectedEntityId(ent.id);
-                        setActiveModule('worldbuilding');
-                        setWorldSubTab('wiki');
-                      }}
-                      className="btn-subtle px-2.5 py-1 rounded-md text-xs inline-flex items-center gap-1"
-                    >
-                      <span>Códice</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </button>
+                      {ent.subtitle}
+                    </p>
                   </div>
 
-                  {/* Public Block */}
-                  <div className="p-3.5 rounded-xl bg-[#0e0e11] border border-white/[0.06] space-y-1.5">
-                    <div className="flex items-center justify-between text-[11px] text-zinc-500">
-                      <span className="flex items-center gap-1.5 font-medium text-zinc-400">
-                        <Eye className="w-3 h-3" />
-                        <span>Conhecimento público</span>
-                      </span>
-                      <span>Visível</span>
+                  <button
+                    onClick={() => {
+                      setSelectedEntityId(ent.id);
+                      setActiveModule('worldbuilding');
+                      setWorldSubTab('wiki');
+                    }}
+                    className="btn btn-ghost btn-sm shrink-0"
+                  >
+                    <span>Abrir no códice</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="p-4 space-y-4">
+                  {/* Público */}
+                  <div>
+                    <div className="flex items-center gap-1.5 text-xs font-medium text-fg-muted mb-1">
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>Público</span>
                     </div>
-                    <div className="text-xs text-zinc-300 leading-relaxed">
+                    <div className="text-sm text-fg leading-relaxed">
                       <MentionText text={ent.publicContent} />
                     </div>
                   </div>
 
-                  {/* Secret Blocks */}
+                  {/* Segredos */}
                   {visibleSecrets.length > 0 ? (
-                    <div className="space-y-2">
+                    <ul className="rounded-md border border-line divide-y divide-line">
                       {visibleSecrets.map((sec) => (
-                        <div
-                          key={sec.id}
-                          className={`p-3.5 rounded-xl border space-y-2 transition-colors ${
-                            sec.isRevealed
-                              ? 'bg-amber-500/[0.04] border-amber-500/25'
-                              : 'bg-[#0e0e11] border-white/[0.07]'
-                          }`}
-                        >
+                        <li key={sec.id} className="px-3 py-2.5 space-y-1.5">
                           <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-2 min-w-0">
                               {sec.isRevealed ? (
-                                <Unlock className="w-3.5 h-3.5 text-amber-400" />
+                                <Unlock className="w-4 h-4 text-success shrink-0" />
                               ) : (
-                                <Lock className="w-3.5 h-3.5 text-rose-400/80" />
+                                <Lock className="w-4 h-4 text-fg-subtle shrink-0" />
                               )}
-                              <span className="text-xs font-medium text-zinc-100">
-                                {sec.title}
-                              </span>
-                              <span
-                                className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
-                                  sec.isRevealed
-                                    ? 'bg-amber-500/10 text-amber-300 border-amber-500/25'
-                                    : 'bg-white/[0.04] text-zinc-400 border-white/[0.08]'
-                                }`}
-                              >
-                                {sec.isRevealed ? 'Revelado' : 'Confidencial'}
+                              <span className="text-sm font-medium text-fg">{sec.title}</span>
+                              <span className={`badge ${sec.isRevealed ? 'badge-success' : ''}`}>
+                                {sec.isRevealed ? 'Revelado' : 'Oculto'}
                               </span>
                             </div>
 
                             {viewRole === 'gm' && (
                               <button
                                 onClick={() =>
-                                  revealEntitySecret(
-                                    ent.id,
-                                    sec.id,
-                                    !sec.isRevealed
-                                  )
+                                  revealEntitySecret(ent.id, sec.id, !sec.isRevealed)
                                 }
-                                className={`px-2.5 py-1 rounded-md text-xs inline-flex items-center gap-1 ${
-                                  sec.isRevealed ? 'btn-subtle' : 'btn-solid'
+                                className={`btn btn-sm ${
+                                  sec.isRevealed ? 'btn-ghost' : 'btn-secondary'
                                 }`}
                               >
                                 {sec.isRevealed ? (
                                   <>
-                                    <EyeOff className="w-3 h-3" />
+                                    <EyeOff className="w-4 h-4" />
                                     <span>Ocultar</span>
                                   </>
                                 ) : (
                                   <>
-                                    <Unlock className="w-3 h-3" />
+                                    <Eye className="w-4 h-4" />
                                     <span>Revelar</span>
                                   </>
                                 )}
@@ -216,17 +185,17 @@ export const SecretsControlView: React.FC = () => {
                             )}
                           </div>
 
-                          <div className="text-xs text-zinc-300 leading-relaxed">
+                          <div className="text-[13px] text-fg-muted leading-relaxed pl-6">
                             <MentionText text={sec.content} />
                           </div>
-                        </div>
+                        </li>
                       ))}
-                    </div>
+                    </ul>
                   ) : (
                     viewRole === 'player' && (
-                      <div className="text-[11px] text-zinc-500 px-1">
-                        Nenhum segredo adicional revelado sobre esta entrada.
-                      </div>
+                      <p className="text-[13px] text-fg-subtle">
+                        Nenhum segredo revelado sobre esta entrada.
+                      </p>
                     )
                   )}
                 </div>

@@ -24,7 +24,7 @@ export const MentionText: React.FC<MentionTextProps> = ({ text, className = '' }
         const parts = para.split(MENTION_REGEX);
 
         return (
-          <p key={pIdx} className="text-zinc-300 leading-relaxed">
+          <p key={pIdx} className="leading-relaxed">
             {parts.map((part, idx) => {
               if (part.startsWith('@') || part.startsWith('#')) {
                 const isAt = part.startsWith('@');
@@ -46,13 +46,13 @@ export const MentionText: React.FC<MentionTextProps> = ({ text, className = '' }
                         ? `${matchedEntity.name} — ${matchedEntity.subtitle}`
                         : `Inspecionar ${part}`
                     }
-                    className={`inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded-md text-[12px] font-medium transition-colors bg-white/[0.06] hover:bg-white/[0.12] border-b ${
+                    className={`inline px-1 -mx-0.5 rounded font-medium transition-colors hover:bg-surface-2 underline underline-offset-2 ${
                       isAt
-                        ? 'text-zinc-100 border-brass-400/60'
-                        : 'text-zinc-100 border-emerald-400/50'
+                        ? 'text-accent decoration-accent/40'
+                        : 'text-fg decoration-line-strong'
                     }`}
                   >
-                    <span>{part}</span>
+                    {part}
                   </button>
                 );
               }
@@ -141,50 +141,43 @@ export const MentionTextarea: React.FC<MentionTextareaProps> = ({
           placeholder ||
           'Escreva aqui... Use @ para personagens/facções ou # para locais/itens.'
         }
-        className={`input-clean w-full rounded-lg px-3.5 py-2.5 text-sm placeholder-zinc-600 ${className}`}
+        className={`input ${className}`}
       />
 
-      <div className="mt-1 flex items-center gap-1.5 text-[11px] text-zinc-500">
+      <p className="hint flex flex-wrap items-center gap-1">
         <span>Use</span>
-        <kbd className="px-1 py-0.5 rounded bg-white/[0.05] text-zinc-400 font-mono text-[10px]">@</kbd>
+        <kbd className="kbd">@</kbd>
         <span>ou</span>
-        <kbd className="px-1 py-0.5 rounded bg-white/[0.05] text-zinc-400 font-mono text-[10px]">#</kbd>
-        <span>para referenciar entradas do códice.</span>
-      </div>
+        <kbd className="kbd">#</kbd>
+        <span>para mencionar entradas do códice.</span>
+      </p>
 
       {queryInfo && suggestions.length > 0 && (
-        <div className="absolute left-2 bottom-9 z-50 w-72 rounded-xl bg-[#18181d] border border-white/[0.12] shadow-elevated overflow-hidden">
-          <div className="px-3 py-1.5 border-b border-white/[0.06] text-[10px] uppercase tracking-wider text-zinc-500 flex items-center justify-between">
-            <span>Referenciar entrada</span>
-            <span className="font-mono">{queryInfo.prefix}</span>
+        <div className="absolute left-2 bottom-9 z-50 w-72 max-w-[calc(100%-1rem)] rounded-lg bg-surface border border-line shadow-elevated overflow-hidden">
+          <div className="px-3 py-2 border-b border-line text-xs text-fg-subtle">
+            Mencionar entrada
           </div>
-          <div className="max-h-48 overflow-y-auto divide-y divide-white/[0.04]">
+          <div className="max-h-48 overflow-y-auto p-1">
             {suggestions.map((ent) => (
               <button
                 key={ent.id}
                 type="button"
                 onClick={() => insertSuggestion(ent.handle, ent.mentionPrefix)}
-                className="w-full px-3 py-2 text-left hover:bg-white/[0.06] transition-colors flex items-center justify-between gap-2"
+                className="w-full px-2 py-1.5 rounded-md text-left hover:bg-surface-2 transition-colors flex items-center gap-2"
               >
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    {ent.mentionPrefix === '@' ? (
-                      <AtSign className="w-3 h-3 text-zinc-400 shrink-0" />
-                    ) : (
-                      <Hash className="w-3 h-3 text-zinc-400 shrink-0" />
-                    )}
-                    <span className="text-xs font-mono font-medium text-zinc-100 truncate">
-                      {ent.mentionPrefix}
-                      {ent.handle}
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-zinc-500 truncate">
-                    {ent.name}
+                {ent.mentionPrefix === '@' ? (
+                  <AtSign className="w-4 h-4 text-fg-subtle shrink-0" />
+                ) : (
+                  <Hash className="w-4 h-4 text-fg-subtle shrink-0" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium text-fg truncate">{ent.name}</div>
+                  <div className="text-xs font-mono text-fg-subtle truncate">
+                    {ent.mentionPrefix}
+                    {ent.handle}
                   </div>
                 </div>
-                <span className="text-[10px] font-mono text-zinc-500">
-                  {ent.category}
-                </span>
+                <span className="text-xs text-fg-subtle shrink-0">{ent.category}</span>
               </button>
             ))}
           </div>

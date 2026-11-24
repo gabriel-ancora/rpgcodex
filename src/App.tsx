@@ -9,18 +9,18 @@ import { SessionCockpitModule } from './components/session/SessionCockpitModule'
 import { PlayerPortalModule } from './components/portal/PlayerPortalModule';
 import { DedicatedPlayerView } from './components/portal/DedicatedPlayerView';
 import { LoginView } from './components/auth/LoginView';
-import { DmDashboardView } from './components/hubs/DmDashboardView';
-import { PlayerDashboardView } from './components/hubs/PlayerDashboardView';
+import { CampaignsHome } from './components/hubs/CampaignsHome';
 import { DmPartyInspectDrawer } from './components/characters/DmPartyInspectDrawer';
 import { SettingsModal } from './components/common/SettingsModal';
 import { MentionText } from './components/common/MentionText';
 import { ConvexSyncBridge } from './components/common/ConvexSyncBridge';
+import { ConfirmProvider } from './components/common/Modal';
+import { Toaster } from './components/common/Toast';
 import { X, Pin, ArrowUpRight } from 'lucide-react';
 
 const VALID_ROUTES: AppRoute[] = [
   '/login',
-  '/dm-dashboard',
-  '/player-dashboard',
+  '/campaigns',
   '/campaign/session',
   '/campaign/player-view',
 ];
@@ -29,7 +29,6 @@ export function App() {
   const currentUser = useCampaignStore((s) => s.currentUser);
   const currentRoute = useCampaignStore((s) => s.currentRoute);
   const setCurrentRoute = useCampaignStore((s) => s.setCurrentRoute);
-  const workspaceMode = useCampaignStore((s) => s.workspaceMode);
   const campaigns = useCampaignStore((s) => s.campaigns);
   const activeCampaignId = useCampaignStore((s) => s.activeCampaignId);
   const joinCampaignByInviteCode = useCampaignStore(
@@ -45,7 +44,6 @@ export function App() {
   );
   const entities = useCampaignStore((s) => s.entities);
   const togglePinEntity = useCampaignStore((s) => s.togglePinEntity);
-  const toastMessage = useCampaignStore((s) => s.toastMessage);
 
   const [pendingInviteCode, setPendingInviteCode] = useState<string | null>(
     null
@@ -114,15 +112,16 @@ export function App() {
     }
   };
 
-  const isPlayerMode = workspaceMode === 'player';
   const isAuthenticated = Boolean(currentUser) && currentRoute !== '/login';
+  const showDmChrome = isAuthenticated && currentRoute === '/campaign/session' && !isPlayerInActiveCamp;
   const quickEntity = entities.find((e) => e.id === quickInspectEntityId);
 
   return (
-    <div className="min-h-screen h-screen flex bg-[#0b0b0d] text-zinc-100 overflow-hidden">
+    <ConfirmProvider>
+    <div className="min-h-screen h-screen flex bg-canvas text-fg overflow-hidden">
       <ConvexSyncBridge />
 
-      {isAuthenticated && (
+      {showDmChrome && (
         <WorkspaceSidebar
           mobileOpen={mobileSidebarOpen}
           onCloseMobile={() => setMobileSidebarOpen(false)}
@@ -130,13 +129,12 @@ export function App() {
       )}
 
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
-        {isAuthenticated && (
+        {showDmChrome && (
           <TopCommandBar
             onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
           />
         )}
 
-        {/* Main Route & Workspace Container */}
         {!isAuthenticated && (
           <LoginView
             pendingInviteCode={pendingInviteCode}
@@ -144,40 +142,28 @@ export function App() {
           />
         )}
 
-        {isAuthenticated && currentRoute === '/dm-dashboard' && (
-          <main className="flex-1 overflow-y-auto bg-[#0b0b0d]">
-            <DmDashboardView />
-          </main>
-        )}
-
-        {isAuthenticated && currentRoute === '/player-dashboard' && (
-          <main className="flex-1 overflow-y-auto bg-[#0b0b0d]">
-            <PlayerDashboardView />
+        {isAuthenticated && currentRoute === '/campaigns' && (
+          <main className="flex-1 overflow-y-auto bg-canvas">
+            <CampaignsHome />
           </main>
         )}
 
         {isAuthenticated && currentRoute === '/campaign/player-view' && (
-          <main className="flex-1 overflow-hidden bg-[#0b0b0d]">
+          <main className="flex-1 overflow-hidden bg-canvas">
             {activeCampaignId ? (
               <DedicatedPlayerView />
             ) : (
-              <div className="h-full flex flex-col items-center justify-center p-6 text-center">
-                <div className="max-w-md rounded-xl bg-[#131317] border border-white/[0.08] p-8 space-y-4">
-                  <h2 className="font-serif text-xl text-zinc-100">
-                    Nenhuma campanha selecionada
-                  </h2>
-                  <p className="text-xs text-zinc-400 leading-relaxed">
-                    {isPlayerMode
-                      ? 'Ingresse em uma campanha utilizando o código de convite fornecido pelo Mestre para visualizar a mesa em tempo real.'
-                      : 'Crie ou selecione uma campanha no painel do Mestre antes de abrir a visão de mesa.'}
+              <div className="h-full flex items-center justify-center p-6">
+                <div className="card max-w-md w-full p-8 text-center">
+                  <h2 className="section-title">Nenhuma campanha selecionada</h2>
+                  <p className="mt-1.5 text-sm text-fg-muted">
+                    Crie ou selecione uma campanha antes de abrir a visão da mesa.
                   </p>
                   <button
-                    onClick={() =>
-                      setCurrentRoute(isPlayerMode ? '/player-dashboard' : '/dm-dashboard')
-                    }
-                    className="btn-solid px-4 py-2 rounded-lg text-xs"
+                    onClick={() => setCurrentRoute('/campaigns')}
+                    className="btn btn-primary mt-5"
                   >
-                    {isPlayerMode ? 'Ir para meus personagens' : 'Ir para minhas campanhas'}
+                    Ver campanhas
                   </button>
                 </div>
               </div>
@@ -186,21 +172,19 @@ export function App() {
         )}
 
         {isAuthenticated && currentRoute === '/campaign/session' && !isPlayerInActiveCamp && (
-          <main className="flex-1 p-3.5 lg:p-5 overflow-hidden bg-[#0b0b0d]">
+          <main className="flex-1 p-4 lg:p-6 overflow-hidden bg-canvas">
             {!activeCampaignId || !activeCamp ? (
-              <div className="h-full flex flex-col items-center justify-center p-6 text-center">
-                <div className="max-w-md rounded-xl bg-[#131317] border border-white/[0.08] p-8 space-y-4">
-                  <h2 className="font-serif text-xl text-zinc-100">
-                    Crie sua primeira campanha
-                  </h2>
-                  <p className="text-xs text-zinc-400 leading-relaxed">
-                    Para utilizar o Códice, Cartografia, Frentes de Ameaça e o Cockpit de Sessão, selecione ou crie uma campanha no Painel do Mestre.
+              <div className="h-full flex items-center justify-center p-6">
+                <div className="card max-w-md w-full p-8 text-center">
+                  <h2 className="section-title">Nenhuma campanha selecionada</h2>
+                  <p className="mt-1.5 text-sm text-fg-muted">
+                    Crie ou selecione uma campanha para acessar o códice, mapas e sessões.
                   </p>
                   <button
-                    onClick={() => setCurrentRoute('/dm-dashboard')}
-                    className="btn-solid px-4 py-2 rounded-lg text-xs"
+                    onClick={() => setCurrentRoute('/campaigns')}
+                    className="btn btn-primary mt-5"
                   >
-                    Abrir painel de campanhas
+                    Ver campanhas
                   </button>
                 </div>
               </div>
@@ -216,60 +200,68 @@ export function App() {
         )}
       </div>
 
-      {/* Global Modals & Drawers */}
+      {/* Modais e gavetas globais */}
       <DmPartyInspectDrawer />
       <SettingsModal />
 
-      {/* Quick Inspect Popover when clicking @Mention */}
+      {/* Inspeção rápida ao clicar em uma @menção */}
       {quickEntity && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-lg rounded-xl bg-[#131317] border border-white/[0.1] p-5 space-y-4 shadow-elevated">
-            <div className="flex items-start justify-between gap-2 border-b border-white/[0.06] pb-3">
-              <div>
-                <span className="text-[11px] font-mono text-zinc-400">
+        <div
+          className="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="quick-inspect-title"
+        >
+          <div className="modal max-w-lg">
+            <div className="px-5 py-4 border-b border-line flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 id="quick-inspect-title" className="section-title truncate">
+                  {quickEntity.name}
+                </h3>
+                <p className="text-[13px] text-fg-muted mt-0.5">
+                  {quickEntity.subtitle}
+                </p>
+                <span className="block text-xs font-mono text-fg-subtle mt-1">
                   {quickEntity.mentionPrefix}
                   {quickEntity.handle}
                 </span>
-                <h3 className="text-lg font-semibold text-zinc-100 mt-0.5">
-                  {quickEntity.name}
-                </h3>
-                <p className="text-xs text-zinc-400">{quickEntity.subtitle}</p>
               </div>
               <button
                 onClick={() => setQuickInspectEntityId(null)}
-                className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.05]"
+                className="btn btn-ghost btn-icon shrink-0"
+                aria-label="Fechar"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {quickEntity.attributes.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {quickEntity.attributes.map((a) => (
-                  <span
-                    key={a.id}
-                    className="px-2 py-0.5 rounded-md bg-white/[0.04] border border-white/[0.06] text-xs font-mono text-zinc-300"
-                  >
-                    <span className="text-zinc-500">{a.label}:</span> {a.value}
-                  </span>
-                ))}
-              </div>
-            )}
+            <div className="px-5 py-4 space-y-4 overflow-y-auto">
+              {quickEntity.attributes.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {quickEntity.attributes.map((a) => (
+                    <span key={a.id} className="badge">
+                      <span className="text-fg-subtle">{a.label}:</span>
+                      <span className="text-fg">{a.value}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
 
-            <div className="p-3.5 rounded-lg bg-[#0e0e11] border border-white/[0.06] text-xs">
-              <MentionText text={quickEntity.publicContent} />
+              <div className="text-sm">
+                <MentionText text={quickEntity.publicContent} />
+              </div>
             </div>
 
-            {!isPlayerInActiveCamp && !isPlayerMode && (
-              <div className="flex items-center justify-between gap-2 pt-1">
+            {!isPlayerInActiveCamp && (
+              <div className="px-5 py-3 border-t border-line bg-surface-2 flex items-center justify-end gap-2">
                 <button
                   onClick={() => {
                     togglePinEntity(quickEntity.id);
                     setQuickInspectEntityId(null);
                   }}
-                  className="btn-subtle inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs"
+                  className="btn btn-secondary"
                 >
-                  <Pin className="w-3.5 h-3.5" />
+                  <Pin className="w-4 h-4" />
                   <span>
                     {quickEntity.pinnedInSession
                       ? 'Desafixar da sessão'
@@ -285,10 +277,10 @@ export function App() {
                     setActiveModule('worldbuilding');
                     setWorldSubTab('wiki');
                   }}
-                  className="btn-solid inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs"
+                  className="btn btn-primary"
                 >
                   <span>Abrir no códice</span>
-                  <ArrowUpRight className="w-3.5 h-3.5" />
+                  <ArrowUpRight className="w-4 h-4" />
                 </button>
               </div>
             )}
@@ -296,14 +288,10 @@ export function App() {
         </div>
       )}
 
-      {/* Minimal Studio Toast Notification */}
-      {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-50 px-3.5 py-2 rounded-lg bg-[#18181d] border border-white/[0.1] text-xs font-medium text-zinc-200 shadow-elevated flex items-center gap-2.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
-          <span>{toastMessage}</span>
-        </div>
-      )}
+      {/* Notificação */}
+      <Toaster />
     </div>
+    </ConfirmProvider>
   );
 }
 export default App;

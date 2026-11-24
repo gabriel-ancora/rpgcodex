@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(npx vite *)",
+      "Bash(wc -l *.ts lib/*.ts)",
+      "Bash(wc -l src/App.tsx src/components/layout/* src/components/auth/LoginView.tsx src/components/hubs/DmDashboardView.tsx src/components/common/* src/components/worldbuilding/* src/components/plots/* src/components/session/SessionCockpitModule.tsx src/types/campaign.ts src/store/useCampaignStore.ts)",
+      "Bash(wc -l src/rules/*.ts src/components/characters/*.tsx src/components/characters/builder/*.tsx src/utils/sheetPayload.ts src/data/dnd2024/*.ts src/data/dnd2024/*/*.ts src/components/hubs/PlayerDashboardView.tsx src/components/portal/*.tsx)",
+      "Bash(grep -v \"^\\\\s*$\")",
+      "Bash(cd /t/Projetos/teste2/src && grep -rn \"geminiApiKey\\\\|apiKey\" --include=*.ts --include=*.tsx | grep -v \"^store/useCampaignStore.ts:1[03]\" | head -30; grep -n \"apiKey\\\\|generativelanguage\" ../convex/ai.ts | head -20)",
+      "Read(//t/Projetos/convex/**)",
+      "Bash(awk -F: '{print $3}')",
+      "Bash(wc -l convex/*.ts convex/lib/*.ts)",
+      "Bash(sort -k2)",
+      "Bash(git reset *)",
+      "Bash(git checkout *)",
+      "Bash(wc -l convex/*.ts convex/lib/*.ts src/store/*.ts src/components/common/*.tsx src/components/layout/*.tsx src/components/auth/*.tsx src/components/hubs/*.tsx src/services/*.ts src/utils/*.ts src/types/*.ts src/*.ts*)",
+      "Bash(python3 -)",
+      "Bash(grep -n \"^\\\\.[a-z-]* *{\\\\|^  \\\\.[a-z-]* *{\\\\|^\\\\.[a-z-]*,\\\\|@layer\" src/index.css)"
+    ]
+  }
+}

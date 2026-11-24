@@ -1,100 +1,100 @@
-import { query, mutation } from "./_generated/server";
+import { query, mutation, QueryCtx, MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
+import { Doc } from "./_generated/dataModel";
 import {
   getSessionUser,
-  matchesCampaign,
-  normalizeCampaignId,
+  findCampaignByAnyId,
+  requireUser,
+  isCampaignMember,
+  SessionUser,
 } from "./lib/tenancy";
+import { sheetContentFields } from "./lib/characterValidators";
 
-const spellValidator = v.object({
-  id: v.string(),
-  index: v.string(),
-  name: v.string(),
-  level: v.number(),
-  school: v.string(),
-  castingTime: v.string(),
-  range: v.string(),
-  components: v.string(),
-  duration: v.string(),
-  description: v.string(),
-  prepared: v.optional(v.boolean()),
-});
+/** Torna todos os validadores de um objeto opcionais (para updates parciais). */
+function optionalize<T extends Record<string, any>>(fields: T) {
+  const out: Record<string, any> = {};
+  for (const [key, validator] of Object.entries(fields)) {
+    out[key] = validator.isOptional === "optional" ? validator : v.optional(validator);
+  }
+  return out as { [K in keyof T]: any };
+}
 
-const equipmentValidator = v.object({
-  id: v.string(),
-  name: v.string(),
-  category: v.string(),
-  damage: v.optional(v.string()),
-  armorClass: v.optional(v.string()),
-  mastery: v.optional(v.string()),
-  weight: v.optional(v.string()),
-  quantity: v.number(),
-  equipped: v.boolean(),
-  notes: v.optional(v.string()),
-});
+/**
+ * Resolve o identificador canônico (slugId) da campanha e valida que o usuário
+ * participa dela. Fichas sempre são gravadas com o slug canônico, evitando que
+ * a mesma campanha seja referenciada por _id em um lugar e slug em outro.
+ */
+async function resolveCampaignForUser(
+  ctx: QueryCtx | MutationCtx,
+  campaignId: string | undefined,
+  user: SessionUser
+) {
+  const raw = campaignId?.trim() || "";
+  if (!raw) return { canonicalId: "", camp: null as Doc<"campaigns"> | null };
+  const camp = await findCampaignByAnyId(ctx, raw);
+  if (!camp) {
+    throw new Error("Campanha não encontrada. Verifique o vínculo da ficha.");
+  }
+  if (!(await isCampaignMember(ctx, camp, user.id))) {
+    throw new Error("Você não participa desta campanha.");
+  }
+  return { canonicalId: camp.slugId || camp._id, camp };
+}
 
-const slotValidator = v.object({
-  used: v.number(),
-  max: v.number(),
-});
+async function canEditSheet(
+  ctx: MutationCtx,
+  sheet: Doc<"characterSheets">,
+  user: SessionUser
+) {
+  if (sheet.playerId === user.id) return true;
+  if (!sheet.campaignId) return false;
+  const camp = await findCampaignByAnyId(ctx, sheet.campaignId);
+  return camp?.dmUserId === user.id;
+}
 
-const spellSlotsValidator = v.object({
-  level1: slotValidator,
-  level2: slotValidator,
-  level3: slotValidator,
-  level4: v.optional(slotValidator),
-  level5: v.optional(slotValidator),
-  level6: v.optional(slotValidator),
-  level7: v.optional(slotValidator),
-  level8: v.optional(slotValidator),
-  level9: v.optional(slotValidator),
-  pactSlots: v.optional(
-    v.object({
-      level: v.number(),
-      used: v.number(),
-      max: v.number(),
-    })
-  ),
-});
-
-const classFeatureValidator = v.object({
-  level: v.number(),
-  name: v.string(),
-  source: v.string(),
-  description: v.string(),
-});
-
-const classResourceValidator = v.object({
-  label: v.string(),
-  value: v.string(),
-});
-
+/**
+ * Lista as fichas visíveis para o usuário:
+ * - todas as fichas próprias (independente de campanha);
+ * - todas as fichas da campanha informada, se o usuário for Mestre ou membro dela.
+ */
 export const list = query({
   args: {
+    sessionToken: v.optional(v.string()),
     campaignId: v.optional(v.string()),
+    // Mantidos por compatibilidade com clientes antigos; ignorados.
     playerId: v.optional(v.string()),
     includeAllPlayerSheets: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const all = await ctx.db.query("characterSheets").collect();
-    const filtered = all.filter((sheet) => {
-      if (
-        args.includeAllPlayerSheets &&
-        args.playerId &&
-        sheet.playerId === args.playerId
-      ) {
-        return true;
-      }
-      if (args.campaignId) {
-        return matchesCampaign(sheet.campaignId, args.campaignId);
-      }
-      return false;
-    });
+    const user = await getSessionUser(ctx, args.sessionToken);
+    if (!user) return [];
 
-    return filtered.map((s) => ({
-      ...s,
-      id: s._id,
-    }));
+    const byId = new Map<string, Doc<"characterSheets">>();
+
+    const own = await ctx.db
+      .query("characterSheets")
+      .withIndex("by_player", (q) => q.eq("playerId", user.id))
+      .collect();
+    for (const s of own) byId.set(s._id, s);
+
+    if (args.campaignId?.trim()) {
+      const camp = await findCampaignByAnyId(ctx, args.campaignId);
+      if (camp && (await isCampaignMember(ctx, camp, user.id))) {
+        // Fichas podem ter sido gravadas com o slug ou com o _id da campanha.
+        const keys = Array.from(new Set([camp.slugId, camp._id].filter(Boolean) as string[]));
+        for (const key of keys) {
+          const rows = await ctx.db
+            .query("characterSheets")
+            .withIndex("by_campaign", (q) => q.eq("campaignId", key))
+            .collect();
+          for (const s of rows) byId.set(s._id, s);
+        }
+      }
+    }
+
+    return Array.from(byId.values())
+      .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""))
+      .map((s) => ({ ...s, id: s._id }));
   },
 });
 
@@ -102,72 +102,31 @@ export const create = mutation({
   args: {
     sessionToken: v.optional(v.string()),
     campaignId: v.string(),
-    playerId: v.string(),
-    playerName: v.string(),
     campaignTitle: v.string(),
-    name: v.string(),
-    avatarUrl: v.optional(v.string()),
-    race: v.string(),
-    racialTraits: v.array(v.string()),
-    className: v.string(),
-    subclass: v.optional(v.string()),
-    level: v.number(),
-    background: v.string(),
-    alignment: v.string(),
-    hp: v.number(),
-    maxHp: v.number(),
-    tempHp: v.number(),
-    armorClass: v.number(),
-    speed: v.string(),
-    hitDice: v.string(),
-    hitDiceUsed: v.number(),
-    proficiencyBonus: v.number(),
-    passivePerception: v.number(),
-    statGenerationMethod: v.optional(
-      v.union(v.literal("standard"), v.literal("roll4d6"), v.literal("random"))
-    ),
-    baseStats: v.optional(
-      v.object({
-        str: v.number(),
-        dex: v.number(),
-        con: v.number(),
-        int: v.number(),
-        wis: v.number(),
-        cha: v.number(),
-      })
-    ),
-    stats: v.object({
-      str: v.number(),
-      dex: v.number(),
-      con: v.number(),
-      int: v.number(),
-      wis: v.number(),
-      cha: v.number(),
-    }),
-    proficiencies: v.array(v.string()),
-    originFeat: v.optional(v.string()),
-    savingThrows: v.optional(v.array(v.string())),
-    weaponMasteries: v.optional(v.array(v.string())),
-    classFeatures: v.optional(v.array(classFeatureValidator)),
-    classResources: v.optional(v.array(classResourceValidator)),
-    spellSlots: spellSlotsValidator,
-    spells: v.array(spellValidator),
-    equipment: v.array(equipmentValidator),
-    notes: v.string(),
+    // Ignorados: o dono é sempre o usuário autenticado.
+    playerId: v.optional(v.string()),
+    playerName: v.optional(v.string()),
+    ...sheetContentFields,
   },
   handler: async (ctx, args) => {
-    const user = await getSessionUser(ctx, args.sessionToken);
-    if (args.sessionToken && !user) {
-      throw new Error("Sessão expirada. Faça login novamente.");
+    const user = await requireUser(ctx, args.sessionToken);
+    const { canonicalId, camp } = await resolveCampaignForUser(ctx, args.campaignId, user);
+    if (!camp) {
+      throw new Error("Selecione uma campanha em que você participa como jogador para criar uma ficha.");
     }
-    const { sessionToken: _, ...data } = args;
-    const sheetId = await ctx.db.insert("characterSheets", {
+    if (camp.dmUserId === user.id) {
+      throw new Error("Apenas jogadores da campanha podem criar fichas. O Mestre pode visualizar e editar as fichas criadas pelos jogadores.");
+    }
+    const { sessionToken: _t, playerId: _p, playerName: _n, ...data } = args;
+
+    return await ctx.db.insert("characterSheets", {
       ...data,
-      playerId: user?.id || args.playerId,
-      campaignId: normalizeCampaignId(args.campaignId),
+      campaignId: canonicalId,
+      campaignTitle: camp?.name || "",
+      playerId: user.id,
+      playerName: user.name || "Jogador",
       updatedAt: new Date().toISOString(),
     });
-    return sheetId;
   },
 });
 
@@ -177,89 +136,34 @@ export const update = mutation({
     id: v.string(),
     campaignId: v.optional(v.string()),
     campaignTitle: v.optional(v.string()),
-    name: v.optional(v.string()),
-    avatarUrl: v.optional(v.string()),
-    race: v.optional(v.string()),
-    racialTraits: v.optional(v.array(v.string())),
-    className: v.optional(v.string()),
-    subclass: v.optional(v.string()),
-    level: v.optional(v.number()),
-    background: v.optional(v.string()),
-    alignment: v.optional(v.string()),
-    hp: v.optional(v.number()),
-    maxHp: v.optional(v.number()),
-    tempHp: v.optional(v.number()),
-    armorClass: v.optional(v.number()),
-    speed: v.optional(v.string()),
-    hitDice: v.optional(v.string()),
-    hitDiceUsed: v.optional(v.number()),
-    proficiencyBonus: v.optional(v.number()),
-    passivePerception: v.optional(v.number()),
-    statGenerationMethod: v.optional(
-      v.union(v.literal("standard"), v.literal("roll4d6"), v.literal("random"))
-    ),
-    baseStats: v.optional(
-      v.object({
-        str: v.number(),
-        dex: v.number(),
-        con: v.number(),
-        int: v.number(),
-        wis: v.number(),
-        cha: v.number(),
-      })
-    ),
-    stats: v.optional(
-      v.object({
-        str: v.number(),
-        dex: v.number(),
-        con: v.number(),
-        int: v.number(),
-        wis: v.number(),
-        cha: v.number(),
-      })
-    ),
-    proficiencies: v.optional(v.array(v.string())),
-    originFeat: v.optional(v.string()),
-    savingThrows: v.optional(v.array(v.string())),
-    weaponMasteries: v.optional(v.array(v.string())),
-    classFeatures: v.optional(v.array(classFeatureValidator)),
-    classResources: v.optional(v.array(classResourceValidator)),
-    spellSlots: v.optional(spellSlotsValidator),
-    spells: v.optional(v.array(spellValidator)),
-    equipment: v.optional(v.array(equipmentValidator)),
-    notes: v.optional(v.string()),
+    ...optionalize(sheetContentFields),
   },
   handler: async (ctx, args) => {
+    const user = await requireUser(ctx, args.sessionToken);
     const sheetId = ctx.db.normalizeId("characterSheets", args.id);
-    if (!sheetId) return;
+    if (!sheetId) throw new Error("Ficha inválida.");
     const existing = await ctx.db.get(sheetId);
-    if (!existing) return;
-
-    if (args.sessionToken) {
-      const user = await getSessionUser(ctx, args.sessionToken);
-      if (!user) throw new Error("Sessão expirada.");
-      const isOwner = existing.playerId === user.id;
-      let isCampaignDm = false;
-      if (existing.campaignId) {
-        const camp = await ctx.db
-          .query("campaigns")
-          .withIndex("by_slug", (q) => q.eq("slugId", existing.campaignId))
-          .first();
-        isCampaignDm = camp?.dmUserId === user.id;
-      }
-      if (!isOwner && !isCampaignDm) {
-        throw new Error("Sem permissão para alterar esta ficha.");
-      }
+    if (!existing) throw new Error("Ficha não encontrada.");
+    if (!(await canEditSheet(ctx, existing, user))) {
+      throw new Error("Sem permissão para alterar esta ficha.");
     }
 
-    const { id: _, sessionToken: __, ...updates } = args;
-    const cleanUpdates = Object.fromEntries(
-      Object.entries(updates).filter(([, val]) => val !== undefined)
+    const { id: _id, sessionToken: _t, campaignId, campaignTitle: _ct, ...rest } = args;
+    const patch: Record<string, unknown> = Object.fromEntries(
+      Object.entries(rest).filter(([, val]) => val !== undefined)
     );
-    await ctx.db.patch(sheetId, {
-      ...cleanUpdates,
-      updatedAt: new Date().toISOString(),
-    });
+
+    if (campaignId !== undefined) {
+      // Só o dono pode mover a ficha entre campanhas.
+      if (existing.playerId !== user.id) {
+        throw new Error("Apenas o dono da ficha pode trocar a campanha vinculada.");
+      }
+      const { canonicalId, camp } = await resolveCampaignForUser(ctx, campaignId, user);
+      patch.campaignId = canonicalId;
+      patch.campaignTitle = camp?.name || "";
+    }
+
+    await ctx.db.patch(sheetId, { ...patch, updatedAt: new Date().toISOString() });
   },
 });
 
@@ -269,28 +173,14 @@ export const remove = mutation({
     sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const user = await requireUser(ctx, args.sessionToken);
     const sheetId = ctx.db.normalizeId("characterSheets", args.id);
     if (!sheetId) return;
     const existing = await ctx.db.get(sheetId);
     if (!existing) return;
-
-    if (args.sessionToken) {
-      const user = await getSessionUser(ctx, args.sessionToken);
-      if (!user) throw new Error("Sessão expirada.");
-      const isOwner = existing.playerId === user.id;
-      let isCampaignDm = false;
-      if (existing.campaignId) {
-        const camp = await ctx.db
-          .query("campaigns")
-          .withIndex("by_slug", (q) => q.eq("slugId", existing.campaignId))
-          .first();
-        isCampaignDm = camp?.dmUserId === user.id;
-      }
-      if (!isOwner && !isCampaignDm) {
-        throw new Error("Sem permissão para excluir esta ficha.");
-      }
+    if (!(await canEditSheet(ctx, existing, user))) {
+      throw new Error("Sem permissão para excluir esta ficha.");
     }
-
     await ctx.db.delete(sheetId);
   },
 });

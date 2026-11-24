@@ -1,380 +1,362 @@
-import { query, mutation } from "./_generated/server";
+import { query, mutation, MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
 import {
-  matchesCampaign,
-  normalizeCampaignId,
-  resolveEffectiveRole,
-  assertDmPermission,
+  requireDm,
+  requireDmOfRecord,
+  memberOrNull,
+  effectiveRole,
+  collectByCampaign,
+  getOrThrow,
+  ERR_NOT_FOUND,
 } from "./lib/tenancy";
+
+const clockSegmentsValidator = v.union(v.literal(4), v.literal(6), v.literal(8), v.literal(12));
+
+const portentValidator = v.object({
+  id: v.string(),
+  step: v.number(),
+  text: v.string(),
+  triggered: v.boolean(),
+});
+
+const frontStatusValidator = v.union(
+  v.literal("active"),
+  v.literal("triggered"),
+  v.literal("resolved")
+);
+
+const sceneStatusValidator = v.union(
+  v.literal("active"),
+  v.literal("visited"),
+  v.literal("unlocked"),
+  v.literal("locked")
+);
+
+const clueTypeValidator = v.union(
+  v.literal("social"),
+  v.literal("investigation"),
+  v.literal("occult"),
+  v.literal("physical")
+);
+
+function randomSuffix() {
+  return Math.random().toString(36).slice(2, 8);
+}
+
+// ============================================================================
+// FRENTES DE AMEAÇA
+// ============================================================================
 
 export const listFronts = query({
   args: {
-    campaignId: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
     viewerRole: v.optional(v.union(v.literal("gm"), v.literal("player"))),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const role = await resolveEffectiveRole(ctx, {
-      sessionToken: args.sessionToken,
-      viewerRole: args.viewerRole,
-      campaignId: args.campaignId,
-    });
-
-    const allFronts = await ctx.db.query("threatFronts").collect();
-    return allFronts
-      .filter((f) => {
-        if (!matchesCampaign(f.campaignId, args.campaignId)) return false;
-        if (role === "player" && f.isSecret) return false;
-        return true;
-      })
-      .map((f) => ({
-        ...f,
-        id: f._id,
-      }));
+    const access = await memberOrNull(ctx, args.sessionToken, args.campaignId);
+    if (!access) return [];
+    const role = effectiveRole(access, args.viewerRole);
+    const fronts = await collectByCampaign(ctx, "threatFronts", access.keys);
+    return fronts
+      .filter((f) => role === "gm" || !f.isSecret)
+      .map((f) => ({ ...f, id: f._id }));
   },
 });
 
 export const createFront = mutation({
   args: {
-    campaignId: v.optional(v.string()),
-    sessionToken: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
     name: v.string(),
     subtitle: v.string(),
     associatedEntityHandle: v.string(),
     description: v.string(),
-    clockSegments: v.union(
-      v.literal(4),
-      v.literal(6),
-      v.literal(8),
-      v.literal(12)
-    ),
+    clockSegments: clockSegmentsValidator,
     clockFilled: v.number(),
     impendingDoom: v.string(),
     ignoreConsequence: v.string(),
-    grimPortents: v.array(
-      v.object({
-        id: v.string(),
-        step: v.number(),
-        text: v.string(),
-        triggered: v.boolean(),
-      })
-    ),
-    status: v.union(
-      v.literal("active"),
-      v.literal("triggered"),
-      v.literal("resolved")
-    ),
-    isSecret: v.boolean(),
+    grimPortents: v.array(portentValidator),
+    status: frontStatusValidator,
+    // Padrão: secreta (oculta dos jogadores).
+    isSecret: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    await assertDmPermission(ctx, args.sessionToken, args.campaignId);
-    const { sessionToken: _, ...data } = args;
+    const { canonicalId } = await requireDm(ctx, args.sessionToken, args.campaignId);
+    const { sessionToken: _t, campaignId: _c, isSecret, ...data } = args;
     return await ctx.db.insert("threatFronts", {
       ...data,
-      campaignId: normalizeCampaignId(args.campaignId),
+      clockFilled: Math.max(0, Math.min(data.clockSegments, Math.floor(data.clockFilled))),
+      isSecret: isSecret ?? true,
+      campaignId: canonicalId,
     });
   },
 });
 
+async function loadFrontForDm(ctx: MutationCtx, sessionToken: string, frontId: string) {
+  const front = await getOrThrow(ctx, "threatFronts", frontId);
+  await requireDmOfRecord(ctx, sessionToken, front.campaignId);
+  return front;
+}
+
 export const updateFrontClock = mutation({
   args: {
+    sessionToken: v.string(),
     frontId: v.string(),
     clockFilled: v.number(),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const frontId = ctx.db.normalizeId("threatFronts", args.frontId);
-    if (!frontId) return;
-    const front = await ctx.db.get(frontId);
-    if (!front) return;
-    await assertDmPermission(ctx, args.sessionToken, front.campaignId);
-
-    const clamped = Math.max(0, Math.min(front.clockSegments, args.clockFilled));
-    const nextStatus = clamped >= front.clockSegments ? "triggered" : "active";
-
-    const updatedPortents = front.grimPortents.map((gp, idx) => ({
-      ...gp,
-      triggered: idx < clamped,
-    }));
-
-    await ctx.db.patch(frontId, {
+    const front = await loadFrontForDm(ctx, args.sessionToken, args.frontId);
+    const clamped = Math.max(0, Math.min(front.clockSegments, Math.floor(args.clockFilled)));
+    await ctx.db.patch(front._id, {
       clockFilled: clamped,
-      status: nextStatus,
-      grimPortents: updatedPortents,
+      status: clamped >= front.clockSegments ? "triggered" : "active",
+      grimPortents: front.grimPortents.map((gp, idx) => ({ ...gp, triggered: idx < clamped })),
     });
   },
 });
 
 export const advanceAllFronts = mutation({
   args: {
-    campaignId: v.optional(v.string()),
-    sessionToken: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
   },
   handler: async (ctx, args) => {
-    await assertDmPermission(ctx, args.sessionToken, args.campaignId);
-    const allFronts = await ctx.db.query("threatFronts").collect();
-    const fronts = allFronts.filter((f) =>
-      matchesCampaign(f.campaignId, args.campaignId)
-    );
-
+    const { keys } = await requireDm(ctx, args.sessionToken, args.campaignId);
+    const fronts = await collectByCampaign(ctx, "threatFronts", keys);
     for (const f of fronts) {
-      if (f.status === "active") {
-        const nextFilled = Math.min(f.clockSegments, f.clockFilled + 1);
-        const nextStatus =
-          nextFilled >= f.clockSegments ? "triggered" : "active";
-        const updatedPortents = f.grimPortents.map((gp, idx) => ({
-          ...gp,
-          triggered: idx < nextFilled,
-        }));
-        await ctx.db.patch(f._id, {
-          clockFilled: nextFilled,
-          status: nextStatus,
-          grimPortents: updatedPortents,
-        });
-      }
+      if (f.status !== "active") continue;
+      const nextFilled = Math.min(f.clockSegments, f.clockFilled + 1);
+      await ctx.db.patch(f._id, {
+        clockFilled: nextFilled,
+        status: nextFilled >= f.clockSegments ? "triggered" : "active",
+        grimPortents: f.grimPortents.map((gp, idx) => ({ ...gp, triggered: idx < nextFilled })),
+      });
     }
   },
 });
 
 export const togglePortent = mutation({
   args: {
+    sessionToken: v.string(),
     frontId: v.string(),
     portentId: v.string(),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const frontId = ctx.db.normalizeId("threatFronts", args.frontId);
-    if (!frontId) return;
-    const front = await ctx.db.get(frontId);
-    if (!front) return;
-    await assertDmPermission(ctx, args.sessionToken, front.campaignId);
-
-    const updated = front.grimPortents.map((gp) =>
-      gp.id === args.portentId ? { ...gp, triggered: !gp.triggered } : gp
-    );
-    await ctx.db.patch(frontId, { grimPortents: updated });
+    const front = await loadFrontForDm(ctx, args.sessionToken, args.frontId);
+    if (!front.grimPortents.some((gp) => gp.id === args.portentId)) {
+      throw new Error(ERR_NOT_FOUND);
+    }
+    await ctx.db.patch(front._id, {
+      grimPortents: front.grimPortents.map((gp) =>
+        gp.id === args.portentId ? { ...gp, triggered: !gp.triggered } : gp
+      ),
+    });
   },
 });
 
 export const updateFront = mutation({
   args: {
+    sessionToken: v.string(),
     frontId: v.string(),
-    sessionToken: v.optional(v.string()),
     name: v.optional(v.string()),
     subtitle: v.optional(v.string()),
     associatedEntityHandle: v.optional(v.string()),
     description: v.optional(v.string()),
-    clockSegments: v.optional(v.number()),
+    clockSegments: v.optional(clockSegmentsValidator),
     clockFilled: v.optional(v.number()),
     impendingDoom: v.optional(v.string()),
     ignoreConsequence: v.optional(v.string()),
-    grimPortents: v.optional(
-      v.array(
-        v.object({
-          id: v.string(),
-          step: v.number(),
-          text: v.string(),
-          triggered: v.boolean(),
-        })
-      )
-    ),
-    status: v.optional(
-      v.union(
-        v.literal("active"),
-        v.literal("triggered"),
-        v.literal("resolved")
-      )
-    ),
+    grimPortents: v.optional(v.array(portentValidator)),
+    status: v.optional(frontStatusValidator),
     isSecret: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const frontId = ctx.db.normalizeId("threatFronts", args.frontId);
-    if (!frontId) return;
-    const front = await ctx.db.get(frontId);
-    if (!front) return;
-    await assertDmPermission(ctx, args.sessionToken, front.campaignId);
-    const { frontId: _, sessionToken: __, ...updates } = args;
-    const cleanUpdates = Object.fromEntries(
+    const front = await loadFrontForDm(ctx, args.sessionToken, args.frontId);
+    const { frontId: _f, sessionToken: _t, ...updates } = args;
+    const clean: Record<string, unknown> = Object.fromEntries(
       Object.entries(updates).filter(([, val]) => val !== undefined)
     );
-    await ctx.db.patch(frontId, cleanUpdates);
+    const segments = args.clockSegments ?? front.clockSegments;
+    const filled = args.clockFilled ?? front.clockFilled;
+    clean.clockFilled = Math.max(0, Math.min(segments, Math.floor(filled)));
+    await ctx.db.patch(front._id, clean);
   },
 });
 
 export const removeFront = mutation({
   args: {
+    sessionToken: v.string(),
     frontId: v.string(),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const frontId = ctx.db.normalizeId("threatFronts", args.frontId);
-    if (!frontId) return;
-    const front = await ctx.db.get(frontId);
-    if (!front) return;
-    await assertDmPermission(ctx, args.sessionToken, front.campaignId);
-    await ctx.db.delete(frontId);
+    const front = await loadFrontForDm(ctx, args.sessionToken, args.frontId);
+    await ctx.db.delete(front._id);
   },
 });
 
+// ============================================================================
+// FLUXOGRAMA DE CENAS & PISTAS
+// ============================================================================
+
 export const listScenes = query({
   args: {
-    campaignId: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
     viewerRole: v.optional(v.union(v.literal("gm"), v.literal("player"))),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const role = await resolveEffectiveRole(ctx, {
-      sessionToken: args.sessionToken,
-      viewerRole: args.viewerRole,
-      campaignId: args.campaignId,
-    });
+    const access = await memberOrNull(ctx, args.sessionToken, args.campaignId);
+    if (!access) return [];
+    const role = effectiveRole(access, args.viewerRole);
+    const all = await collectByCampaign(ctx, "mysteryScenes", access.keys);
 
-    // O Fluxograma Investigativo do Mestre contém cenas futuras/secretas; para jogadores exibimos apenas cenas visitadas e pistas descobertas
-    const allScenes = await ctx.db.query("mysteryScenes").collect();
-    return allScenes
-      .filter((s) => {
-        if (!matchesCampaign(s.campaignId, args.campaignId)) return false;
-        if (role === "player" && s.status !== "visited") return false;
-        return true;
-      })
-      .map((s) => ({
-        ...s,
-        id: s._id,
-        clues:
-          role === "player" ? s.clues.filter((c) => c.discovered) : s.clues,
-      }));
+    if (role === "gm") {
+      return all.map((s) => ({ ...s, id: s._id }));
+    }
+
+    // Jogadores: apenas cenas visitadas e pistas descobertas; o destino de uma pista
+    // só é informado se a cena de destino também estiver visível.
+    const visible = all.filter((s) => s.status === "visited");
+    const visibleIds = new Set(visible.map((s) => s._id as string));
+    return visible.map((s) => ({
+      ...s,
+      id: s._id,
+      clues: s.clues
+        .filter((c) => c.discovered)
+        .map((c) => ({
+          ...c,
+          targetSceneId: visibleIds.has(c.targetSceneId) ? c.targetSceneId : "",
+        })),
+    }));
   },
 });
 
 export const createScene = mutation({
   args: {
-    campaignId: v.optional(v.string()),
-    sessionToken: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
     title: v.string(),
     subtitle: v.string(),
     locationHandle: v.optional(v.string()),
-    status: v.union(
-      v.literal("active"),
-      v.literal("visited"),
-      v.literal("unlocked"),
-      v.literal("locked")
-    ),
+    // Padrão: "locked" (oculta dos jogadores, que só veem cenas "visited").
+    status: v.optional(sceneStatusValidator),
     x: v.number(),
     y: v.number(),
     description: v.string(),
   },
   handler: async (ctx, args) => {
-    await assertDmPermission(ctx, args.sessionToken, args.campaignId);
-    const { sessionToken: _, ...data } = args;
+    const { canonicalId } = await requireDm(ctx, args.sessionToken, args.campaignId);
+    const { sessionToken: _t, campaignId: _c, status, ...data } = args;
     return await ctx.db.insert("mysteryScenes", {
       ...data,
-      campaignId: normalizeCampaignId(args.campaignId),
+      status: status ?? "locked",
+      campaignId: canonicalId,
       clues: [],
     });
   },
 });
 
+async function loadSceneForDm(ctx: MutationCtx, sessionToken: string, sceneId: string) {
+  const scene = await getOrThrow(ctx, "mysteryScenes", sceneId);
+  const access = await requireDmOfRecord(ctx, sessionToken, scene.campaignId);
+  return { scene, access };
+}
+
 export const updateScenePosition = mutation({
   args: {
+    sessionToken: v.string(),
     sceneId: v.string(),
     x: v.number(),
     y: v.number(),
   },
   handler: async (ctx, args) => {
-    const sceneId = ctx.db.normalizeId("mysteryScenes", args.sceneId);
-    if (!sceneId) return;
-    await ctx.db.patch(sceneId, { x: args.x, y: args.y });
+    const { scene } = await loadSceneForDm(ctx, args.sessionToken, args.sceneId);
+    await ctx.db.patch(scene._id, { x: args.x, y: args.y });
   },
 });
 
 export const updateSceneStatus = mutation({
   args: {
+    sessionToken: v.string(),
     sceneId: v.string(),
-    status: v.union(
-      v.literal("active"),
-      v.literal("visited"),
-      v.literal("unlocked"),
-      v.literal("locked")
-    ),
-    sessionToken: v.optional(v.string()),
+    status: sceneStatusValidator,
   },
   handler: async (ctx, args) => {
-    const sceneId = ctx.db.normalizeId("mysteryScenes", args.sceneId);
-    if (!sceneId) return;
-    const scene = await ctx.db.get(sceneId);
-    if (!scene) return;
-    await assertDmPermission(ctx, args.sessionToken, scene.campaignId);
-    await ctx.db.patch(sceneId, { status: args.status });
+    const { scene } = await loadSceneForDm(ctx, args.sessionToken, args.sceneId);
+    await ctx.db.patch(scene._id, { status: args.status });
   },
 });
 
 export const removeScene = mutation({
   args: {
+    sessionToken: v.string(),
     sceneId: v.string(),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const sceneId = ctx.db.normalizeId("mysteryScenes", args.sceneId);
-    if (!sceneId) return;
-    const scene = await ctx.db.get(sceneId);
-    if (!scene) return;
-    await assertDmPermission(ctx, args.sessionToken, scene.campaignId);
-    await ctx.db.delete(sceneId);
+    const { scene, access } = await loadSceneForDm(ctx, args.sessionToken, args.sceneId);
+    const sceneId = scene._id as string;
+
+    // Remove pistas de outras cenas que levavam a esta.
+    const others = await collectByCampaign(ctx, "mysteryScenes", access.keys);
+    for (const other of others) {
+      if (other._id === scene._id) continue;
+      if (other.clues.some((c) => c.targetSceneId === sceneId)) {
+        await ctx.db.patch(other._id, {
+          clues: other.clues.filter((c) => c.targetSceneId !== sceneId),
+        });
+      }
+    }
+
+    await ctx.db.delete(scene._id);
   },
 });
 
 export const addClue = mutation({
   args: {
+    sessionToken: v.string(),
     sceneId: v.string(),
     name: v.string(),
     description: v.string(),
     targetSceneId: v.string(),
-    type: v.union(
-      v.literal("social"),
-      v.literal("investigation"),
-      v.literal("occult"),
-      v.literal("physical")
-    ),
-    sessionToken: v.optional(v.string()),
+    type: clueTypeValidator,
   },
   handler: async (ctx, args) => {
-    const sceneId = ctx.db.normalizeId("mysteryScenes", args.sceneId);
-    if (!sceneId) return;
-    const scene = await ctx.db.get(sceneId);
-    if (!scene) return;
-    await assertDmPermission(ctx, args.sessionToken, scene.campaignId);
+    const { scene, access } = await loadSceneForDm(ctx, args.sessionToken, args.sceneId);
+
+    if (args.targetSceneId) {
+      const target = await getOrThrow(ctx, "mysteryScenes", args.targetSceneId);
+      if (!target.campaignId || !access.keys.includes(target.campaignId)) {
+        throw new Error(ERR_NOT_FOUND);
+      }
+    }
 
     const newClue = {
-      id: `clue-${Date.now()}`,
+      id: `clue-${Date.now()}-${randomSuffix()}`,
       name: args.name,
       description: args.description,
       targetSceneId: args.targetSceneId,
       discovered: false,
       type: args.type,
     };
-
-    await ctx.db.patch(sceneId, {
-      clues: [...scene.clues, newClue],
-    });
+    await ctx.db.patch(scene._id, { clues: [...scene.clues, newClue] });
+    return newClue.id;
   },
 });
 
 export const toggleClue = mutation({
   args: {
+    sessionToken: v.string(),
     sceneId: v.string(),
     clueId: v.string(),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const sceneId = ctx.db.normalizeId("mysteryScenes", args.sceneId);
-    if (!sceneId) return;
-    const scene = await ctx.db.get(sceneId);
-    if (!scene) return;
-    await assertDmPermission(ctx, args.sessionToken, scene.campaignId);
-
-    const updatedClues = scene.clues.map((c) =>
-      c.id === args.clueId ? { ...c, discovered: !c.discovered } : c
-    );
-    await ctx.db.patch(sceneId, { clues: updatedClues });
+    const { scene } = await loadSceneForDm(ctx, args.sessionToken, args.sceneId);
+    if (!scene.clues.some((c) => c.id === args.clueId)) throw new Error(ERR_NOT_FOUND);
+    await ctx.db.patch(scene._id, {
+      clues: scene.clues.map((c) =>
+        c.id === args.clueId ? { ...c, discovered: !c.discovered } : c
+      ),
+    });
   },
 });

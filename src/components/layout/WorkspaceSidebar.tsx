@@ -7,7 +7,6 @@ import {
 } from '../../store/useCampaignStore';
 import {
   LayoutGrid,
-  UserCheck,
   Eye,
   BookOpen,
   Network,
@@ -23,7 +22,9 @@ import {
   Users,
   Settings,
   LogOut,
-  ChevronDown,
+  ChevronsUpDown,
+  Check,
+  Plus,
   PanelLeftClose,
   PanelLeftOpen,
   X,
@@ -33,6 +34,8 @@ interface WorkspaceSidebarProps {
   mobileOpen: boolean;
   onCloseMobile: () => void;
 }
+
+type IconType = React.FC<{ className?: string }>;
 
 export const WorkspaceSidebar: React.FC<WorkspaceSidebarProps> = ({
   mobileOpen,
@@ -51,12 +54,9 @@ export const WorkspaceSidebar: React.FC<WorkspaceSidebarProps> = ({
   const setViewRole = useCampaignStore((s) => s.setViewRole);
 
   const currentUser = useCampaignStore((s) => s.currentUser);
-  const workspaceMode = useCampaignStore((s) => s.workspaceMode);
-  const setWorkspaceMode = useCampaignStore((s) => s.setWorkspaceMode);
   const logoutUser = useCampaignStore((s) => s.logoutUser);
   const campaigns = useCampaignStore((s) => s.campaigns);
   const activeCampaignId = useCampaignStore((s) => s.activeCampaignId);
-  const campaignName = useCampaignStore((s) => s.campaignName);
   const selectCampaign = useCampaignStore((s) => s.selectCampaign);
 
   const entities = useCampaignStore((s) => s.entities);
@@ -72,9 +72,9 @@ export const WorkspaceSidebar: React.FC<WorkspaceSidebarProps> = ({
   const [campaignMenuOpen, setCampaignMenuOpen] = useState(false);
 
   const activeCamp = campaigns.find((c) => c.id === activeCampaignId);
+  const campaignName = activeCamp?.title || '';
   const isPlayerInActiveCamp = activeCamp?.isDm === false;
-  const isPlayerMode = workspaceMode === 'player';
-  const showDmStudio = !isPlayerMode && !isPlayerInActiveCamp;
+  const showDmStudio = Boolean(activeCamp && activeCamp.isDm !== false);
   const hasCampaign = Boolean(activeCampaignId);
   const showToast = useCampaignStore((s) => s.showToast);
   const isSessionCockpit =
@@ -82,12 +82,8 @@ export const WorkspaceSidebar: React.FC<WorkspaceSidebarProps> = ({
 
   const requireCampaignOrRedirect = (): boolean => {
     if (hasCampaign) return true;
-    setCurrentRoute(isPlayerMode ? '/player-dashboard' : '/dm-dashboard');
-    showToast(
-      isPlayerMode
-        ? 'Ingresse em uma campanha pelo código de convite primeiro.'
-        : 'Crie ou selecione uma campanha para abrir o estúdio.'
-    );
+    setCurrentRoute('/campaigns');
+    showToast('Crie ou selecione uma campanha primeiro.');
     onCloseMobile();
     return false;
   };
@@ -116,187 +112,191 @@ export const WorkspaceSidebar: React.FC<WorkspaceSidebarProps> = ({
     onCloseMobile();
   };
 
-  const navItemClass = (active: boolean) =>
-    `w-full flex items-center justify-between gap-2.5 px-2.5 py-1.5 rounded-lg text-[13px] transition-colors ${
-      active
-        ? 'bg-white/[0.08] text-zinc-100 font-medium'
-        : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04]'
-    }`;
+  const inStudio = (module: typeof activeModule) =>
+    currentRoute === '/campaign/session' && activeModule === module;
 
   const renderSidebarContent = (isMobileDrawer = false) => {
     const isNarrow = collapsed && !isMobileDrawer;
 
+    const navItem = (opts: {
+      label: string;
+      icon: IconType;
+      active: boolean;
+      onClick: () => void;
+      title?: string;
+      count?: number;
+    }) => {
+      const Icon = opts.icon;
+      return (
+        <button
+          type="button"
+          onClick={opts.onClick}
+          title={isNarrow ? opts.label : opts.title}
+          aria-current={opts.active ? 'page' : undefined}
+          className={`w-full h-8 flex items-center gap-2.5 rounded-md text-sm transition-colors ${
+            isNarrow ? 'justify-center px-0' : 'px-2.5'
+          } ${
+            opts.active
+              ? 'bg-surface-2 text-fg font-medium'
+              : 'text-fg-muted hover:bg-surface-2 hover:text-fg'
+          }`}
+        >
+          <Icon className={`w-4 h-4 shrink-0 ${opts.active ? 'text-fg' : 'text-fg-subtle'}`} />
+          {!isNarrow && <span className="flex-1 text-left truncate">{opts.label}</span>}
+          {!isNarrow && opts.count !== undefined && (
+            <span className="text-xs tabular-nums text-fg-subtle">{opts.count}</span>
+          )}
+        </button>
+      );
+    };
+
+    const groupLabel = (label: string) =>
+      !isNarrow ? (
+        <div className="px-2.5 pb-1 text-xs font-medium text-fg-subtle">{label}</div>
+      ) : (
+        <div className="mx-2 mb-1 border-t border-line" />
+      );
+
     return (
       <div
-        className={`h-full flex flex-col bg-[#0e0e11] border-r border-white/[0.06] select-none transition-all duration-200 ${
-          isNarrow ? 'w-[60px]' : 'w-[236px]'
+        className={`h-full flex flex-col bg-surface border-r border-line select-none transition-[width] duration-150 ${
+          isNarrow ? 'w-[60px]' : 'w-[248px]'
         }`}
       >
-        {/* Top Brand & Collapse Toggle */}
-        <div className="h-12 px-3 border-b border-white/[0.06] flex items-center justify-between gap-2 shrink-0">
-          <button
-            onClick={() => {
-              setCurrentRoute(isPlayerMode ? '/player-dashboard' : '/dm-dashboard');
-              onCloseMobile();
-            }}
-            className="flex items-center gap-2.5 min-w-0 text-left group"
-            title="Obsidian Codex"
-          >
-            {/* Geometric Faceted Codex Emblem */}
-            <div className="w-6 h-6 rounded-md bg-zinc-100 text-zinc-950 flex items-center justify-center shrink-0">
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-                <path
-                  d="M8 1.5L14 5V11L8 14.5L2 11V5L8 1.5Z"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinejoin="round"
-                />
-                <path
-                  d="M8 1.5V14.5M2 5L8 8.5L14 5"
-                  stroke="currentColor"
-                  strokeWidth="1.3"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </div>
-            {!isNarrow && (
-              <span className="text-[13px] font-semibold tracking-tight text-zinc-100 truncate">
-                Obsidian Codex
-              </span>
-            )}
-          </button>
+        {/* Marca e recolher */}
+        <div
+          className={`h-14 border-b border-line flex items-center gap-2 shrink-0 ${
+            isNarrow ? 'justify-center px-2' : 'justify-between px-3'
+          }`}
+        >
+          {!isNarrow && (
+            <button
+              onClick={() => {
+                setCurrentRoute('/campaigns');
+                onCloseMobile();
+              }}
+              className="flex items-center gap-2 min-w-0 text-left rounded-md px-1 py-1 hover:bg-surface-2"
+              title="Codex"
+            >
+              <div className="w-6 h-6 rounded-md bg-accent text-accent-fg flex items-center justify-center shrink-0">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path
+                    d="M8 1.5L14 5V11L8 14.5L2 11V5L8 1.5Z"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinejoin="round"
+                  />
+                  <path
+                    d="M8 1.5V14.5M2 5L8 8.5L14 5"
+                    stroke="currentColor"
+                    strokeWidth="1.3"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </div>
+              <span className="text-sm font-semibold text-fg truncate">Codex</span>
+            </button>
+          )}
 
           {isMobileDrawer ? (
             <button
               onClick={onCloseMobile}
-              className="p-1 rounded-md text-zinc-500 hover:text-zinc-200"
+              className="btn btn-ghost btn-icon"
+              aria-label="Fechar navegação"
             >
               <X className="w-4 h-4" />
             </button>
           ) : (
             <button
               onClick={() => setCollapsed(!collapsed)}
-              className="p-1 rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.04]"
+              className="btn btn-ghost btn-icon"
               title={isNarrow ? 'Expandir barra lateral' : 'Recolher barra lateral'}
+              aria-label={isNarrow ? 'Expandir barra lateral' : 'Recolher barra lateral'}
             >
               {isNarrow ? (
-                <PanelLeftOpen className="w-3.5 h-3.5" />
+                <PanelLeftOpen className="w-4 h-4" />
               ) : (
-                <PanelLeftClose className="w-3.5 h-3.5" />
+                <PanelLeftClose className="w-4 h-4" />
               )}
             </button>
           )}
         </div>
 
-        {/* Role Mode Switcher (Mesma conta: Mestre ↔ Jogador) */}
+        {/* Seletor de campanha */}
         {!isNarrow && (
-          <div className="px-2.5 pt-2.5">
-            <div className="grid grid-cols-2 p-0.5 rounded-lg bg-[#141418] border border-white/[0.06]">
-              <button
-                type="button"
-                onClick={() => {
-                  setWorkspaceMode('dm');
-                  onCloseMobile();
-                }}
-                className={`py-1.5 rounded-md text-[11px] font-medium transition-colors ${
-                  workspaceMode === 'dm'
-                    ? 'bg-zinc-800 text-zinc-100 shadow-xs'
-                    : 'text-zinc-500 hover:text-zinc-300'
-                }`}
-              >
-                Mestre
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setWorkspaceMode('player');
-                  onCloseMobile();
-                }}
-                className={`py-1.5 rounded-md text-[11px] font-medium transition-colors ${
-                  workspaceMode === 'player'
-                    ? 'bg-zinc-800 text-emerald-300 shadow-xs'
-                    : 'text-zinc-500 hover:text-zinc-300'
-                }`}
-              >
-                Jogador
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Active Campaign Switcher */}
-        {!isNarrow && (
-          <div className="px-2.5 pt-2 pb-1 relative">
+          <div className="px-3 pt-3 relative">
             <button
               type="button"
               onClick={() => setCampaignMenuOpen(!campaignMenuOpen)}
-              className="w-full px-2.5 py-2 rounded-lg bg-[#141418] hover:bg-[#19191f] border border-white/[0.06] flex items-center justify-between gap-2 text-left transition-colors"
+              aria-expanded={campaignMenuOpen}
+              aria-haspopup="listbox"
+              className="w-full px-2.5 py-1.5 rounded-md border border-line bg-surface hover:bg-surface-2 hover:border-line-strong flex items-center justify-between gap-2 text-left transition-colors"
             >
               <div className="min-w-0">
-                <span className="block text-[10px] uppercase tracking-wider text-zinc-500 font-medium">
-                  Campanha ativa
-                </span>
-                <span className="block text-xs font-medium text-zinc-200 truncate mt-0.5">
+                <span className="block text-xs text-fg-subtle">Campanha</span>
+                <span className="block text-sm font-medium text-fg truncate">
                   {campaignName || 'Nenhuma selecionada'}
                 </span>
               </div>
-              <ChevronDown className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+              <ChevronsUpDown className="w-4 h-4 text-fg-subtle shrink-0" />
             </button>
 
             {campaignMenuOpen && (
-              <div className="absolute left-2.5 right-2.5 top-full mt-1 z-50 rounded-xl bg-[#18181d] border border-white/[0.1] shadow-elevated p-1 space-y-0.5">
+              <div className="absolute left-3 right-3 top-full mt-1 z-50 rounded-lg bg-surface border border-line shadow-elevated p-1 max-h-72 overflow-y-auto">
                 {campaigns.length === 0 ? (
                   <button
                     type="button"
                     onClick={() => {
-                      setCurrentRoute(isPlayerMode ? '/player-dashboard' : '/dm-dashboard');
+                      setCurrentRoute('/campaigns');
                       setCampaignMenuOpen(false);
                       onCloseMobile();
                     }}
-                    className="w-full px-2.5 py-2 rounded-lg text-left text-xs text-zinc-300 hover:bg-white/[0.05]"
+                    className="w-full h-8 px-2 rounded-md text-left text-sm text-fg-muted hover:bg-surface-2 hover:text-fg flex items-center gap-2"
                   >
-                    {isPlayerMode ? '+ Ingressar com código' : '+ Criar nova campanha'}
+                    <Plus className="w-4 h-4" />
+                    Criar ou entrar em campanha
                   </button>
                 ) : (
-                  campaigns.map((camp) => (
-                    <button
-                      key={camp.id}
-                      type="button"
-                      onClick={() => {
-                        selectCampaign(
-                          camp.id,
-                          camp.isDm === false || isPlayerMode
-                            ? '/campaign/player-view'
-                            : '/campaign/session'
-                        );
-                        setCampaignMenuOpen(false);
-                        onCloseMobile();
-                      }}
-                      className={`w-full px-2.5 py-1.5 rounded-lg text-left text-xs flex items-center justify-between gap-2 ${
-                        camp.id === activeCampaignId
-                          ? 'bg-white/[0.08] text-zinc-100 font-medium'
-                          : 'text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200'
-                      }`}
-                    >
-                      <span className="truncate">{camp.title}</span>
-                      <span className="flex items-center gap-1.5 shrink-0">
-                        <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-white/[0.05] text-zinc-400">
-                          {camp.isDm === false ? 'Jogando' : 'Mestre'}
+                  campaigns.map((camp) => {
+                    const selected = camp.id === activeCampaignId;
+                    return (
+                      <button
+                        key={camp.id}
+                        type="button"
+                        onClick={() => {
+                          selectCampaign(
+                            camp.id,
+                            camp.isDm === false
+                              ? '/campaign/player-view'
+                              : '/campaign/session'
+                          );
+                          setCampaignMenuOpen(false);
+                          onCloseMobile();
+                        }}
+                        className={`w-full px-2 py-1.5 rounded-md text-left text-sm flex items-center gap-2 ${
+                          selected
+                            ? 'bg-surface-2 text-fg font-medium'
+                            : 'text-fg-muted hover:bg-surface-2 hover:text-fg'
+                        }`}
+                      >
+                        <span className="w-4 shrink-0">
+                          {selected && <Check className="w-4 h-4 text-accent" />}
                         </span>
-                        {camp.id === activeCampaignId && (
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                        )}
-                      </span>
-                    </button>
-                  ))
+                        <span className="flex-1 truncate">{camp.title}</span>
+                        <span className="text-xs text-fg-subtle shrink-0">
+                          {camp.isDm === false ? 'Jogador' : 'Mestre'}
+                        </span>
+                      </button>
+                    );
+                  })
                 )}
               </div>
             )}
           </div>
         )}
 
-        {/* Primary Live Session Action */}
-        <div className="px-2.5 py-2">
+        {/* Ação principal */}
+        <div className={`py-3 ${isNarrow ? 'px-2' : 'px-3'}`}>
           {showDmStudio ? (
             <button
               onClick={() => {
@@ -309,23 +309,16 @@ export const WorkspaceSidebar: React.FC<WorkspaceSidebarProps> = ({
                 }
                 onCloseMobile();
               }}
-              title="Conduzir Sessão ao Vivo"
-              className={`w-full flex items-center ${
-                isNarrow ? 'justify-center px-0' : 'justify-between px-3'
-              } py-2 rounded-lg text-xs font-semibold transition-all ${
+              title={isSessionCockpit ? 'Sair da sessão' : 'Conduzir sessão'}
+              className={`btn w-full ${isNarrow ? 'px-0' : ''} ${
                 isSessionCockpit
-                  ? 'bg-rose-500/15 text-rose-200 border border-rose-500/35'
-                  : 'bg-zinc-100 hover:bg-white text-zinc-950'
+                  ? 'bg-accent-soft text-accent border border-accent/30 hover:bg-accent-soft'
+                  : 'btn-primary'
               }`}
             >
-              <span className="flex items-center gap-2">
-                <Swords className="w-3.5 h-3.5 shrink-0" />
-                {!isNarrow && (
-                  <span>{isSessionCockpit ? 'Mesa em andamento' : 'Conduzir sessão'}</span>
-                )}
-              </span>
-              {!isNarrow && isSessionCockpit && (
-                <span className="w-2 h-2 rounded-full bg-rose-400 animate-pulse" />
+              <Swords className="w-4 h-4 shrink-0" />
+              {!isNarrow && (
+                <span>{isSessionCockpit ? 'Sessão em andamento' : 'Conduzir sessão'}</span>
               )}
             </button>
           ) : (
@@ -336,338 +329,178 @@ export const WorkspaceSidebar: React.FC<WorkspaceSidebarProps> = ({
                 setViewRole('player');
                 onCloseMobile();
               }}
-              title="Abrir Mesa ao Vivo"
-              className={`w-full flex items-center ${
-                isNarrow ? 'justify-center px-0' : 'justify-between px-3'
-              } py-2 rounded-lg text-xs font-semibold bg-zinc-100 hover:bg-white text-zinc-950 transition-all`}
+              title="Entrar na mesa"
+              className={`btn btn-primary w-full ${isNarrow ? 'px-0' : ''}`}
             >
-              <span className="flex items-center gap-2">
-                <Eye className="w-3.5 h-3.5 shrink-0" />
-                {!isNarrow && <span>Entrar na mesa</span>}
-              </span>
+              <Eye className="w-4 h-4 shrink-0" />
+              {!isNarrow && <span>Entrar na mesa</span>}
             </button>
           )}
         </div>
 
-        {/* Scrollable Navigation Sections */}
-        <nav className="flex-1 overflow-y-auto px-2.5 py-1 space-y-4">
-          {/* Painéis */}
+        {/* Navegação */}
+        <nav
+          className={`flex-1 overflow-y-auto pb-3 space-y-5 ${isNarrow ? 'px-2' : 'px-3'}`}
+          aria-label="Navegação principal"
+        >
           <div className="space-y-0.5">
-            {!isNarrow && (
-              <div className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                Painéis
-              </div>
-            )}
-            {!isPlayerMode && (
-              <button
-                onClick={() => {
-                  setCurrentRoute('/dm-dashboard');
+            {groupLabel('Geral')}
+            {navItem({
+              label: 'Campanhas',
+              icon: LayoutGrid,
+              active: currentRoute === '/campaigns',
+              onClick: () => {
+                setCurrentRoute('/campaigns');
+                onCloseMobile();
+              },
+            })}
+            {hasCampaign &&
+              navItem({
+                label: 'Visão da mesa',
+                icon: Eye,
+                active: currentRoute === '/campaign/player-view',
+                onClick: () => {
+                  setCurrentRoute('/campaign/player-view');
+                  setViewRole('player');
                   onCloseMobile();
-                }}
-                className={navItemClass(currentRoute === '/dm-dashboard')}
-                title="Campanhas que Mestro"
-              >
-                <span className="flex items-center gap-2.5 truncate">
-                  <LayoutGrid className="w-4 h-4 shrink-0 opacity-80" />
-                  {!isNarrow && <span>Campanhas</span>}
-                </span>
-              </button>
-            )}
-
-            <button
-              onClick={() => {
-                setCurrentRoute('/player-dashboard');
-                onCloseMobile();
-              }}
-              className={navItemClass(currentRoute === '/player-dashboard')}
-              title="Personagens"
-            >
-              <span className="flex items-center gap-2.5 truncate">
-                <UserCheck className="w-4 h-4 shrink-0 opacity-80" />
-                {!isNarrow && <span>Personagens</span>}
-              </span>
-            </button>
-
-            <button
-              onClick={() => {
-                setCurrentRoute('/campaign/player-view');
-                setViewRole('player');
-                onCloseMobile();
-              }}
-              className={navItemClass(currentRoute === '/campaign/player-view')}
-              title="Visão da Mesa"
-            >
-              <span className="flex items-center gap-2.5 truncate">
-                <Eye className="w-4 h-4 shrink-0 opacity-80" />
-                {!isNarrow && <span>Visão da mesa</span>}
-              </span>
-            </button>
+                },
+              })}
           </div>
 
-          {/* Estúdio do Mestre */}
           {showDmStudio && (
             <>
               <div className="space-y-0.5">
-                {!isNarrow && (
-                  <div className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                    Mundo & Códice
-                  </div>
-                )}
-                <button
-                  onClick={() => openWorldTab('wiki')}
-                  className={navItemClass(
-                    currentRoute === '/campaign/session' &&
-                      activeModule === 'worldbuilding' &&
-                      worldSubTab === 'wiki'
-                  )}
-                  title="Códice & Wiki"
-                >
-                  <span className="flex items-center gap-2.5 truncate">
-                    <BookOpen className="w-4 h-4 shrink-0 opacity-80" />
-                    {!isNarrow && <span>Códice & Wiki</span>}
-                  </span>
-                  {!isNarrow && (
-                    <span className="text-[11px] font-mono text-zinc-500">
-                      {entities.length}
-                    </span>
-                  )}
-                </button>
-
-                <button
-                  onClick={() => openWorldTab('graph')}
-                  className={navItemClass(
-                    currentRoute === '/campaign/session' &&
-                      activeModule === 'worldbuilding' &&
-                      worldSubTab === 'graph'
-                  )}
-                  title="Relações"
-                >
-                  <span className="flex items-center gap-2.5 truncate">
-                    <Network className="w-4 h-4 shrink-0 opacity-80" />
-                    {!isNarrow && <span>Grafo de relações</span>}
-                  </span>
-                </button>
-
-                <button
-                  onClick={() => openWorldTab('maps')}
-                  className={navItemClass(
-                    currentRoute === '/campaign/session' &&
-                      activeModule === 'worldbuilding' &&
-                      worldSubTab === 'maps'
-                  )}
-                  title="Cartografia"
-                >
-                  <span className="flex items-center gap-2.5 truncate">
-                    <Map className="w-4 h-4 shrink-0 opacity-80" />
-                    {!isNarrow && <span>Cartografia</span>}
-                  </span>
-                  {!isNarrow && (
-                    <span className="text-[11px] font-mono text-zinc-500">
-                      {maps.length}
-                    </span>
-                  )}
-                </button>
-
-                <button
-                  onClick={() => openWorldTab('timeline')}
-                  className={navItemClass(
-                    currentRoute === '/campaign/session' &&
-                      activeModule === 'worldbuilding' &&
-                      worldSubTab === 'timeline'
-                  )}
-                  title="Cronologia & Calendário"
-                >
-                  <span className="flex items-center gap-2.5 truncate">
-                    <Calendar className="w-4 h-4 shrink-0 opacity-80" />
-                    {!isNarrow && <span>Cronologia</span>}
-                  </span>
-                </button>
+                {groupLabel('Mundo')}
+                {navItem({
+                  label: 'Códice',
+                  icon: BookOpen,
+                  active: inStudio('worldbuilding') && worldSubTab === 'wiki',
+                  onClick: () => openWorldTab('wiki'),
+                  count: entities.length,
+                })}
+                {navItem({
+                  label: 'Relações',
+                  icon: Network,
+                  active: inStudio('worldbuilding') && worldSubTab === 'graph',
+                  onClick: () => openWorldTab('graph'),
+                })}
+                {navItem({
+                  label: 'Mapas',
+                  icon: Map,
+                  active: inStudio('worldbuilding') && worldSubTab === 'maps',
+                  onClick: () => openWorldTab('maps'),
+                  count: maps.length,
+                })}
+                {navItem({
+                  label: 'Cronologia',
+                  icon: Calendar,
+                  active: inStudio('worldbuilding') && worldSubTab === 'timeline',
+                  onClick: () => openWorldTab('timeline'),
+                })}
               </div>
 
               <div className="space-y-0.5">
-                {!isNarrow && (
-                  <div className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                    Narrativa
-                  </div>
-                )}
-                <button
-                  onClick={() => openPlotTab('fronts')}
-                  className={navItemClass(
-                    currentRoute === '/campaign/session' &&
-                      activeModule === 'plots' &&
-                      plotSubTab === 'fronts'
-                  )}
-                  title="Frentes de Ameaça"
-                >
-                  <span className="flex items-center gap-2.5 truncate">
-                    <Flame className="w-4 h-4 shrink-0 opacity-80" />
-                    {!isNarrow && <span>Frentes & relógios</span>}
-                  </span>
-                  {!isNarrow && (
-                    <span className="text-[11px] font-mono text-zinc-500">
-                      {fronts.length}
-                    </span>
-                  )}
-                </button>
-
-                <button
-                  onClick={() => openPlotTab('flowchart')}
-                  className={navItemClass(
-                    currentRoute === '/campaign/session' &&
-                      activeModule === 'plots' &&
-                      plotSubTab === 'flowchart'
-                  )}
-                  title="Investigação & Pistas"
-                >
-                  <span className="flex items-center gap-2.5 truncate">
-                    <GitBranch className="w-4 h-4 shrink-0 opacity-80" />
-                    {!isNarrow && <span>Cenas & pistas</span>}
-                  </span>
-                </button>
-
-                <button
-                  onClick={() => openPlotTab('generators')}
-                  className={navItemClass(
-                    currentRoute === '/campaign/session' &&
-                      activeModule === 'plots' &&
-                      plotSubTab === 'generators'
-                  )}
-                  title="Oráculo Contextual"
-                >
-                  <span className="flex items-center gap-2.5 truncate">
-                    <Compass className="w-4 h-4 shrink-0 opacity-80" />
-                    {!isNarrow && <span>Oráculo contextual</span>}
-                  </span>
-                </button>
+                {groupLabel('Narrativa')}
+                {navItem({
+                  label: 'Frentes e relógios',
+                  icon: Flame,
+                  active: inStudio('plots') && plotSubTab === 'fronts',
+                  onClick: () => openPlotTab('fronts'),
+                  count: fronts.length,
+                })}
+                {navItem({
+                  label: 'Cenas e pistas',
+                  icon: GitBranch,
+                  active: inStudio('plots') && plotSubTab === 'flowchart',
+                  onClick: () => openPlotTab('flowchart'),
+                })}
+                {navItem({
+                  label: 'Oráculo',
+                  icon: Compass,
+                  active: inStudio('plots') && plotSubTab === 'generators',
+                  onClick: () => openPlotTab('generators'),
+                })}
               </div>
 
               <div className="space-y-0.5">
-                {!isNarrow && (
-                  <div className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                    Grupo & Portal
-                  </div>
-                )}
-                <button
-                  onClick={() => openPortalTab('secrets')}
-                  className={navItemClass(
-                    currentRoute === '/campaign/session' &&
-                      activeModule === 'portal' &&
-                      portalSubTab === 'secrets'
-                  )}
-                  title="Segredos & Névoa"
-                >
-                  <span className="flex items-center gap-2.5 truncate">
-                    <Lock className="w-4 h-4 shrink-0 opacity-80" />
-                    {!isNarrow && <span>Segredos & névoa</span>}
-                  </span>
-                </button>
-
-                <button
-                  onClick={() => openPortalTab('quests')}
-                  className={navItemClass(
-                    currentRoute === '/campaign/session' &&
-                      activeModule === 'portal' &&
-                      portalSubTab === 'quests'
-                  )}
-                  title="Missões"
-                >
-                  <span className="flex items-center gap-2.5 truncate">
-                    <ScrollText className="w-4 h-4 shrink-0 opacity-80" />
-                    {!isNarrow && <span>Missões</span>}
-                  </span>
-                  {!isNarrow && (
-                    <span className="text-[11px] font-mono text-zinc-500">
-                      {quests.length}
-                    </span>
-                  )}
-                </button>
-
-                <button
-                  onClick={() => openPortalTab('journal')}
-                  className={navItemClass(
-                    currentRoute === '/campaign/session' &&
-                      activeModule === 'portal' &&
-                      portalSubTab === 'journal'
-                  )}
-                  title="Crônicas & Espólio"
-                >
-                  <span className="flex items-center gap-2.5 truncate">
-                    <BookMarked className="w-4 h-4 shrink-0 opacity-80" />
-                    {!isNarrow && <span>Crônicas & espólio</span>}
-                  </span>
-                </button>
+                {groupLabel('Grupo')}
+                {navItem({
+                  label: 'Segredos',
+                  icon: Lock,
+                  active: inStudio('portal') && portalSubTab === 'secrets',
+                  onClick: () => openPortalTab('secrets'),
+                })}
+                {navItem({
+                  label: 'Missões',
+                  icon: ScrollText,
+                  active: inStudio('portal') && portalSubTab === 'quests',
+                  onClick: () => openPortalTab('quests'),
+                  count: quests.length,
+                })}
+                {navItem({
+                  label: 'Diário e espólio',
+                  icon: BookMarked,
+                  active: inStudio('portal') && portalSubTab === 'journal',
+                  onClick: () => openPortalTab('journal'),
+                })}
               </div>
             </>
           )}
         </nav>
 
-        {/* Bottom Utilities & User Profile */}
-        <div className="p-2.5 border-t border-white/[0.06] space-y-1 shrink-0">
-          {showDmStudio && (
-            <button
-              onClick={() => {
+        {/* Utilidades e usuário */}
+        <div className={`border-t border-line py-2 space-y-0.5 shrink-0 ${isNarrow ? 'px-2' : 'px-3'}`}>
+          {showDmStudio &&
+            navItem({
+              label: 'Fichas do grupo',
+              icon: Users,
+              active: false,
+              onClick: () => {
                 setIsDmPartyDrawerOpen(true);
                 onCloseMobile();
-              }}
-              className={navItemClass(false)}
-              title="Fichas D&D 5e do Grupo"
-            >
-              <span className="flex items-center gap-2.5 truncate">
-                <Users className="w-4 h-4 shrink-0 opacity-80" />
-                {!isNarrow && <span>Fichas do grupo</span>}
-              </span>
-              {!isNarrow && (
-                <span className="text-[11px] font-mono text-zinc-500">
-                  {characterSheets.length}
-                </span>
-              )}
-            </button>
+              },
+              count: characterSheets.length,
+            })}
+          {navItem({
+            label: 'Configurações',
+            icon: Settings,
+            active: false,
+            onClick: () => {
+              setIsSettingsModalOpen(true);
+              onCloseMobile();
+            },
+          })}
+        </div>
+
+        <div
+          className={`h-14 border-t border-line flex items-center gap-2 shrink-0 ${
+            isNarrow ? 'justify-center px-2' : 'justify-between px-3'
+          }`}
+        >
+          {!isNarrow && (
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-7 h-7 rounded-full bg-surface-3 flex items-center justify-center text-xs font-semibold text-fg-muted shrink-0">
+                {(currentUser?.name || 'U').slice(0, 2).toUpperCase()}
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-fg truncate">
+                  {currentUser?.name || 'Usuário'}
+                </div>
+                <div className="text-xs text-fg-subtle truncate">
+                  {activeCamp ? (isPlayerInActiveCamp ? 'Jogador' : 'Mestre') : currentUser?.email || ''}
+                </div>
+              </div>
+            </div>
           )}
 
           <button
-            onClick={() => {
-              setIsSettingsModalOpen(true);
-              onCloseMobile();
-            }}
-            className={navItemClass(false)}
-            title="Configurações, IA & Backups"
+            onClick={logoutUser}
+            className="btn btn-ghost btn-icon shrink-0"
+            title="Sair"
+            aria-label="Sair"
           >
-            <span className="flex items-center gap-2.5 truncate">
-              <Settings className="w-4 h-4 shrink-0 opacity-80" />
-              {!isNarrow && <span>Configurações</span>}
-            </span>
+            <LogOut className="w-4 h-4" />
           </button>
-
-          {/* User Footer */}
-          <div
-            className={`pt-2 mt-1 border-t border-white/[0.06] flex items-center ${
-              isNarrow ? 'justify-center' : 'justify-between'
-            } gap-2 px-1`}
-          >
-            {!isNarrow && (
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="w-6 h-6 rounded-full bg-zinc-800 border border-white/[0.08] flex items-center justify-center text-[10px] font-semibold text-zinc-300 shrink-0">
-                  {(currentUser?.name || 'U').slice(0, 2).toUpperCase()}
-                </div>
-                <div className="min-w-0">
-                  <div className="text-xs font-medium text-zinc-200 truncate">
-                    {currentUser?.name || 'Usuário'}
-                  </div>
-                  <div className="text-[10px] text-zinc-500">
-                    {isPlayerMode ? 'Modo Jogador' : 'Modo Mestre'}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <button
-              onClick={logoutUser}
-              className="p-1.5 rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.05] transition-colors"
-              title="Encerrar sessão"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-            </button>
-          </div>
         </div>
       </div>
     );
@@ -675,19 +508,16 @@ export const WorkspaceSidebar: React.FC<WorkspaceSidebarProps> = ({
 
   return (
     <>
-      {/* Desktop Sidebar */}
+      {/* Barra lateral (desktop) */}
       <aside className="hidden md:block h-full shrink-0">
         {renderSidebarContent(false)}
       </aside>
 
-      {/* Mobile Drawer Overlay */}
+      {/* Gaveta (mobile) */}
       {mobileOpen && (
         <div className="fixed inset-0 z-50 md:hidden flex">
-          <div
-            className="fixed inset-0 bg-black/70 backdrop-blur-xs"
-            onClick={onCloseMobile}
-          />
-          <div className="relative z-10 h-full">
+          <div className="fixed inset-0 bg-black/40" onClick={onCloseMobile} />
+          <div className="relative z-10 h-full shadow-elevated">
             {renderSidebarContent(true)}
           </div>
         </div>

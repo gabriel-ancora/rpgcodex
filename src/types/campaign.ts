@@ -59,7 +59,7 @@ export interface ManualGraphNode {
   id: string;
   label: string;
   subtitle?: string;
-  category: 'npc' | 'faction' | 'location' | 'player' | 'item' | 'monster' | 'lore';
+  category: 'npc' | 'faction' | 'location' | 'player' | 'item' | 'monster' | 'lore' | 'note';
   entityId?: string;
   x: number;
   y: number;
@@ -143,6 +143,8 @@ export interface CampaignMap {
   presetSvgType?: string;
   customImageUrl?: string;
   storageId?: string;
+  /** Ausente em mapas antigos: o servidor trata como visível aos jogadores. */
+  isPublicToPlayers?: boolean;
   pins: MapPin[];
   shapes?: MapDrawingShape[];
 }
@@ -242,12 +244,15 @@ export interface Combatant {
   name: string;
   type: 'pc' | 'npc' | 'monster';
   initiative: number;
-  hp: number;
-  maxHp: number;
-  armorClass: number;
+  // Ausentes na visão do jogador para NPCs/monstros (o servidor envia apenas healthState).
+  hp?: number;
+  maxHp?: number;
+  armorClass?: number;
   conditions: string[];
-  notes: string;
+  notes?: string;
   entityId?: string;
+  isHidden?: boolean;
+  healthState?: 'healthy' | 'wounded' | 'bloodied' | 'down';
 }
 
 export interface DiceRollLog {
@@ -258,6 +263,7 @@ export interface DiceRollLog {
   modifier: number;
   total: number;
   label: string;
+  /** ISO 8601 (gerado no servidor). Formate com `formatTime` de utils/format. */
   timestamp: string;
   isCrit?: boolean;
   isFumble?: boolean;
@@ -290,8 +296,12 @@ export interface SessionJournalEntry {
   title: string;
   inGameDate: string;
   author: string;
+  /** Usuário autor da crônica (definido pelo servidor). */
+  authorUserId?: string;
   content: string;
   isPublic: boolean;
+  /** Calculado pelo servidor: Mestre ou autor da entrada. */
+  canEdit?: boolean;
 }
 
 export interface PersonalJournalNote {
@@ -303,7 +313,10 @@ export interface PersonalJournalNote {
   content: string;
   category: 'theory' | 'secret' | 'backstory' | 'goal';
   sharedWithDm: boolean;
+  /** ISO 8601 (servidor). Formate com `formatDateTime` de utils/format. */
   updatedAt: string;
+  /** Calculado pelo servidor: a nota pertence ao usuário atual (o Mestre vê notas compartilhadas de outros). */
+  isOwn?: boolean;
 }
 
 export interface PartyInventoryItem {
@@ -366,10 +379,13 @@ export interface GeneratedEmergencyItem {
 // AUTH, HUBS & D&D 5e CHARACTER SHEETS
 // ============================================================================
 
+/**
+ * Rotas do aplicativo. `/campaigns` é a única página inicial (substitui
+ * `/dm-dashboard` e `/player-dashboard`; os caminhos antigos são mapeados por `parseRoute`).
+ */
 export type AppRoute =
   | '/login'
-  | '/dm-dashboard'
-  | '/player-dashboard'
+  | '/campaigns'
   | '/campaign/session'
   | '/campaign/player-view';
 
@@ -377,7 +393,6 @@ export interface AuthUser {
   id: string;
   name: string;
   email: string;
-  role: 'dm' | 'player';
   avatarUrl?: string;
 }
 
@@ -390,12 +405,15 @@ export interface CampaignSummary {
   tone: string;
   coverUrl: string;
   coverStorageId?: string;
+  /** Só é preenchido para o Mestre da campanha; vazio para jogadores. */
   inviteCode: string;
   dmName: string;
   dmUserId?: string;
-  isDm?: boolean;
+  /** Única fonte de verdade do papel do usuário nesta campanha. */
+  isDm: boolean;
   activePlayersCount: number;
   sessionsPlayed: number;
+  /** ISO 8601 (servidor). Formate com `formatRelativeDate` de utils/format. */
   updatedAt: string;
 }
 
@@ -411,15 +429,25 @@ export interface CharacterSpell {
   duration: string;
   description: string;
   prepared?: boolean;
+  /** concedida por classe/subclasse/espécie/talento; não conta no limite de preparadas */
+  alwaysPrepared?: boolean;
+  /** origem da magia (ex.: "Bardo", "Linhagem Élfica", "Iniciado em Magia") */
+  source?: string;
+  ritual?: boolean;
+  concentration?: boolean;
+  higherLevels?: string;
 }
 
 export interface CharacterEquipmentItem {
   id: string;
+  /** id do item no catálogo de equipamentos (quando veio do catálogo) */
+  itemId?: string;
   name: string;
   category: string;
   damage?: string;
   armorClass?: string;
   mastery?: string;
+  properties?: string;
   weight?: string;
   quantity: number;
   equipped: boolean;
@@ -451,7 +479,15 @@ export interface CharacterSpellSlots {
   pactSlots?: { level: number; used: number; max: number };
 }
 
-export type StatGenerationMethod = 'standard' | 'roll4d6' | 'random';
+export type StatGenerationMethod = 'standard' | 'roll4d6' | 'random' | 'pointbuy' | 'manual';
+
+export interface CharacterCurrency {
+  pp: number;
+  gp: number;
+  ep: number;
+  sp: number;
+  cp: number;
+}
 
 export interface CharacterSheet {
   id: string;
@@ -504,6 +540,17 @@ export interface CharacterSheet {
   spells: CharacterSpell[];
   equipment: CharacterEquipmentItem[];
   notes: string;
+  /** ids de perícia (ex.: "perception") com proficiência */
+  skillProficiencies?: string[];
+  /** ids de perícia com Especialização */
+  skillExpertise?: string[];
+  toolProficiencies?: string[];
+  languages?: string[];
+  currency?: CharacterCurrency;
+  heroicInspiration?: boolean;
+  initiativeBonus?: number;
+  /** escolhas do criador de personagem (ver src/rules/build.ts) */
+  build?: unknown;
   updatedAt: string;
 }
 

@@ -25,7 +25,6 @@ import {
   ArrowUpRight,
   Trash2,
   X,
-  Sparkles,
 } from 'lucide-react';
 
 export const EmergencyGeneratorsView: React.FC = () => {
@@ -43,7 +42,6 @@ export const EmergencyGeneratorsView: React.FC = () => {
   const fronts = useCampaignStore((s) => s.fronts);
   const campaigns = useCampaignStore((s) => s.campaigns);
   const activeCampaignId = useCampaignStore((s) => s.activeCampaignId);
-  const campaignName = useCampaignStore((s) => s.campaignName);
   const updateCampaign = useCampaignStore((s) => s.updateCampaign);
   const geminiApiKey = useCampaignStore((s) => s.geminiApiKey);
   const setIsSettingsModalOpen = useCampaignStore(
@@ -54,10 +52,11 @@ export const EmergencyGeneratorsView: React.FC = () => {
   const setSelectedEntityId = useCampaignStore((s) => s.setSelectedEntityId);
 
   const activeCamp = campaigns.find((c) => c.id === activeCampaignId);
+  const campaignName = activeCamp?.title || '';
   const campaignTone = activeCamp?.tone || 'Fantasia & Investigação';
   const locationEntities = entities.filter((e) => e.category === 'location');
 
-  // Auto-sanitize any previously generated items so titles & handles are always clean
+  // Sanitiza itens já gerados para que títulos e handles fiquem sempre limpos
   const recentGeneratedItems = useMemo(
     () => rawGeneratedItems.map((item) => sanitizeGeneratedItemFields(item)),
     [rawGeneratedItems]
@@ -84,7 +83,7 @@ export const EmergencyGeneratorsView: React.FC = () => {
   const handleSaveInlineContext = () => {
     if (!activeCampaignId) return;
     updateCampaign(activeCampaignId, { worldContext: worldContextDraft });
-    showToast('Janela de Contexto atualizada.');
+    showToast('Janela de contexto atualizada.');
   };
 
   const handleOpenWikiContextWindow = () => {
@@ -114,23 +113,19 @@ export const EmergencyGeneratorsView: React.FC = () => {
       recordGeneratedItem(result.item);
 
       if (result.usedLiveGemini) {
-        showToast('Elemento gerado pela IA Google Gemini.');
+        showToast('Gerado com Gemini.');
       } else if (geminiApiKey && result.fallbackReason === 'http_429') {
-        showToast(
-          'Limite temporário da API Gemini atingido (429); gerado via motor contextual local.'
-        );
+        showToast('Limite da API Gemini atingido (429). Gerado com o motor local.');
       } else if (
         geminiApiKey &&
         (result.fallbackReason === 'http_400' || result.fallbackReason === 'http_403')
       ) {
-        showToast(
-          'Chave Gemini recusada; verifique em Configurar API. Gerado via motor contextual local.'
-        );
+        showToast('Chave Gemini recusada. Verifique em Configurar API. Gerado com o motor local.');
       } else {
         showToast(
           geminiApiKey
-            ? 'Elemento gerado via motor contextual.'
-            : 'Gerado localmente (conecte sua chave em "Configurar API" para usar o Gemini).'
+            ? 'Gerado com o motor local.'
+            : 'Gerado com o motor local. Configure uma chave de API para usar o Gemini.'
         );
       }
     } finally {
@@ -164,26 +159,26 @@ export const EmergencyGeneratorsView: React.FC = () => {
   }[] = [
     {
       type: 'npc',
-      title: 'Personagem (NPC)',
-      desc: 'Nome, traço marcante, segredo e vínculo',
+      title: 'Personagem',
+      desc: 'Nome, traço, segredo e vínculo',
       icon: UserPlus,
     },
     {
       type: 'tavern',
-      title: 'Ponto de interesse',
-      desc: 'Atmosfera, anfitrião e gancho local',
+      title: 'Local',
+      desc: 'Atmosfera, anfitrião e gancho',
       icon: MapPin,
     },
     {
       type: 'rumor',
-      title: 'Rumor de mesa',
-      desc: 'Boato circulante e verdade oculta',
+      title: 'Rumor',
+      desc: 'Boato e verdade oculta',
       icon: MessageSquare,
     },
     {
       type: 'loot',
-      title: 'Espólio & relíquia',
-      desc: 'Objeto com história ligada às facções',
+      title: 'Item',
+      desc: 'Objeto ligado às facções',
       icon: Gem,
     },
   ];
@@ -192,90 +187,78 @@ export const EmergencyGeneratorsView: React.FC = () => {
     npc: 'Personagem',
     tavern: 'Local',
     rumor: 'Rumor',
-    loot: 'Relíquia',
+    loot: 'Item',
   };
 
   return (
-    <div className="space-y-5 h-[calc(100vh-7.5rem)] overflow-y-auto pr-1">
-      {/* Studio Context Panel */}
-      <div className="p-5 rounded-xl surface-panel space-y-4">
+    <div className="space-y-4 h-[calc(100vh-7.5rem)] overflow-y-auto pr-1">
+      {/* Painel de contexto */}
+      <div className="card p-4 space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2.5">
-              <h2 className="text-base font-semibold text-zinc-100 tracking-tight">
-                Oráculo contextual
-              </h2>
-              <span className="inline-flex items-center gap-1.5 text-[11px] text-zinc-400 bg-white/[0.04] border border-white/[0.07] px-2 py-0.5 rounded-md">
-                <span
-                  className={`w-1.5 h-1.5 rounded-full ${
-                    geminiApiKey ? 'bg-emerald-400' : 'bg-zinc-500'
-                  }`}
-                />
-                {geminiApiKey ? 'Gemini conectado' : 'Motor de cenário local'}
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="section-title">Oráculo</h2>
+              <span className={`badge ${geminiApiKey ? 'badge-success' : ''}`}>
+                {geminiApiKey ? 'Gemini conectado' : 'Motor local'}
               </span>
             </div>
-            <p className="text-xs text-zinc-500">
-              Improviso ancorado na Janela de Contexto da Wiki, facções, personagens e frentes ativas.
+            <p className="text-[13px] text-fg-muted">
+              Gera elementos com base na janela de contexto, facções, personagens e frentes ativas.
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             {recentGeneratedItems.length > 0 && (
               <button
                 type="button"
                 onClick={clearGeneratedItems}
-                className="btn-subtle px-2.5 py-1.5 rounded-lg text-xs inline-flex items-center gap-1.5 text-zinc-400 hover:text-rose-300"
-                title="Limpar cartões gerados nesta sessão"
+                className="btn btn-danger-ghost btn-sm"
+                title="Remover os resultados desta sessão"
               >
-                <Trash2 className="w-3.5 h-3.5" />
+                <Trash2 className="w-4 h-4" />
                 <span>Limpar histórico</span>
               </button>
             )}
             <button
               type="button"
               onClick={handleOpenWikiContextWindow}
-              className="btn-subtle px-2.5 py-1.5 rounded-lg text-xs inline-flex items-center gap-1.5"
+              className="btn btn-secondary btn-sm"
             >
-              <FileText className="w-3.5 h-3.5 text-amber-400" />
-              <span>Janela de Contexto na Wiki</span>
-              <ArrowUpRight className="w-3 h-3 text-zinc-500" />
+              <FileText className="w-4 h-4" />
+              <span>Abrir contexto na Wiki</span>
+              <ArrowUpRight className="w-3.5 h-3.5 text-fg-subtle" />
             </button>
             <button
               type="button"
               onClick={() => setShowPromptPreview(!showPromptPreview)}
-              className="btn-subtle px-2.5 py-1.5 rounded-lg text-xs inline-flex items-center gap-1.5"
+              className="btn btn-secondary btn-sm"
             >
-              <Code2 className="w-3.5 h-3.5 text-zinc-400" />
+              <Code2 className="w-4 h-4" />
               <span>{showPromptPreview ? 'Ocultar contexto' : 'Editar contexto'}</span>
             </button>
             <button
               type="button"
               onClick={() => setIsSettingsModalOpen(true)}
-              className="btn-subtle px-2.5 py-1.5 rounded-lg text-xs inline-flex items-center gap-1.5"
+              className="btn btn-secondary btn-sm"
             >
-              <KeyRound className="w-3.5 h-3.5 text-zinc-400" />
+              <KeyRound className="w-4 h-4" />
               <span>{geminiApiKey ? 'Chave configurada' : 'Configurar API'}</span>
             </button>
           </div>
         </div>
 
-        {/* Context Parameters */}
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 p-3.5 rounded-xl bg-[#0e0e11] border border-white/[0.06]">
-          <div className="md:col-span-4 space-y-1">
-            <label className="text-[11px] text-zinc-400 block">
-              Local de referência
-            </label>
+        {/* Parâmetros */}
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+          <div className="md:col-span-4">
+            <label className="label">Local de referência</label>
             <select
               value={selectedLocationHandle}
               onChange={(e) => setSelectedLocationHandle(e.target.value)}
-              className="input-clean w-full px-3 py-1.5 rounded-lg text-xs"
+              className="input"
             >
               <option value="">Contexto geral da campanha</option>
               {locationEntities.map((loc) => (
-                <option
-                  key={loc.id}
-                  value={`${loc.mentionPrefix}${loc.handle}`}
-                >
+                <option key={loc.id} value={`${loc.mentionPrefix}${loc.handle}`}>
                   {loc.name} ({loc.mentionPrefix}
                   {loc.handle})
                 </option>
@@ -283,34 +266,31 @@ export const EmergencyGeneratorsView: React.FC = () => {
             </select>
           </div>
 
-          <div className="md:col-span-8 space-y-1">
-            <label className="text-[11px] text-zinc-400 block">
-              Pedido específico para esta geração (opcional)
-            </label>
+          <div className="md:col-span-8">
+            <label className="label">Instrução adicional (opcional)</label>
             <input
               type="text"
               value={customHint}
               onChange={(e) => setCustomHint(e.target.value)}
-              placeholder="Ex: ferreiro veterano da Batalha do Vau, estalagem dos guardiões..."
-              className="input-clean w-full px-3 py-1.5 rounded-lg text-xs"
+              placeholder="Ex.: ferreiro veterano da Batalha do Vau"
+              className="input"
             />
           </div>
         </div>
 
         {showPromptPreview && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 p-3.5 rounded-xl bg-[#0b0b0d] border border-white/[0.08]">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 card-muted p-3">
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-zinc-200 flex items-center gap-1.5">
-                  <FileText className="w-3.5 h-3.5 text-amber-400" />
-                  Janela de Contexto Editável (Sincronizada com a Wiki)
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[13px] font-medium text-fg">
+                  Janela de contexto (sincronizada com a Wiki)
                 </span>
                 <button
                   type="button"
                   onClick={handleSaveInlineContext}
-                  className="btn-solid px-2.5 py-1 rounded-md text-[11px] inline-flex items-center gap-1"
+                  className="btn btn-primary btn-sm"
                 >
-                  <Save className="w-3 h-3" />
+                  <Save className="w-4 h-4" />
                   <span>Salvar</span>
                 </button>
               </div>
@@ -318,23 +298,23 @@ export const EmergencyGeneratorsView: React.FC = () => {
                 value={worldContextDraft}
                 onChange={setWorldContextDraft}
                 rows={6}
-                placeholder="Escreva diretrizes canônicas, história da região, regras da casa e tom (suporta @NPC e #Local)..."
+                placeholder="Diretrizes canônicas, história da região, regras da casa e tom. Suporta @NPC e #Local."
               />
             </div>
 
             <div className="space-y-2">
-              <div className="text-xs font-medium text-zinc-400">
-                Prompt combinado enviado ao Gemini
+              <div className="text-[13px] font-medium text-fg-muted">
+                Prompt enviado ao Gemini
               </div>
-              <pre className="p-3 rounded-lg bg-[#0e0e11] border border-white/[0.06] text-[11px] font-mono text-zinc-400 whitespace-pre-wrap max-h-44 overflow-y-auto leading-relaxed">
+              <pre className="p-3 rounded-md bg-surface border border-line text-xs font-mono text-fg-muted whitespace-pre-wrap max-h-44 overflow-y-auto leading-relaxed">
                 {previewPrompt}
               </pre>
             </div>
           </div>
         )}
 
-        {/* 4 Generator Tiles */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+        {/* Geradores */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
           {generatorTiles.map((tile) => {
             const Icon = tile.icon;
             const isLoading = loadingType === tile.type;
@@ -343,9 +323,9 @@ export const EmergencyGeneratorsView: React.FC = () => {
                 key={tile.type}
                 disabled={loadingType !== null}
                 onClick={() => handleGenerate(tile.type)}
-                className="p-3.5 rounded-xl bg-[#0e0e11] hover:bg-white/[0.04] border border-white/[0.07] hover:border-white/[0.16] transition-all flex items-start gap-3 text-left group disabled:opacity-50"
+                className="p-3 rounded-md bg-surface border border-line hover:border-line-strong hover:bg-surface-2 transition-colors flex items-start gap-3 text-left disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <div className="p-2 rounded-lg bg-white/[0.04] border border-white/[0.06] text-zinc-300 group-hover:text-white transition-colors shrink-0">
+                <div className="w-8 h-8 rounded-md bg-surface-2 border border-line text-fg-muted flex items-center justify-center shrink-0">
                   {isLoading ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
@@ -353,12 +333,8 @@ export const EmergencyGeneratorsView: React.FC = () => {
                   )}
                 </div>
                 <div className="min-w-0">
-                  <div className="text-xs font-medium text-zinc-100">
-                    {tile.title}
-                  </div>
-                  <div className="text-[11px] text-zinc-500 mt-0.5 leading-snug">
-                    {tile.desc}
-                  </div>
+                  <div className="text-sm font-medium text-fg">Gerar {tile.title.toLowerCase()}</div>
+                  <div className="text-xs text-fg-subtle leading-snug">{tile.desc}</div>
                 </div>
               </button>
             );
@@ -366,50 +342,41 @@ export const EmergencyGeneratorsView: React.FC = () => {
         </div>
       </div>
 
-      {/* Generated Stream */}
+      {/* Resultados */}
       {recentGeneratedItems.length === 0 ? (
-        <div className="py-14 px-6 rounded-xl surface-panel text-center space-y-2.5">
-          <Compass className="w-6 h-6 text-zinc-600 mx-auto" />
-          <div className="space-y-1">
-            <h3 className="text-sm font-medium text-zinc-300">
-              Nenhum elemento consultado nesta sessão
-            </h3>
-            <p className="text-xs text-zinc-500 max-w-md mx-auto">
-              Escolha o local atual e acione uma das categorias acima para gerar rascunhos prontos para o códice.
-            </p>
-          </div>
+        <div className="card py-12 px-6 text-center">
+          <Compass className="w-5 h-5 text-fg-subtle mx-auto mb-3" />
+          <h3 className="text-sm font-medium text-fg">Nenhum resultado nesta sessão</h3>
+          <p className="text-[13px] text-fg-muted max-w-md mx-auto mt-1">
+            Escolha o local e uma categoria acima para gerar rascunhos que podem ser salvos no códice.
+          </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {recentGeneratedItems.map((item) => (
             <div
               key={item.id}
-              className="p-5 rounded-xl surface-panel flex flex-col justify-between gap-4 overflow-hidden"
+              className="card p-4 flex flex-col justify-between gap-4 overflow-hidden"
             >
-              <div className="space-y-3.5 min-w-0">
-                <div className="flex items-start justify-between gap-3 border-b border-white/[0.06] pb-3">
-                  <div className="space-y-0.5 min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-mono text-zinc-500">
+              <div className="space-y-3 min-w-0">
+                <div className="flex items-start justify-between gap-3 border-b border-line pb-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs text-fg-subtle">
                       <span>
                         {TYPE_LABELS[item.type] || item.type} · {item.timestamp}
                       </span>
-                      {item.aiGenerated && (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 text-[10px]">
-                          <Sparkles className="w-2.5 h-2.5" />
-                          Gemini
-                        </span>
-                      )}
+                      {item.aiGenerated && <span className="badge">Gemini</span>}
                     </div>
-                    <h3 className="text-xl font-serif font-medium text-zinc-100 break-words leading-snug">
+                    <h3 className="text-base font-semibold text-fg break-words leading-snug mt-0.5">
                       {item.title}
                     </h3>
-                    <p className="text-xs text-zinc-400 break-words">{item.subtitle}</p>
+                    <p className="text-[13px] text-fg-muted break-words">{item.subtitle}</p>
                   </div>
 
                   <div className="flex items-center gap-1 shrink-0">
                     <span
                       title={`${item.type === 'npc' ? '@' : '#'}${item.rawHandle}`}
-                      className="text-[11px] font-mono text-zinc-400 bg-[#0e0e11] px-2 py-0.5 rounded-md border border-white/[0.06] max-w-[155px] truncate"
+                      className="badge font-mono max-w-[155px] truncate"
                     >
                       {item.type === 'npc' ? '@' : '#'}
                       {item.rawHandle}
@@ -417,58 +384,44 @@ export const EmergencyGeneratorsView: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => removeGeneratedItem(item.id)}
-                      className="p-1 rounded-md text-zinc-600 hover:text-zinc-200 hover:bg-white/[0.05]"
-                      title="Remover cartão"
+                      className="btn btn-ghost btn-sm btn-icon"
+                      title="Remover"
                     >
-                      <X className="w-3.5 h-3.5" />
+                      <X className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
 
-                <div className="space-y-2">
+                <dl className="space-y-3">
                   {item.details.map((d, idx) => (
-                    <div
-                      key={idx}
-                      className={`p-3 rounded-lg border text-xs ${
-                        d.isSecret
-                          ? 'bg-rose-500/[0.03] border-rose-500/20'
-                          : 'bg-[#0e0e11] border-white/[0.06]'
-                      }`}
-                    >
-                      <div className="flex items-center gap-1.5 text-[11px] mb-1 text-zinc-400">
-                        {d.isSecret && (
-                          <Lock className="w-3 h-3 text-rose-400/80" />
-                        )}
-                        <span
-                          className={
-                            d.isSecret ? 'text-rose-300 font-medium' : 'text-zinc-400 font-medium'
-                          }
-                        >
-                          {d.label}
-                        </span>
-                      </div>
-                      <div className="text-zinc-200 leading-relaxed break-words">
+                    <div key={idx}>
+                      <dt className="flex items-center gap-1.5 text-xs font-medium text-fg-muted mb-0.5">
+                        {d.isSecret && <Lock className="w-3.5 h-3.5 text-fg-subtle" />}
+                        <span>{d.label}</span>
+                        {d.isSecret && <span className="text-fg-subtle font-normal">· secreto</span>}
+                      </dt>
+                      <dd className="text-sm text-fg leading-relaxed break-words">
                         <MentionText text={d.value} />
-                      </div>
+                      </dd>
                     </div>
                   ))}
-                </div>
+                </dl>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-white/[0.06]">
+              <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-line">
                 <button
                   onClick={() => saveGeneratedItemToDatabase(item, false)}
-                  className="btn-solid flex-1 py-1.5 px-3 rounded-lg text-xs inline-flex items-center justify-center gap-1.5"
+                  className="btn btn-primary btn-sm flex-1"
                 >
-                  <BookMarked className="w-3.5 h-3.5" />
+                  <BookMarked className="w-4 h-4" />
                   <span>Salvar no códice</span>
                 </button>
 
                 <button
                   onClick={() => saveGeneratedItemToDatabase(item, true)}
-                  className="btn-subtle flex-1 py-1.5 px-3 rounded-lg text-xs inline-flex items-center justify-center gap-1.5"
+                  className="btn btn-secondary btn-sm flex-1"
                 >
-                  <Pin className="w-3.5 h-3.5" />
+                  <Pin className="w-4 h-4" />
                   <span>Fixar na sessão</span>
                 </button>
 
@@ -479,8 +432,8 @@ export const EmergencyGeneratorsView: React.FC = () => {
                     );
                     showToast(`"${item.title}" adicionado às notas rápidas.`);
                   }}
-                  className="btn-subtle p-1.5 rounded-lg"
-                  title="Enviar para o bloco de notas rápidas"
+                  className="btn btn-secondary btn-sm btn-icon"
+                  title="Enviar para notas rápidas"
                 >
                   <FilePlus2 className="w-4 h-4" />
                 </button>

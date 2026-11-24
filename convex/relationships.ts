@@ -1,57 +1,66 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import {
-  matchesCampaign,
-  normalizeCampaignId,
-  resolveEffectiveRole,
-  assertDmPermission,
+  requireDm,
+  requireDmOfRecord,
+  memberOrNull,
+  effectiveRole,
+  collectByCampaign,
+  getOrThrow,
+  ERR_NOT_FOUND,
 } from "./lib/tenancy";
+
+const relTypeValidator = v.union(
+  v.literal("hostile"),
+  v.literal("allied"),
+  v.literal("secret"),
+  v.literal("neutral"),
+  v.literal("patron"),
+  v.literal("blood")
+);
 
 export const list = query({
   args: {
-    campaignId: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
     viewerRole: v.optional(v.union(v.literal("gm"), v.literal("player"))),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const normId = normalizeCampaignId(args.campaignId);
-    if (!normId) {
-      return { relationships: [], positions: [], manualNodes: [] };
+    const access = await memberOrNull(ctx, args.sessionToken, args.campaignId);
+    if (!access) return { relationships: [], positions: [], manualNodes: [] };
+    const role = effectiveRole(access, args.viewerRole);
+
+    const allRels = await collectByCampaign(ctx, "relationships", access.keys);
+    const allPositions = await collectByCampaign(ctx, "graphPositions", access.keys);
+    const allManual = await collectByCampaign(ctx, "manualGraphNodes", access.keys);
+
+    let relationships = allRels;
+    let positions = allPositions;
+    let manualNodes = allManual;
+
+    if (role === "player") {
+      const entities = await collectByCampaign(ctx, "entities", access.keys);
+      const publicEntityIds = new Set(
+        entities.filter((e) => e.isPublicToPlayers === true).map((e) => e._id as string)
+      );
+      // Nós manuais não têm flag de visibilidade; ficam ocultos se apontarem para entidade oculta.
+      manualNodes = allManual.filter((n) => !n.entityId || publicEntityIds.has(n.entityId));
+      const visibleNodeIds = new Set<string>([
+        ...publicEntityIds,
+        ...manualNodes.map((n) => n._id as string),
+      ]);
+      relationships = allRels.filter(
+        (r) =>
+          (!r.isSecret || r.isRevealed === true) &&
+          visibleNodeIds.has(r.sourceId) &&
+          visibleNodeIds.has(r.targetId)
+      );
+      positions = allPositions.filter((p) => publicEntityIds.has(p.entityId));
     }
 
-    const role = await resolveEffectiveRole(ctx, {
-      sessionToken: args.sessionToken,
-      viewerRole: args.viewerRole,
-      campaignId: normId,
-    });
-
-    const allRelationships = await ctx.db.query("relationships").collect();
-    const relationships = allRelationships.filter((r) => {
-      if (!matchesCampaign(r.campaignId, normId)) return false;
-      if (role === "player" && r.isSecret && !r.isRevealed) return false;
-      return true;
-    });
-
-    const allPositions = await ctx.db.query("graphPositions").collect();
-    const positions = allPositions.filter((p) =>
-      matchesCampaign(p.campaignId, normId)
-    );
-
-    const manualNodes = await ctx.db
-      .query("manualGraphNodes")
-      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
-      .collect();
-
     return {
-      relationships: relationships.map((r) => ({
-        ...r,
-        id: r._id,
-      })),
-      positions: positions.map((p) => ({
-        entityId: p.entityId,
-        x: p.x,
-        y: p.y,
-      })),
+      relationships: relationships.map((r) => ({ ...r, id: r._id })),
+      positions: positions.map((p) => ({ entityId: p.entityId, x: p.x, y: p.y })),
       manualNodes: manualNodes.map((n) => ({
         id: n._id,
         label: n.label,
@@ -67,56 +76,40 @@ export const list = query({
 
 export const create = mutation({
   args: {
-    campaignId: v.optional(v.string()),
-    sessionToken: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
     sourceId: v.string(),
     targetId: v.string(),
     label: v.string(),
-    type: v.union(
-      v.literal("hostile"),
-      v.literal("allied"),
-      v.literal("secret"),
-      v.literal("neutral"),
-      v.literal("patron"),
-      v.literal("blood")
-    ),
+    type: relTypeValidator,
     notes: v.optional(v.string()),
-    isSecret: v.boolean(),
+    // Padrão: secreta (oculta dos jogadores) até ser revelada.
+    isSecret: v.optional(v.boolean()),
     isRevealed: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    await assertDmPermission(ctx, args.sessionToken, args.campaignId);
-    const { sessionToken: _, ...data } = args;
+    const { canonicalId } = await requireDm(ctx, args.sessionToken, args.campaignId);
+    const { sessionToken: _t, campaignId: _c, isSecret, isRevealed, ...data } = args;
     return await ctx.db.insert("relationships", {
       ...data,
-      campaignId: normalizeCampaignId(args.campaignId),
+      isSecret: isSecret ?? true,
+      isRevealed: isRevealed ?? false,
+      campaignId: canonicalId,
     });
   },
 });
 
 export const update = mutation({
   args: {
+    sessionToken: v.string(),
     id: v.string(),
     label: v.string(),
-    type: v.optional(
-      v.union(
-        v.literal("hostile"),
-        v.literal("allied"),
-        v.literal("secret"),
-        v.literal("neutral"),
-        v.literal("patron"),
-        v.literal("blood")
-      )
-    ),
-    sessionToken: v.optional(v.string()),
+    type: v.optional(relTypeValidator),
   },
   handler: async (ctx, args) => {
-    const relId = ctx.db.normalizeId("relationships", args.id);
-    if (!relId) return;
-    const rel = await ctx.db.get(relId);
-    if (!rel) return;
-    await assertDmPermission(ctx, args.sessionToken, rel.campaignId);
-    await ctx.db.patch(relId, {
+    const rel = await getOrThrow(ctx, "relationships", args.id);
+    await requireDmOfRecord(ctx, args.sessionToken, rel.campaignId);
+    await ctx.db.patch(rel._id, {
       label: args.label,
       ...(args.type ? { type: args.type } : {}),
     });
@@ -125,53 +118,53 @@ export const update = mutation({
 
 export const remove = mutation({
   args: {
+    sessionToken: v.string(),
     id: v.string(),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const relId = ctx.db.normalizeId("relationships", args.id);
-    if (!relId) return;
-    const rel = await ctx.db.get(relId);
-    if (!rel) return;
-    await assertDmPermission(ctx, args.sessionToken, rel.campaignId);
-    await ctx.db.delete(relId);
+    const rel = await getOrThrow(ctx, "relationships", args.id);
+    await requireDmOfRecord(ctx, args.sessionToken, rel.campaignId);
+    await ctx.db.delete(rel._id);
   },
 });
 
+/** Alterna apenas `isRevealed`; `isSecret` nunca é alterado aqui. */
 export const toggleReveal = mutation({
   args: {
+    sessionToken: v.string(),
     id: v.string(),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const relId = ctx.db.normalizeId("relationships", args.id);
-    if (!relId) return;
-    const rel = await ctx.db.get(relId);
-    if (!rel) return;
-    await assertDmPermission(ctx, args.sessionToken, rel.campaignId);
-    await ctx.db.patch(relId, {
-      isRevealed: !rel.isRevealed,
-      isSecret: rel.isRevealed,
-    });
+    const rel = await getOrThrow(ctx, "relationships", args.id);
+    await requireDmOfRecord(ctx, args.sessionToken, rel.campaignId);
+    await ctx.db.patch(rel._id, { isRevealed: !rel.isRevealed });
   },
 });
 
 export const updatePosition = mutation({
   args: {
-    campaignId: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
     entityId: v.string(),
     x: v.number(),
     y: v.number(),
   },
   handler: async (ctx, args) => {
-    const normId = normalizeCampaignId(args.campaignId);
-    if (!normId) return;
+    const { canonicalId, keys } = await requireDm(ctx, args.sessionToken, args.campaignId);
 
-    // Se for um nó manual, atualiza direto em manualGraphNodes
+    // Nó manual: posição gravada no próprio nó.
     const manualId = ctx.db.normalizeId("manualGraphNodes", args.entityId);
     if (manualId) {
+      const node = await ctx.db.get(manualId);
+      if (!node || !keys.includes(node.campaignId)) throw new Error(ERR_NOT_FOUND);
       await ctx.db.patch(manualId, { x: args.x, y: args.y });
       return;
+    }
+
+    const entId = ctx.db.normalizeId("entities", args.entityId);
+    const ent = entId ? await ctx.db.get(entId) : null;
+    if (!ent || !ent.campaignId || !keys.includes(ent.campaignId)) {
+      throw new Error(ERR_NOT_FOUND);
     }
 
     const existing = await ctx.db
@@ -180,14 +173,10 @@ export const updatePosition = mutation({
       .first();
 
     if (existing) {
-      await ctx.db.patch(existing._id, {
-        x: args.x,
-        y: args.y,
-        campaignId: normId,
-      });
+      await ctx.db.patch(existing._id, { x: args.x, y: args.y, campaignId: canonicalId });
     } else {
       await ctx.db.insert("graphPositions", {
-        campaignId: normId,
+        campaignId: canonicalId,
         entityId: args.entityId,
         x: args.x,
         y: args.y,
@@ -198,8 +187,8 @@ export const updatePosition = mutation({
 
 export const addManualNode = mutation({
   args: {
+    sessionToken: v.string(),
     campaignId: v.string(),
-    sessionToken: v.optional(v.string()),
     label: v.string(),
     subtitle: v.optional(v.string()),
     category: v.union(
@@ -217,39 +206,34 @@ export const addManualNode = mutation({
     y: v.number(),
   },
   handler: async (ctx, args) => {
-    await assertDmPermission(ctx, args.sessionToken, args.campaignId);
-    const { sessionToken: _, ...data } = args;
-    return await ctx.db.insert("manualGraphNodes", {
-      ...data,
-      campaignId: normalizeCampaignId(args.campaignId),
-    });
+    const { canonicalId } = await requireDm(ctx, args.sessionToken, args.campaignId);
+    const { sessionToken: _t, campaignId: _c, ...data } = args;
+    return await ctx.db.insert("manualGraphNodes", { ...data, campaignId: canonicalId });
   },
 });
 
 export const removeManualNode = mutation({
   args: {
+    sessionToken: v.string(),
     id: v.string(),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const nodeId = ctx.db.normalizeId("manualGraphNodes", args.id);
-    if (!nodeId) return;
-    const node = await ctx.db.get(nodeId);
-    if (!node) return;
-    await assertDmPermission(ctx, args.sessionToken, node.campaignId);
+    const node = await getOrThrow(ctx, "manualGraphNodes", args.id);
+    await requireDmOfRecord(ctx, args.sessionToken, node.campaignId);
+    const nodeId = node._id as string;
 
-    const rels1 = await ctx.db
+    const relsOut = await ctx.db
       .query("relationships")
       .withIndex("by_source", (q) => q.eq("sourceId", nodeId))
       .collect();
-    for (const r of rels1) await ctx.db.delete(r._id);
-
-    const rels2 = await ctx.db
+    const relsIn = await ctx.db
       .query("relationships")
       .withIndex("by_target", (q) => q.eq("targetId", nodeId))
       .collect();
-    for (const r of rels2) await ctx.db.delete(r._id);
+    for (const r of [...relsOut, ...relsIn]) {
+      if (await ctx.db.get(r._id)) await ctx.db.delete(r._id);
+    }
 
-    await ctx.db.delete(nodeId);
+    await ctx.db.delete(node._id);
   },
 });

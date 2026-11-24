@@ -1,316 +1,192 @@
 import React, { useState } from 'react';
+import { X, Plus, Minus, FileText, Users } from 'lucide-react';
 import { useCampaignStore } from '../../store/useCampaignStore';
+import { ABILITIES, abilityModifier, formatModifier } from '../../data/dnd2024';
 import { CharacterSheetModal } from './CharacterSheetModal';
-import {
-  X,
-  Edit3,
-  Plus,
-} from 'lucide-react';
-
-function calcMod(score: number): string {
-  const mod = Math.floor((score - 10) / 2);
-  return mod >= 0 ? `+${mod}` : `${mod}`;
-}
+import { applyDamage, applyHealing } from '../../rules/hp';
 
 export const DmPartyInspectDrawer: React.FC = () => {
   const isOpen = useCampaignStore((s) => s.isDmPartyDrawerOpen);
   const setIsDmPartyDrawerOpen = useCampaignStore((s) => s.setIsDmPartyDrawerOpen);
   const characterSheets = useCampaignStore((s) => s.characterSheets);
+  const activeCampaignId = useCampaignStore((s) => s.activeCampaignId);
   const inspectingCharacterId = useCampaignStore((s) => s.inspectingCharacterId);
   const updateCharacterSheet = useCampaignStore((s) => s.updateCharacterSheet);
 
-  const [editingSheetId, setEditingSheetId] = useState<string | null>(null);
-  const [creatingNewSheet, setCreatingNewSheet] = useState(false);
+  const [modal, setModal] = useState<{ id: string | null } | null>(null);
+  const [hpInput, setHpInput] = useState('');
 
   if (!isOpen) return null;
 
-  const activeSheet =
-    characterSheets.find((c) => c.id === inspectingCharacterId) || characterSheets[0];
+  const partySheets = characterSheets.filter((c) => c.campaignId === activeCampaignId);
+  const activeSheet = partySheets.find((c) => c.id === inspectingCharacterId) || partySheets[0];
 
-  const handleQuickHpChange = (
-    sheetId: string,
-    currentHp: number,
-    maxHp: number,
-    delta: number
-  ) => {
-    const nextHp = Math.max(0, Math.min(maxHp, currentHp + delta));
-    updateCharacterSheet(sheetId, { hp: nextHp });
+  const changeHp = (sign: 1 | -1) => {
+    if (!activeSheet) return;
+    const n = Math.abs(parseInt(hpInput, 10));
+    if (!n) return;
+    void updateCharacterSheet(activeSheet.id, sign === -1 ? applyDamage(activeSheet, n) : applyHealing(activeSheet, n));
+    setHpInput('');
   };
 
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-black/65 backdrop-blur-xs flex justify-end">
-        <div className="w-full max-w-lg bg-[#111114] border-l border-white/[0.08] h-full flex flex-col shadow-elevated">
-          {/* Header */}
-          <div className="px-5 py-4 border-b border-white/[0.06] flex items-center justify-between">
+      <div className="fixed inset-0 z-40 bg-black/40 flex justify-end" onClick={() => setIsDmPartyDrawerOpen(false)}>
+        <aside
+          className="w-full max-w-md bg-surface border-l border-line h-full flex flex-col shadow-elevated"
+          onClick={(e) => e.stopPropagation()}
+          aria-label="Fichas do grupo"
+        >
+          <header className="h-14 px-4 border-b border-line flex items-center justify-between shrink-0">
             <div>
-              <h3 className="text-sm font-semibold text-zinc-100">
-                Fichas do Grupo
-              </h3>
-              <p className="text-xs text-zinc-500 mt-0.5">
-                Consulta e ajuste rápido em tempo real
-              </p>
+              <h3 className="text-[15px] font-semibold text-fg">Fichas do grupo</h3>
+              <p className="text-xs text-fg-subtle">{partySheets.length} personagem(ns) nesta campanha</p>
             </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setCreatingNewSheet(true)}
-                className="btn-subtle px-2.5 py-1.5 rounded-lg text-xs inline-flex items-center gap-1"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Nova ficha</span>
-              </button>
-              <button
-                onClick={() => setIsDmPartyDrawerOpen(false)}
-                className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.05]"
-              >
+            <div className="flex items-center gap-1">
+              <button type="button" onClick={() => setIsDmPartyDrawerOpen(false)} className="btn btn-ghost btn-icon" aria-label="Fechar">
                 <X className="w-4 h-4" />
               </button>
             </div>
-          </div>
+          </header>
 
-          {/* Character Selector Strip */}
-          <div className="px-5 py-2.5 border-b border-white/[0.06] flex items-center gap-1.5 overflow-x-auto">
-            {characterSheets.map((cs) => {
-              const isSelected = activeSheet?.id === cs.id;
-              return (
-                <button
-                  key={cs.id}
-                  onClick={() => setIsDmPartyDrawerOpen(true, cs.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors shrink-0 flex items-center gap-2 ${
-                    isSelected
-                      ? 'bg-white/[0.09] text-zinc-100'
-                      : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/[0.04]'
-                  }`}
-                >
-                  <span>{cs.name}</span>
-                  <span className="text-[11px] font-mono text-zinc-400">
-                    {cs.hp}/{cs.maxHp}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Sheet Details */}
-          {activeSheet ? (
-            <div className="flex-1 overflow-y-auto p-5 space-y-5">
-              {/* Summary Card */}
-              <div className="p-4 rounded-xl bg-[#16161a] border border-white/[0.07] space-y-4">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <h4 className="text-base font-semibold text-zinc-100">
-                      {activeSheet.name}
-                    </h4>
-                    <p className="text-xs text-zinc-400 mt-0.5">
-                      {activeSheet.race} · {activeSheet.className} Nv. {activeSheet.level}{' '}
-                      {activeSheet.subclass ? `(${activeSheet.subclass})` : ''}
-                    </p>
-                    <p className="text-[11px] text-zinc-500 mt-0.5">
-                      {activeSheet.playerName} · {activeSheet.background}
-                    </p>
-                  </div>
-
-                  <button
-                    onClick={() => setEditingSheetId(activeSheet.id)}
-                    className="btn-subtle inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs shrink-0"
-                  >
-                    <Edit3 className="w-3.5 h-3.5 text-zinc-400" />
-                    <span>Ficha completa</span>
-                  </button>
-                </div>
-
-                {/* Vitals */}
-                <div className="grid grid-cols-3 gap-2.5 pt-3 border-t border-white/[0.06]">
-                  <div className="p-2.5 rounded-lg bg-[#0e0e11] border border-white/[0.06]">
-                    <span className="text-[10px] text-zinc-500 block">
-                      Pontos de Vida
-                    </span>
-                    <div className="flex items-center justify-between mt-1">
-                      <span className="text-sm font-mono font-semibold text-zinc-100">
-                        {activeSheet.hp}/{activeSheet.maxHp}
-                      </span>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() =>
-                            handleQuickHpChange(
-                              activeSheet.id,
-                              activeSheet.hp,
-                              activeSheet.maxHp,
-                              -1
-                            )
-                          }
-                          className="w-5 h-5 rounded bg-white/[0.06] hover:bg-white/[0.12] text-zinc-300 text-xs font-mono"
-                        >
-                          -
-                        </button>
-                        <button
-                          onClick={() =>
-                            handleQuickHpChange(
-                              activeSheet.id,
-                              activeSheet.hp,
-                              activeSheet.maxHp,
-                              1
-                            )
-                          }
-                          className="w-5 h-5 rounded bg-white/[0.06] hover:bg-white/[0.12] text-zinc-300 text-xs font-mono"
-                        >
-                          +
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="p-2.5 rounded-lg bg-[#0e0e11] border border-white/[0.06]">
-                    <span className="text-[10px] text-zinc-500 block">
-                      Defesa (CA)
-                    </span>
-                    <div className="text-sm font-mono font-semibold text-zinc-100 mt-1">
-                      {activeSheet.armorClass}
-                    </div>
-                  </div>
-
-                  <div className="p-2.5 rounded-lg bg-[#0e0e11] border border-white/[0.06]">
-                    <span className="text-[10px] text-zinc-500 block">
-                      Percepção Passiva
-                    </span>
-                    <div className="text-sm font-mono font-semibold text-zinc-100 mt-1">
-                      {activeSheet.passivePerception}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Attributes */}
-                <div className="grid grid-cols-6 gap-1.5">
-                  {(
-                    [
-                      ['FOR', activeSheet.stats.str],
-                      ['DES', activeSheet.stats.dex],
-                      ['CON', activeSheet.stats.con],
-                      ['INT', activeSheet.stats.int],
-                      ['SAB', activeSheet.stats.wis],
-                      ['CAR', activeSheet.stats.cha],
-                    ] as const
-                  ).map(([lbl, val]) => (
-                    <div
-                      key={lbl}
-                      className="p-2 rounded-lg bg-[#0e0e11] border border-white/[0.05] text-center"
-                    >
-                      <span className="text-[9px] text-zinc-500 block">{lbl}</span>
-                      <span className="text-xs font-semibold text-zinc-200">{val}</span>
-                      <span className="text-[10px] font-mono text-zinc-400 block">
-                        {calcMod(val)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Class Features (5.5e) */}
-              {activeSheet.classFeatures && activeSheet.classFeatures.length > 0 && (
-                <div className="space-y-2">
-                  <h5 className="text-xs font-semibold text-zinc-300">
-                    Habilidades Nv. 1–{activeSheet.level} ({activeSheet.classFeatures.length})
-                  </h5>
-                  <div className="flex flex-wrap gap-1.5">
-                    {activeSheet.classFeatures.map((f, idx) => (
-                      <span
-                        key={idx}
-                        title={f.description}
-                        className="px-2 py-1 rounded-md bg-[#16161a] border border-white/[0.06] text-[11px] text-zinc-300"
-                      >
-                        <span className="text-zinc-500 font-mono mr-1">Nv{f.level}</span>
-                        {f.name}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Spells */}
-              <div className="space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <h5 className="text-xs font-semibold text-zinc-300">
-                    Grimório ({activeSheet.spells.length})
-                  </h5>
-                  <div className="flex gap-2.5 text-[11px] font-mono text-zinc-500">
-                    <span>
-                      Nv1 {activeSheet.spellSlots.level1.used}/{activeSheet.spellSlots.level1.max}
-                    </span>
-                    <span>
-                      Nv2 {activeSheet.spellSlots.level2.used}/{activeSheet.spellSlots.level2.max}
-                    </span>
-                    <span>
-                      Nv3 {activeSheet.spellSlots.level3.used}/{activeSheet.spellSlots.level3.max}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  {activeSheet.spells.map((sp) => (
-                    <div
-                      key={sp.id}
-                      className="p-3 rounded-lg bg-[#16161a] border border-white/[0.06] text-xs"
-                    >
-                      <div className="flex items-center justify-between font-medium text-zinc-200">
-                        <span>{sp.name}</span>
-                        <span className="text-[11px] text-zinc-500 font-mono">
-                          {sp.castingTime} · {sp.range}
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-zinc-400 mt-1 leading-relaxed">
-                        {sp.description}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Equipment */}
-              <div className="space-y-2.5">
-                <h5 className="text-xs font-semibold text-zinc-300">
-                  Equipamento ({activeSheet.equipment.length})
-                </h5>
-                <div className="space-y-1.5">
-                  {activeSheet.equipment.map((eq) => (
-                    <div
-                      key={eq.id}
-                      className="p-3 rounded-lg bg-[#16161a] border border-white/[0.06] flex items-center justify-between text-xs"
-                    >
-                      <div>
-                        <span className="font-medium text-zinc-200">{eq.name}</span>
-                        <span className="text-[11px] text-zinc-500 block">
-                          {eq.category} {eq.damage ? `· ${eq.damage}` : ''}{' '}
-                          {eq.armorClass ? `· ${eq.armorClass}` : ''}
-                        </span>
-                      </div>
-                      <span className="text-[11px] font-mono text-zinc-500">
-                        ×{eq.quantity}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
+          {partySheets.length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-center p-8 gap-2">
+              <Users className="w-5 h-5 text-fg-subtle" />
+              <p className="text-sm font-medium text-fg">Nenhuma ficha de jogador ainda</p>
+              <p className="text-[13px] text-fg-muted max-w-xs">
+                As fichas aparecem aqui assim que os jogadores que entraram nesta campanha criarem seus personagens. Você poderá visualizar e editar todas elas por aqui.
+              </p>
             </div>
           ) : (
-            <div className="p-8 text-center text-xs text-zinc-500">
-              Nenhuma ficha cadastrada nesta campanha.
-            </div>
+            <>
+              <div className="border-b border-line overflow-x-auto shrink-0">
+                <ul className="flex gap-1 p-2">
+                  {partySheets.map((cs) => {
+                    const selected = activeSheet?.id === cs.id;
+                    const pct = cs.hp / Math.max(1, cs.maxHp);
+                    return (
+                      <li key={cs.id} className="shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setIsDmPartyDrawerOpen(true, cs.id)}
+                          aria-current={selected}
+                          className={`px-3 py-1.5 rounded-md text-[13px] flex items-center gap-2 ${
+                            selected ? 'bg-surface-2 text-fg font-medium' : 'text-fg-muted hover:bg-surface-2/60'
+                          }`}
+                        >
+                          <span>{cs.name}</span>
+                          <span className={`tabular-nums text-xs ${pct <= 0.25 ? 'text-danger' : 'text-fg-subtle'}`}>
+                            {cs.hp}/{cs.maxHp}
+                          </span>
+                          {cs.id.startsWith('char-') && <span className="badge badge-warning">salvando</span>}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+
+              {activeSheet && (
+                <div className="flex-1 overflow-y-auto p-4 space-y-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h4 className="text-base font-semibold text-fg truncate">{activeSheet.name}</h4>
+                      <p className="text-[13px] text-fg-muted">
+                        {activeSheet.race} · {activeSheet.className} {activeSheet.level}
+                        {activeSheet.subclass ? ` · ${activeSheet.subclass}` : ''}
+                      </p>
+                      <p className="text-xs text-fg-subtle">
+                        {activeSheet.playerName} · {activeSheet.background}
+                      </p>
+                    </div>
+                    <button type="button" onClick={() => setModal({ id: activeSheet.id })} className="btn btn-secondary btn-sm shrink-0">
+                      <FileText className="w-4 h-4" />
+                      Ficha completa
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="card px-3 py-2">
+                      <div className="text-xs text-fg-subtle">PV</div>
+                      <div className="text-lg font-semibold tabular-nums">
+                        {activeSheet.hp}
+                        <span className="text-sm text-fg-subtle font-normal">/{activeSheet.maxHp}</span>
+                      </div>
+                      {activeSheet.tempHp > 0 && <div className="text-xs text-info">+{activeSheet.tempHp} temp.</div>}
+                    </div>
+                    <div className="card px-3 py-2">
+                      <div className="text-xs text-fg-subtle">CA</div>
+                      <div className="text-lg font-semibold tabular-nums">{activeSheet.armorClass}</div>
+                    </div>
+                    <div className="card px-3 py-2">
+                      <div className="text-xs text-fg-subtle">Percepção passiva</div>
+                      <div className="text-lg font-semibold tabular-nums">{activeSheet.passivePerception}</div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={0}
+                      value={hpInput}
+                      onChange={(e) => setHpInput(e.target.value)}
+                      className="input w-24"
+                      placeholder="Valor"
+                      aria-label="Dano ou cura"
+                    />
+                    <button type="button" className="btn btn-secondary" onClick={() => changeHp(-1)}>
+                      <Minus className="w-4 h-4" />
+                      Dano
+                    </button>
+                    <button type="button" className="btn btn-secondary" onClick={() => changeHp(1)}>
+                      <Plus className="w-4 h-4" />
+                      Cura
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-6 gap-1.5">
+                    {ABILITIES.map((a) => (
+                      <div key={a.id} className="card px-1 py-2 text-center">
+                        <div className="text-xs text-fg-subtle">{a.short}</div>
+                        <div className="text-sm font-semibold tabular-nums">{formatModifier(abilityModifier(activeSheet.stats[a.id]))}</div>
+                        <div className="text-xs text-fg-subtle tabular-nums">{activeSheet.stats[a.id]}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {activeSheet.spells.length > 0 && (
+                    <div>
+                      <h5 className="text-[13px] font-medium text-fg-muted mb-1.5">Magias ({activeSheet.spells.length})</h5>
+                      <p className="text-[13px] text-fg leading-relaxed">
+                        {activeSheet.spells.map((s) => s.name).join(', ')}
+                      </p>
+                    </div>
+                  )}
+
+                  {activeSheet.equipment.length > 0 && (
+                    <div>
+                      <h5 className="text-[13px] font-medium text-fg-muted mb-1.5">Equipamento</h5>
+                      <ul className="card divide-y divide-line">
+                        {activeSheet.equipment.map((eq) => (
+                          <li key={eq.id} className="px-3 py-2 flex items-center justify-between gap-3 text-[13px]">
+                            <span className="min-w-0">
+                              <span className="text-fg">{eq.name}</span>
+                              {eq.equipped && <span className="badge ml-2">equipado</span>}
+                            </span>
+                            <span className="text-fg-subtle tabular-nums shrink-0">× {eq.quantity}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
           )}
-        </div>
+        </aside>
       </div>
 
-      {(editingSheetId || creatingNewSheet) && (
-        <CharacterSheetModal
-          sheetId={creatingNewSheet ? null : editingSheetId}
-          isOpen={true}
-          isDmContext={true}
-          onClose={() => {
-            setEditingSheetId(null);
-            setCreatingNewSheet(false);
-          }}
-        />
-      )}
+      {modal && <CharacterSheetModal sheetId={modal.id} isOpen onClose={() => setModal(null)} />}
     </>
   );
 };

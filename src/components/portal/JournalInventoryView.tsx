@@ -82,7 +82,7 @@ export const JournalInventoryView: React.FC = () => {
   const [itemHolder, setItemHolder] = useState('');
   const [itemNotes, setItemNotes] = useState('');
 
-  // Stronghold Edit & Upgrade Form States
+  // Edição da base e formulário de melhorias
   const [isEditingStronghold, setIsEditingStronghold] = useState(false);
   const [shName, setShName] = useState(partyResources.stronghold.name);
   const [shType, setShType] = useState(partyResources.stronghold.type);
@@ -106,20 +106,21 @@ export const JournalInventoryView: React.FC = () => {
     }
   }, [activeChar?.name, currentUser?.name, pCharacterName]);
 
-  const openStrongholdEditor = () => {
-    setShName(partyResources.stronghold.name);
-    setShType(partyResources.stronghold.type);
-    setShIntegrity(partyResources.stronghold.integrity);
-    setShMaxIntegrity(partyResources.stronghold.maxIntegrity);
-    setShUpkeep(partyResources.stronghold.upkeepPerMonth);
-    setShDesc(partyResources.stronghold.description);
+  const openStrongholdEditor = (creating = false) => {
+    setShName(creating ? '' : partyResources.stronghold.name);
+    setShType(creating ? '' : partyResources.stronghold.type);
+    setShIntegrity(creating ? 100 : partyResources.stronghold.integrity);
+    setShMaxIntegrity(creating ? 100 : partyResources.stronghold.maxIntegrity);
+    setShUpkeep(creating ? '' : partyResources.stronghold.upkeepPerMonth);
+    setShDesc(creating ? '' : partyResources.stronghold.description);
     setIsEditingStronghold(true);
   };
 
   const handleSaveStronghold = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!shName.trim()) return;
     updateStronghold({
-      name: shName.trim() || 'Base da Companhia',
+      name: shName.trim(),
       type: shType.trim() || 'Refúgio',
       integrity: Number(shIntegrity),
       maxIntegrity: Math.max(1, Number(shMaxIntegrity)),
@@ -127,6 +128,19 @@ export const JournalInventoryView: React.FC = () => {
       description: shDesc.trim(),
     });
     setIsEditingStronghold(false);
+  };
+
+  const handleRemoveStronghold = () => {
+    updateStronghold({
+      name: '',
+      type: '',
+      integrity: 100,
+      maxIntegrity: 100,
+      upkeepPerMonth: '',
+      description: '',
+    });
+    setIsEditingStronghold(false);
+    setShowAddUpgrade(false);
   };
 
   const handleCreateUpgrade = (e: React.FormEvent) => {
@@ -205,171 +219,174 @@ export const JournalInventoryView: React.FC = () => {
       : true
   );
 
+  const sh = partyResources.stronghold;
+  const isLegacyDefaultStronghold =
+    sh.name === 'Base da Companhia' &&
+    sh.description === 'Configure o nome, descrição e melhorias da base de operações do grupo.' &&
+    sh.upgrades.length === 0;
+  const hasStronghold = Boolean(sh.name.trim()) && !isLegacyDefaultStronghold;
+  const integrityPct = Math.max(
+    0,
+    Math.min(100, Math.round((sh.integrity / Math.max(1, sh.maxIntegrity)) * 100))
+  );
+  const integrityFill =
+    integrityPct <= 25 ? 'bg-danger' : integrityPct <= 50 ? 'bg-warning' : 'bg-success';
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-[calc(100vh-7.5rem)] overflow-y-auto pr-1">
-      {/* Left Column: Chronicles & Personal Notes */}
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-[calc(100vh-7.5rem)] overflow-y-auto pr-1 content-start">
+      {/* Coluna esquerda: diário e notas pessoais */}
       <div className="lg:col-span-6 space-y-4">
-        <div className="p-4 rounded-xl surface-panel space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="space-y-0.5">
-              <h2 className="text-base font-semibold text-zinc-100 tracking-tight">
-                {journalTab === 'collective'
-                  ? 'Crônicas da campanha'
-                  : 'Caderno privado'}
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <h2 className="section-title">
+                {journalTab === 'collective' ? 'Diário da campanha' : 'Notas pessoais'}
               </h2>
-              <p className="text-xs text-zinc-500">
+              <p className="text-[13px] text-fg-muted">
                 {journalTab === 'collective'
-                  ? 'Relatos colaborativos das sessões compartilhados com toda a mesa.'
-                  : 'Anotações individuais com controle de visibilidade para o mestre.'}
+                  ? 'Resumos das sessões compartilhados com a mesa.'
+                  : 'Anotações individuais com controle de acesso do mestre.'}
               </p>
             </div>
 
             {journalTab === 'collective' ? (
               <button
                 onClick={() => setShowAddJournal(!showAddJournal)}
-                className="btn-solid px-3 py-1.5 rounded-lg text-xs inline-flex items-center gap-1.5"
+                className="btn btn-primary btn-sm"
               >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Novo relato</span>
+                <Plus className="w-4 h-4" />
+                <span>Novo registro</span>
               </button>
             ) : (
               <button
                 onClick={() => setShowAddPersonal(!showAddPersonal)}
-                className="btn-solid px-3 py-1.5 rounded-lg text-xs inline-flex items-center gap-1.5"
+                className="btn btn-primary btn-sm"
               >
-                <Plus className="w-3.5 h-3.5" />
+                <Plus className="w-4 h-4" />
                 <span>Nova nota</span>
               </button>
             )}
           </div>
 
-          {/* Segmented Control */}
-          <div className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-[#0e0e11] border border-white/[0.06]">
+          <div className="segmented w-full">
             <button
               onClick={() => setJournalTab('collective')}
-              className={`py-1.5 px-3 rounded-md text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${
-                journalTab === 'collective'
-                  ? 'bg-zinc-100 text-zinc-950'
-                  : 'text-zinc-400 hover:text-zinc-200'
+              className={`segmented-item flex-1 inline-flex items-center justify-center gap-1.5 ${
+                journalTab === 'collective' ? 'segmented-item-active' : ''
               }`}
             >
-              <BookMarked className="w-3.5 h-3.5" />
-              <span>Crônicas ({journal.length})</span>
+              <BookMarked className="w-4 h-4" />
+              <span>Diário</span>
+              <span className="tabular-nums text-fg-subtle">{journal.length}</span>
             </button>
             <button
               onClick={() => setJournalTab('personal')}
-              className={`py-1.5 px-3 rounded-md text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${
-                journalTab === 'personal'
-                  ? 'bg-zinc-100 text-zinc-950'
-                  : 'text-zinc-400 hover:text-zinc-200'
+              className={`segmented-item flex-1 inline-flex items-center justify-center gap-1.5 ${
+                journalTab === 'personal' ? 'segmented-item-active' : ''
               }`}
             >
-              <Lock className="w-3.5 h-3.5" />
-              <span>Notas privadas ({visiblePersonalNotes.length})</span>
+              <Lock className="w-4 h-4" />
+              <span>Notas pessoais</span>
+              <span className="tabular-nums text-fg-subtle">{visiblePersonalNotes.length}</span>
             </button>
           </div>
         </div>
 
-        {/* Collective Journal */}
+        {/* Diário coletivo */}
         {journalTab === 'collective' && (
           <>
             {showAddJournal && (
-              <form
-                onSubmit={handleAddJournal}
-                className="p-4 rounded-xl surface-panel space-y-3 text-xs"
-              >
+              <form onSubmit={handleAddJournal} className="card p-4 space-y-3">
                 <div className="grid grid-cols-3 gap-2">
-                  <input
-                    type="number"
-                    min={1}
-                    value={jSessionNum}
-                    onChange={(e) => setJSessionNum(Number(e.target.value))}
-                    placeholder="Sessão #"
-                    className="input-clean px-2.5 py-1.5 rounded-lg font-mono"
-                  />
+                  <div>
+                    <label className="label">Sessão</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={jSessionNum}
+                      onChange={(e) => setJSessionNum(Number(e.target.value))}
+                      className="input tabular-nums"
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="label">Autor</label>
+                    <input
+                      type="text"
+                      value={jAuthor}
+                      onChange={(e) => setJAuthor(e.target.value)}
+                      placeholder="Jogador ou personagem"
+                      className="input"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="label">Título</label>
                   <input
                     type="text"
-                    value={jAuthor}
-                    onChange={(e) => setJAuthor(e.target.value)}
-                    placeholder="Autor ou personagem"
-                    className="input-clean col-span-2 px-2.5 py-1.5 rounded-lg"
+                    required
+                    value={jTitle}
+                    onChange={(e) => setJTitle(e.target.value)}
+                    className="input"
                   />
                 </div>
-                <input
-                  type="text"
-                  required
-                  value={jTitle}
-                  onChange={(e) => setJTitle(e.target.value)}
-                  placeholder="Título da crônica"
-                  className="input-clean w-full px-3 py-1.5 rounded-lg"
-                />
-                <MentionTextarea
-                  value={jContent}
-                  onChange={setJContent}
-                  rows={4}
-                  placeholder="Escreva o relato da sessão citando @NPCs e #Locais..."
-                />
+                <div>
+                  <label className="label">Resumo</label>
+                  <MentionTextarea
+                    value={jContent}
+                    onChange={setJContent}
+                    rows={4}
+                    placeholder="Suporta @NPC e #Local"
+                  />
+                </div>
                 <div className="flex justify-end gap-2">
                   <button
                     type="button"
                     onClick={() => setShowAddJournal(false)}
-                    className="btn-subtle px-3 py-1.5 rounded-lg"
+                    className="btn btn-secondary btn-sm"
                   >
                     Cancelar
                   </button>
-                  <button
-                    type="submit"
-                    className="btn-solid px-4 py-1.5 rounded-lg"
-                  >
-                    Publicar relato
+                  <button type="submit" className="btn btn-primary btn-sm">
+                    Publicar
                   </button>
                 </div>
               </form>
             )}
 
             {journal.length === 0 ? (
-              <div className="py-12 px-6 rounded-xl surface-panel text-center space-y-2">
-                <BookMarked className="w-6 h-6 text-zinc-600 mx-auto" />
-                <h3 className="text-sm font-medium text-zinc-300">
-                  Nenhuma crônica registrada
-                </h3>
-                <p className="text-xs text-zinc-500 max-w-sm mx-auto">
-                  Registre resumos das sessões com menções diretas a personagens e locais.
+              <div className="card py-12 px-6 text-center">
+                <BookMarked className="w-5 h-5 text-fg-subtle mx-auto mb-3" />
+                <h3 className="text-sm font-medium text-fg">Nenhum registro</h3>
+                <p className="text-[13px] text-fg-muted max-w-sm mx-auto mt-1">
+                  Registre resumos das sessões citando personagens e locais.
                 </p>
               </div>
             ) : (
-              <div className="space-y-3.5">
+              <div className="space-y-3">
                 {journal.map((entry) => (
-                  <article
-                    key={entry.id}
-                    className="p-5 rounded-xl surface-panel space-y-3"
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-2 border-b border-white/[0.06] pb-3">
-                      <div className="space-y-0.5">
-                        <span className="text-[11px] font-mono text-zinc-500 tabular-nums">
+                  <article key={entry.id} className="card p-4 space-y-3">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <span className="text-xs text-fg-subtle tabular-nums">
                           Sessão {entry.sessionNumber} · {entry.inGameDate}
                         </span>
-                        <h3 className="text-xl font-serif font-medium text-zinc-100">
-                          {entry.title}
-                        </h3>
+                        <h3 className="text-base font-semibold text-fg">{entry.title}</h3>
                       </div>
                       <div className="flex items-center gap-1.5">
-                        <span className="text-[11px] px-2.5 py-0.5 rounded-md bg-[#0e0e11] border border-white/[0.06] text-zinc-400">
-                          {entry.author}
-                        </span>
+                        <span className="badge">{entry.author}</span>
                         {viewRole === 'gm' && (
                           <button
                             onClick={() => deleteJournalEntry(entry.id)}
-                            className="p-1 rounded text-zinc-600 hover:text-rose-400"
-                            title="Remover crônica"
+                            className="btn btn-danger-ghost btn-sm btn-icon"
+                            title="Excluir registro"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         )}
                       </div>
                     </div>
 
-                    <div className="text-sm text-zinc-300 leading-relaxed">
+                    <div className="text-sm text-fg leading-relaxed">
                       <MentionText text={entry.content} />
                     </div>
                   </article>
@@ -379,67 +396,71 @@ export const JournalInventoryView: React.FC = () => {
           </>
         )}
 
-        {/* Personal Notes */}
+        {/* Notas pessoais */}
         {journalTab === 'personal' && (
           <>
             {isStrictDmView && (
-              <div className="p-3.5 rounded-xl bg-[#0e0e11] border border-white/[0.07] text-xs text-zinc-400 flex items-center gap-2.5">
-                <Lock className="w-4 h-4 text-zinc-500 shrink-0" />
-                <span>
-                  Exibindo apenas anotações pessoais compartilhadas voluntariamente com o mestre.
-                </span>
+              <div className="card-muted px-3 py-2.5 text-[13px] text-fg-muted flex items-center gap-2">
+                <Lock className="w-4 h-4 text-fg-subtle shrink-0" />
+                <span>Exibindo apenas notas que os jogadores compartilharam com o mestre.</span>
               </div>
             )}
 
             {showAddPersonal && (
-              <form
-                onSubmit={handleAddPersonalNote}
-                className="p-4 rounded-xl surface-panel space-y-3 text-xs"
-              >
+              <form onSubmit={handleAddPersonalNote} className="card p-4 space-y-3">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <input
-                    type="text"
-                    required
-                    value={pTitle}
-                    onChange={(e) => setPTitle(e.target.value)}
-                    placeholder="Título da nota..."
-                    className="input-clean px-3 py-1.5 rounded-lg"
-                  />
-                  <input
-                    type="text"
-                    value={pCharacterName}
-                    onChange={(e) => setPCharacterName(e.target.value)}
-                    placeholder="Personagem"
-                    className="input-clean px-3 py-1.5 rounded-lg"
-                  />
-                  <select
-                    value={pCategory}
-                    onChange={(e) =>
-                      setPCategory(
-                        e.target.value as PersonalJournalNote['category']
-                      )
-                    }
-                    className="input-clean px-3 py-1.5 rounded-lg"
-                  >
-                    <option value="theory">Teoria / Investigação</option>
-                    <option value="secret">Segredo pessoal</option>
-                    <option value="backstory">Prelúdio</option>
-                    <option value="goal">Objetivo</option>
-                  </select>
+                  <div>
+                    <label className="label">Título</label>
+                    <input
+                      type="text"
+                      required
+                      value={pTitle}
+                      onChange={(e) => setPTitle(e.target.value)}
+                      className="input"
+                    />
+                  </div>
+                  <div>
+                    <label className="label">Personagem</label>
+                    <input
+                      type="text"
+                      value={pCharacterName}
+                      onChange={(e) => setPCharacterName(e.target.value)}
+                      className="input"
+                    />
+                  </div>
+                  <div>
+                    <label className="label">Categoria</label>
+                    <select
+                      value={pCategory}
+                      onChange={(e) =>
+                        setPCategory(e.target.value as PersonalJournalNote['category'])
+                      }
+                      className="input"
+                    >
+                      <option value="theory">Teoria</option>
+                      <option value="secret">Segredo pessoal</option>
+                      <option value="backstory">Antecedente</option>
+                      <option value="goal">Objetivo</option>
+                    </select>
+                  </div>
                 </div>
 
-                <MentionTextarea
-                  value={pContent}
-                  onChange={setPContent}
-                  rows={4}
-                  placeholder="Anotações privadas, suspeitas ou planos (@NPC, #Local)..."
-                />
+                <div>
+                  <label className="label">Conteúdo</label>
+                  <MentionTextarea
+                    value={pContent}
+                    onChange={setPContent}
+                    rows={4}
+                    placeholder="Suspeitas, planos ou segredos. Suporta @NPC e #Local."
+                  />
+                </div>
 
-                <label className="flex items-center gap-2 cursor-pointer select-none text-zinc-400 p-2.5 rounded-lg bg-[#0e0e11] border border-white/[0.06]">
+                <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-fg-muted">
                   <input
                     type="checkbox"
                     checked={pShareWithDm}
                     onChange={(e) => setPShareWithDm(e.target.checked)}
+                    className="checkbox"
                   />
                   <span>Permitir leitura pelo mestre</span>
                 </label>
@@ -448,14 +469,11 @@ export const JournalInventoryView: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setShowAddPersonal(false)}
-                    className="btn-subtle px-3 py-1.5 rounded-lg"
+                    className="btn btn-secondary btn-sm"
                   >
                     Cancelar
                   </button>
-                  <button
-                    type="submit"
-                    className="btn-solid px-4 py-1.5 rounded-lg"
-                  >
+                  <button type="submit" className="btn btn-primary btn-sm">
                     Salvar nota
                   </button>
                 </div>
@@ -463,67 +481,57 @@ export const JournalInventoryView: React.FC = () => {
             )}
 
             {visiblePersonalNotes.length === 0 ? (
-              <div className="py-12 px-6 rounded-xl surface-panel text-center space-y-2">
-                <FileLock2 className="w-6 h-6 text-zinc-600 mx-auto" />
-                <h3 className="text-sm font-medium text-zinc-300">
-                  Nenhuma nota privada visível
-                </h3>
-                <p className="text-xs text-zinc-500 max-w-sm mx-auto">
-                  Registre teorias ou segredos individuais do seu personagem com privacidade garantida.
+              <div className="card py-12 px-6 text-center">
+                <FileLock2 className="w-5 h-5 text-fg-subtle mx-auto mb-3" />
+                <h3 className="text-sm font-medium text-fg">Nenhuma nota visível</h3>
+                <p className="text-[13px] text-fg-muted max-w-sm mx-auto mt-1">
+                  Registre teorias ou segredos do seu personagem. As notas são privadas por padrão.
                 </p>
               </div>
             ) : (
               <div className="space-y-3">
                 {visiblePersonalNotes.map((note) => (
-                  <article
-                    key={note.id}
-                    className="p-4 rounded-xl surface-panel space-y-3"
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-2 border-b border-white/[0.06] pb-2.5">
-                      <div>
-                        <div className="flex items-center gap-2 text-[11px] text-zinc-500">
-                          <span className="inline-flex items-center gap-1 text-zinc-300 font-medium">
-                            <Lock className="w-3 h-3 text-zinc-500" />
-                            {note.characterName}
-                          </span>
+                  <article key={note.id} className="card p-4 space-y-3">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 text-xs text-fg-subtle">
+                          <span className="font-medium text-fg-muted">{note.characterName}</span>
                           <span>·</span>
-                          <span className="font-mono">{note.updatedAt}</span>
+                          <span className="tabular-nums">{note.updatedAt}</span>
                         </div>
-                        <h3 className="text-lg font-serif font-medium text-zinc-100 mt-0.5">
-                          {note.title}
-                        </h3>
+                        <h3 className="text-base font-semibold text-fg">{note.title}</h3>
                       </div>
 
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1">
                         <button
                           onClick={() => togglePersonalNoteDmAccess(note.id)}
-                          className="btn-subtle px-2.5 py-1 rounded-md text-[11px] inline-flex items-center gap-1"
+                          className="btn btn-secondary btn-sm"
                           title="Alternar visibilidade para o mestre"
                         >
                           {note.sharedWithDm ? (
                             <>
-                              <Eye className="w-3 h-3 text-emerald-400" />
+                              <Eye className="w-4 h-4" />
                               <span>Visível ao mestre</span>
                             </>
                           ) : (
                             <>
-                              <EyeOff className="w-3 h-3 text-zinc-500" />
-                              <span>Privado</span>
+                              <EyeOff className="w-4 h-4" />
+                              <span>Privada</span>
                             </>
                           )}
                         </button>
 
                         <button
                           onClick={() => deletePersonalJournalNote(note.id)}
-                          className="p-1.5 rounded-md text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10"
+                          className="btn btn-danger-ghost btn-sm btn-icon"
                           title="Excluir nota"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
                     </div>
 
-                    <div className="text-sm text-zinc-300 leading-relaxed">
+                    <div className="text-sm text-fg leading-relaxed">
                       <MentionText text={note.content} />
                     </div>
                   </article>
@@ -534,359 +542,403 @@ export const JournalInventoryView: React.FC = () => {
         )}
       </div>
 
-      {/* Right Column: Treasury, Stronghold & Shared Inventory */}
+      {/* Coluna direita: tesouro, base e inventário */}
       <div className="lg:col-span-6 space-y-4">
-        {/* Treasury & Supplies */}
-        <div className="p-5 rounded-xl surface-panel space-y-3.5">
-          <div className="flex items-center gap-2 text-zinc-200">
-            <Coins className="w-4 h-4 text-zinc-400" />
-            <h3 className="text-sm font-semibold tracking-tight">
-              Tesouro & suprimentos
-            </h3>
+        {/* Tesouro e suprimentos */}
+        <section className="card">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-line">
+            <Coins className="w-4 h-4 text-fg-muted" />
+            <h3 className="section-title">Tesouro e suprimentos</h3>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-2 sm:grid-cols-3 divide-line">
             {(
               [
                 { key: 'gold', label: 'Ouro (PO)', step: 10 },
                 { key: 'silver', label: 'Prata (PP)', step: 5 },
                 { key: 'copper', label: 'Cobre (PC)', step: 10 },
                 { key: 'rations', label: 'Rações', step: 1 },
-                { key: 'torches', label: 'Tochas & óleo', step: 1 },
-                { key: 'healerKits', label: 'Kits médicos', step: 1 },
+                { key: 'torches', label: 'Tochas e óleo', step: 1 },
+                { key: 'healerKits', label: 'Kits de cura', step: 1 },
               ] as const
             ).map((res) => (
               <div
                 key={res.key}
-                className="p-3 rounded-xl bg-[#0e0e11] border border-white/[0.06] flex flex-col justify-between gap-2"
+                className="px-4 py-3 border-b border-r border-line flex flex-col gap-1.5"
               >
-                <div className="text-[11px] text-zinc-500">{res.label}</div>
-                <div className="flex items-center justify-between">
-                  <span className="text-lg font-mono font-semibold text-zinc-100 tabular-nums">
+                <div className="text-xs text-fg-subtle">{res.label}</div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-lg font-semibold text-fg tabular-nums">
                     {partyResources[res.key]}
                   </span>
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-0.5">
                     <button
                       onClick={() => adjustPartyCurrency(res.key, -res.step)}
-                      className="btn-subtle p-1 rounded"
+                      className="btn btn-ghost btn-icon h-7 w-7"
+                      title={`-${res.step}`}
                     >
-                      <Minus className="w-3 h-3" />
+                      <Minus className="w-3.5 h-3.5" />
                     </button>
                     <button
                       onClick={() => adjustPartyCurrency(res.key, res.step)}
-                      className="btn-subtle p-1 rounded"
+                      className="btn btn-ghost btn-icon h-7 w-7"
+                      title={`+${res.step}`}
                     >
-                      <Plus className="w-3 h-3" />
+                      <Plus className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
               </div>
             ))}
           </div>
-        </div>
+        </section>
 
-        {/* Party Stronghold */}
-        <div className="p-5 rounded-xl surface-panel space-y-3.5">
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex items-center gap-2.5">
-              <Castle className="w-4 h-4 text-zinc-400 shrink-0" />
-              <div>
-                <span className="text-[11px] text-zinc-500 block">
-                  {partyResources.stronghold.type} · Manutenção {partyResources.stronghold.upkeepPerMonth}
-                </span>
-                <h3 className="text-base font-serif font-medium text-zinc-100">
-                  {partyResources.stronghold.name}
-                </h3>
-              </div>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-mono px-2 py-0.5 rounded bg-[#0e0e11] text-zinc-300 border border-white/[0.06] tabular-nums">
-                {partyResources.stronghold.integrity}/
-                {partyResources.stronghold.maxIntegrity}
-              </span>
-              <button
-                type="button"
-                onClick={() =>
-                  isEditingStronghold
-                    ? setIsEditingStronghold(false)
-                    : openStrongholdEditor()
-                }
-                className="btn-subtle p-1.5 rounded-md"
-                title="Editar base de operações"
-              >
-                <Pencil className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-
-          {isEditingStronghold ? (
-            <form
-              onSubmit={handleSaveStronghold}
-              className="p-3.5 rounded-xl bg-[#0e0e11] border border-white/[0.08] space-y-2.5 text-xs"
-            >
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[10px] text-zinc-500 block mb-1">Nome da base</label>
-                  <input
-                    type="text"
-                    required
-                    value={shName}
-                    onChange={(e) => setShName(e.target.value)}
-                    className="input-clean w-full px-2.5 py-1.5 rounded-lg"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] text-zinc-500 block mb-1">Tipo</label>
-                  <input
-                    type="text"
-                    value={shType}
-                    onChange={(e) => setShType(e.target.value)}
-                    placeholder="Ex: Fortaleza, Navio, Torre..."
-                    className="input-clean w-full px-2.5 py-1.5 rounded-lg"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                <div>
-                  <label className="text-[10px] text-zinc-500 block mb-1">Integridade</label>
-                  <input
-                    type="number"
-                    value={shIntegrity}
-                    onChange={(e) => setShIntegrity(Number(e.target.value))}
-                    className="input-clean w-full px-2.5 py-1.5 rounded-lg font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] text-zinc-500 block mb-1">Máx</label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={shMaxIntegrity}
-                    onChange={(e) => setShMaxIntegrity(Number(e.target.value))}
-                    className="input-clean w-full px-2.5 py-1.5 rounded-lg font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] text-zinc-500 block mb-1">Manutenção</label>
-                  <input
-                    type="text"
-                    value={shUpkeep}
-                    onChange={(e) => setShUpkeep(e.target.value)}
-                    placeholder="15 PO/mês"
-                    className="input-clean w-full px-2.5 py-1.5 rounded-lg font-mono"
-                  />
-                </div>
-              </div>
-              <MentionTextarea
-                value={shDesc}
-                onChange={setShDesc}
-                rows={2}
-                placeholder="Descrição da base (@NPCs, #Local)..."
-              />
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsEditingStronghold(false)}
-                  className="btn-subtle px-3 py-1 rounded-lg"
-                >
-                  Cancelar
-                </button>
-                <button type="submit" className="btn-solid px-3.5 py-1 rounded-lg">
-                  Salvar base
-                </button>
-              </div>
-            </form>
-          ) : (
-            <div className="text-xs text-zinc-300 leading-relaxed">
-              <MentionText text={partyResources.stronghold.description} />
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-[11px] text-zinc-500">
-              <span>Melhorias da base</span>
-              <button
-                type="button"
-                onClick={() => setShowAddUpgrade(!showAddUpgrade)}
-                className="text-zinc-300 hover:text-white inline-flex items-center gap-1"
-              >
-                <Plus className="w-3 h-3" />
-                <span>Nova melhoria</span>
-              </button>
-            </div>
-
-            {showAddUpgrade && (
-              <form
-                onSubmit={handleCreateUpgrade}
-                className="p-3 rounded-xl bg-[#0e0e11] border border-white/[0.08] space-y-2 text-xs"
-              >
-                <div className="grid grid-cols-3 gap-2">
-                  <input
-                    type="text"
-                    required
-                    value={upgName}
-                    onChange={(e) => setUpgName(e.target.value)}
-                    placeholder="Nome da melhoria"
-                    className="input-clean col-span-2 px-2.5 py-1.5 rounded-lg"
-                  />
-                  <input
-                    type="text"
-                    value={upgCost}
-                    onChange={(e) => setUpgCost(e.target.value)}
-                    placeholder="Custo (ex: 50 PO)"
-                    className="input-clean px-2.5 py-1.5 rounded-lg font-mono"
-                  />
-                </div>
-                <input
-                  type="text"
-                  value={upgBenefit}
-                  onChange={(e) => setUpgBenefit(e.target.value)}
-                  placeholder="Benefício mecânico ou narrativo..."
-                  className="input-clean w-full px-2.5 py-1.5 rounded-lg"
-                />
-                <div className="flex justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowAddUpgrade(false)}
-                    className="btn-subtle px-2.5 py-1 rounded-lg"
-                  >
-                    Cancelar
-                  </button>
-                  <button type="submit" className="btn-solid px-3 py-1 rounded-lg">
-                    Adicionar
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {partyResources.stronghold.upgrades.length === 0 ? (
-              <p className="text-xs text-zinc-500 py-2">
-                Nenhuma melhoria cadastrada ainda.
-              </p>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {partyResources.stronghold.upgrades.map((upg) => (
-                  <div
-                    key={upg.id}
-                    onClick={() => toggleStrongholdUpgrade(upg.id)}
-                    className={`p-3 rounded-xl border text-xs cursor-pointer transition-colors space-y-1 group ${
-                      upg.installed
-                        ? 'bg-emerald-500/[0.04] border-emerald-500/25 text-zinc-100'
-                        : 'bg-[#0e0e11] border-white/[0.06] text-zinc-400 hover:border-white/[0.14]'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-1 font-medium">
-                      <span className="flex items-center gap-1.5 min-w-0">
-                        {upg.installed ? (
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                        ) : (
-                          <Circle className="w-3.5 h-3.5 text-zinc-600 shrink-0" />
-                        )}
-                        <span className="truncate">{upg.name}</span>
-                      </span>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <span className="text-[10px] font-mono text-zinc-400">
-                          {upg.cost}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            removeStrongholdUpgrade(upg.id);
-                          }}
-                          className="p-0.5 text-zinc-600 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                          title="Remover melhoria"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </div>
-                    <p className="text-[11px] text-zinc-500 pl-5 leading-snug">
-                      {upg.benefit}
+        {/* Base do grupo (opcional: criada pelo Mestre se a campanha tiver uma) */}
+        {(hasStronghold || isEditingStronghold || isStrictDmView) && (
+          <section className="card">
+            {!hasStronghold && !isEditingStronghold ? (
+              <div className="px-4 py-4 flex items-center justify-between gap-3">
+                <div className="flex items-start gap-2.5 min-w-0">
+                  <Castle className="w-4 h-4 text-fg-subtle shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <h3 className="section-title">Base do grupo</h3>
+                    <p className="text-xs text-fg-muted mt-0.5">
+                      Opcional. Crie uma base se o grupo tiver um refúgio, fortaleza ou navio.
                     </p>
                   </div>
-                ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openStrongholdEditor(true)}
+                  className="btn btn-secondary btn-sm shrink-0"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Criar base</span>
+                </button>
               </div>
-            )}
-          </div>
-        </div>
+            ) : (
+              <>
+                <div className="flex items-start justify-between gap-2 px-4 py-3 border-b border-line">
+                  <div className="flex items-start gap-2 min-w-0">
+                    <Castle className="w-4 h-4 text-fg-muted shrink-0 mt-0.5" />
+                    <div className="min-w-0">
+                      <h3 className="section-title truncate">
+                        {hasStronghold ? sh.name : 'Nova base do grupo'}
+                      </h3>
+                      {hasStronghold && (
+                        <span className="text-xs text-fg-subtle">
+                          {sh.type} · Manutenção {sh.upkeepPerMonth}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {isStrictDmView && hasStronghold && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          isEditingStronghold
+                            ? setIsEditingStronghold(false)
+                            : openStrongholdEditor(false)
+                        }
+                        className="btn btn-ghost btn-sm btn-icon"
+                        title="Editar base"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleRemoveStronghold}
+                        className="btn btn-danger-ghost btn-sm btn-icon"
+                        title="Remover base"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+                </div>
 
-        {/* Shared Party Inventory */}
-        <div className="p-5 rounded-xl surface-panel space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-zinc-200">
-              <Backpack className="w-4 h-4 text-zinc-400" />
-              <h3 className="text-sm font-semibold tracking-tight">
-                Espólio & provas do grupo
-              </h3>
+                <div className="p-4 space-y-4">
+                  {hasStronghold && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-fg-muted font-medium">Integridade</span>
+                        <span className="tabular-nums text-fg">
+                          {sh.integrity}/{sh.maxIntegrity}
+                        </span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-surface-3 overflow-hidden">
+                        <div
+                          className={`h-full transition-all ${integrityFill}`}
+                          style={{ width: `${integrityPct}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {isEditingStronghold ? (
+                    <form onSubmit={handleSaveStronghold} className="card-muted p-3 space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div>
+                          <label className="label">Nome</label>
+                          <input
+                            type="text"
+                            required
+                            value={shName}
+                            onChange={(e) => setShName(e.target.value)}
+                            placeholder="Ex.: Bastilha de Pedra"
+                            className="input"
+                          />
+                        </div>
+                        <div>
+                          <label className="label">Tipo</label>
+                          <input
+                            type="text"
+                            value={shType}
+                            onChange={(e) => setShType(e.target.value)}
+                            placeholder="Ex.: Fortaleza, navio, torre"
+                            className="input"
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <label className="label">Integridade</label>
+                          <input
+                            type="number"
+                            value={shIntegrity}
+                            onChange={(e) => setShIntegrity(Number(e.target.value))}
+                            className="input tabular-nums"
+                          />
+                        </div>
+                        <div>
+                          <label className="label">Máximo</label>
+                          <input
+                            type="number"
+                            min={1}
+                            value={shMaxIntegrity}
+                            onChange={(e) => setShMaxIntegrity(Number(e.target.value))}
+                            className="input tabular-nums"
+                          />
+                        </div>
+                        <div>
+                          <label className="label">Manutenção</label>
+                          <input
+                            type="text"
+                            value={shUpkeep}
+                            onChange={(e) => setShUpkeep(e.target.value)}
+                            placeholder="15 PO/mês"
+                            className="input"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="label">Descrição</label>
+                        <MentionTextarea
+                          value={shDesc}
+                          onChange={setShDesc}
+                          rows={2}
+                          placeholder="Suporta @NPC e #Local"
+                        />
+                      </div>
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingStronghold(false)}
+                          className="btn btn-secondary btn-sm"
+                        >
+                          Cancelar
+                        </button>
+                        <button type="submit" className="btn btn-primary btn-sm">
+                          {hasStronghold ? 'Salvar' : 'Criar base'}
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    sh.description && (
+                      <div className="text-sm text-fg leading-relaxed">
+                        <MentionText text={sh.description} />
+                      </div>
+                    )
+                  )}
+
+                  {hasStronghold && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[13px] font-medium text-fg-muted">Melhorias</span>
+                        {isStrictDmView && (
+                          <button
+                            type="button"
+                            onClick={() => setShowAddUpgrade(!showAddUpgrade)}
+                            className="btn btn-ghost btn-sm"
+                          >
+                            <Plus className="w-4 h-4" />
+                            <span>Adicionar</span>
+                          </button>
+                        )}
+                      </div>
+
+              {showAddUpgrade && (
+                <form onSubmit={handleCreateUpgrade} className="card-muted p-3 space-y-2">
+                  <div className="grid grid-cols-3 gap-2">
+                    <input
+                      type="text"
+                      required
+                      value={upgName}
+                      onChange={(e) => setUpgName(e.target.value)}
+                      placeholder="Nome"
+                      className="input col-span-2"
+                    />
+                    <input
+                      type="text"
+                      value={upgCost}
+                      onChange={(e) => setUpgCost(e.target.value)}
+                      placeholder="Custo (50 PO)"
+                      className="input"
+                    />
+                  </div>
+                  <input
+                    type="text"
+                    value={upgBenefit}
+                    onChange={(e) => setUpgBenefit(e.target.value)}
+                    placeholder="Benefício mecânico ou narrativo"
+                    className="input"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddUpgrade(false)}
+                      className="btn btn-secondary btn-sm"
+                    >
+                      Cancelar
+                    </button>
+                    <button type="submit" className="btn btn-primary btn-sm">
+                      Adicionar
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {sh.upgrades.length === 0 ? (
+                <p className="text-[13px] text-fg-subtle py-1">Nenhuma melhoria cadastrada.</p>
+              ) : (
+                <ul className="rounded-md border border-line divide-y divide-line overflow-hidden">
+                  {sh.upgrades.map((upg) => (
+                    <li
+                      key={upg.id}
+                      onClick={() => toggleStrongholdUpgrade(upg.id)}
+                      className="px-3 py-2 cursor-pointer hover:bg-surface-2 transition-colors group"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span
+                          className={`flex items-center gap-2 min-w-0 text-sm font-medium ${
+                            upg.installed ? 'text-fg' : 'text-fg-muted'
+                          }`}
+                        >
+                          {upg.installed ? (
+                            <CheckCircle2 className="w-4 h-4 text-success shrink-0" />
+                          ) : (
+                            <Circle className="w-4 h-4 text-fg-subtle shrink-0" />
+                          )}
+                          <span className="truncate">{upg.name}</span>
+                        </span>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span className="text-xs tabular-nums text-fg-subtle">{upg.cost}</span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeStrongholdUpgrade(upg.id);
+                            }}
+                            className="btn btn-danger-ghost btn-icon h-7 w-7 sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 transition-opacity"
+                            title="Remover melhoria"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-xs text-fg-subtle pl-6 leading-snug">{upg.benefit}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+                  </div>
+                  )}
+                </div>
+              </>
+            )}
+          </section>
+        )}
+
+        {/* Inventário do grupo */}
+        <section className="card">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-line">
+            <div className="flex items-center gap-2">
+              <Backpack className="w-4 h-4 text-fg-muted" />
+              <h3 className="section-title">Inventário do grupo</h3>
             </div>
-            <span className="text-xs font-mono text-zinc-500 tabular-nums">
-              {partyResources.items.length}
+            <span className="text-xs text-fg-subtle tabular-nums">
+              {partyResources.items.length} itens
             </span>
           </div>
 
           {partyResources.items.length === 0 ? (
-            <p className="text-xs text-zinc-500 py-1">
-              Nenhum item registrado no inventário coletivo.
+            <p className="text-[13px] text-fg-subtle px-4 py-3">
+              Nenhum item no inventário do grupo.
             </p>
           ) : (
-            <div className="space-y-2">
+            <ul className="divide-y divide-line">
               {partyResources.items.map((item) => (
-                <div
-                  key={item.id}
-                  className="p-3 rounded-xl bg-[#0e0e11] border border-white/[0.06] flex items-start justify-between gap-2 text-xs"
-                >
-                  <div className="space-y-0.5">
-                    <div className="font-medium text-zinc-100 flex items-center gap-2">
+                <li key={item.id} className="px-4 py-2.5 flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-fg flex flex-wrap items-center gap-2">
                       <span>
-                        {item.quantity}× {item.name}
+                        <span className="tabular-nums text-fg-muted">{item.quantity}×</span>{' '}
+                        {item.name}
                       </span>
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/[0.04] text-zinc-400">
-                        {item.holder}
-                      </span>
+                      <span className="badge">{item.holder}</span>
                     </div>
-                    <div className="text-zinc-500">
+                    <div className="text-[13px] text-fg-muted">
                       <MentionText text={item.notes} />
                     </div>
                   </div>
                   <button
                     onClick={() => removePartyInventoryItem(item.id)}
-                    className="text-zinc-600 hover:text-rose-400 p-1"
+                    className="btn btn-danger-ghost btn-sm btn-icon shrink-0"
+                    title="Remover item"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
+                    <Trash2 className="w-4 h-4" />
                   </button>
-                </div>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
 
-          <form
-            onSubmit={handleAddItem}
-            className="pt-3 border-t border-white/[0.06] space-y-2 text-xs"
-          >
-            <div className="grid grid-cols-1 sm:grid-cols-6 gap-2">
+          <form onSubmit={handleAddItem} className="p-4 border-t border-line space-y-2 bg-surface-2 rounded-b-lg">
+            <div className="grid grid-cols-6 gap-2">
               <input
                 type="number"
                 min={1}
                 value={itemQty}
                 onChange={(e) => setItemQty(Number(e.target.value))}
                 title="Quantidade"
-                className="input-clean px-2.5 py-1.5 rounded-lg font-mono"
+                aria-label="Quantidade"
+                className="input col-span-2 sm:col-span-1 tabular-nums"
               />
               <input
                 type="text"
                 required
                 value={itemName}
                 onChange={(e) => setItemName(e.target.value)}
-                placeholder="Novo item ou prova..."
-                className="input-clean sm:col-span-3 px-2.5 py-1.5 rounded-lg"
+                placeholder="Item"
+                className="input col-span-4 sm:col-span-3"
               />
               <input
                 type="text"
                 value={itemHolder}
                 onChange={(e) => setItemHolder(e.target.value)}
                 placeholder="Portador"
-                className="input-clean sm:col-span-2 px-2.5 py-1.5 rounded-lg"
+                className="input col-span-6 sm:col-span-2"
               />
             </div>
             <div className="flex items-center gap-2">
@@ -894,18 +946,15 @@ export const JournalInventoryView: React.FC = () => {
                 type="text"
                 value={itemNotes}
                 onChange={(e) => setItemNotes(e.target.value)}
-                placeholder="Notas opcionais (@NPC, #Local)..."
-                className="input-clean flex-1 px-2.5 py-1.5 rounded-lg"
+                placeholder="Notas (opcional)"
+                className="input flex-1"
               />
-              <button
-                type="submit"
-                className="btn-solid px-4 py-1.5 rounded-lg text-xs shrink-0"
-              >
+              <button type="submit" className="btn btn-primary shrink-0">
                 Adicionar
               </button>
             </div>
           </form>
-        </div>
+        </section>
       </div>
     </div>
   );

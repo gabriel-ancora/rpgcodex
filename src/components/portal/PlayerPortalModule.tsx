@@ -17,14 +17,14 @@ export const PlayerPortalModule: React.FC = () => {
     count?: number;
     icon: React.FC<{ className?: string }>;
   }[] = [
-    { id: 'secrets', label: 'Segredos & névoa', icon: Lock },
+    { id: 'secrets', label: 'Visibilidade', icon: Lock },
     { id: 'quests', label: 'Missões', count: quests.length, icon: ScrollText },
-    { id: 'journal', label: 'Crônicas & espólio', count: journal.length, icon: BookMarked },
+    { id: 'journal', label: 'Diário e inventário', count: journal.length, icon: BookMarked },
   ];
 
   return (
-    <div className="space-y-3.5 h-full flex flex-col">
-      <div className="flex items-center gap-1 border-b border-white/[0.06] shrink-0 overflow-x-auto">
+    <div className="space-y-4 h-full flex flex-col">
+      <div className="tabs shrink-0">
         {tabs.map((t) => {
           const Icon = t.icon;
           const active = portalSubTab === t.id;
@@ -32,19 +32,12 @@ export const PlayerPortalModule: React.FC = () => {
             <button
               key={t.id}
               onClick={() => setPortalSubTab(t.id)}
-              className={`relative inline-flex items-center gap-2 px-3 py-2 text-xs font-medium transition-colors shrink-0 ${
-                active ? 'text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'
-              }`}
+              className={`tab ${active ? 'tab-active' : ''}`}
             >
-              <Icon className="w-3.5 h-3.5 opacity-80" />
+              <Icon className="w-4 h-4" />
               <span>{t.label}</span>
               {t.count !== undefined && (
-                <span className="text-[11px] font-mono text-zinc-500">
-                  {t.count}
-                </span>
-              )}
-              {active && (
-                <span className="absolute bottom-0 left-2 right-2 h-[2px] bg-zinc-100 rounded-full" />
+                <span className="text-xs tabular-nums text-fg-subtle">{t.count}</span>
               )}
             </button>
           );

@@ -39,44 +39,14 @@ export const WIKI_CONTEXT_WINDOW_ID = '__context_window__';
 
 const CATEGORY_META: Record<
   EntityCategory,
-  { label: string; shortLabel: string; icon: React.FC<{ className?: string }>; dot: string }
+  { label: string; shortLabel: string; icon: React.FC<{ className?: string }> }
 > = {
-  npc: {
-    label: 'Personagem (NPC)',
-    shortLabel: 'NPC',
-    icon: User,
-    dot: 'bg-amber-400/80',
-  },
-  faction: {
-    label: 'Facção',
-    shortLabel: 'Facção',
-    icon: Shield,
-    dot: 'bg-violet-400/80',
-  },
-  location: {
-    label: 'Local',
-    shortLabel: 'Local',
-    icon: MapPin,
-    dot: 'bg-emerald-400/80',
-  },
-  item: {
-    label: 'Item & Relíquia',
-    shortLabel: 'Item',
-    icon: Package,
-    dot: 'bg-sky-400/80',
-  },
-  monster: {
-    label: 'Criatura & Chefe',
-    shortLabel: 'Criatura',
-    icon: Skull,
-    dot: 'bg-rose-400/80',
-  },
-  lore: {
-    label: 'Mito & Crônica',
-    shortLabel: 'Lore',
-    icon: BookOpen,
-    dot: 'bg-zinc-400',
-  },
+  npc: { label: 'Personagem (NPC)', shortLabel: 'NPC', icon: User },
+  faction: { label: 'Facção', shortLabel: 'Facção', icon: Shield },
+  location: { label: 'Local', shortLabel: 'Local', icon: MapPin },
+  item: { label: 'Item / Relíquia', shortLabel: 'Item', icon: Package },
+  monster: { label: 'Criatura', shortLabel: 'Criatura', icon: Skull },
+  lore: { label: 'Mito / Crônica', shortLabel: 'Lore', icon: BookOpen },
 };
 
 export const EntityWikiView: React.FC = () => {
@@ -89,7 +59,7 @@ export const EntityWikiView: React.FC = () => {
   const maps = useCampaignStore((s) => s.maps);
   const campaigns = useCampaignStore((s) => s.campaigns);
   const activeCampaignId = useCampaignStore((s) => s.activeCampaignId);
-  const campaignName = useCampaignStore((s) => s.campaignName);
+  const campaignName = campaigns.find((c) => c.id === activeCampaignId)?.title || '';
   const geminiApiKey = useCampaignStore((s) => s.geminiApiKey);
   const updateCampaign = useCampaignStore((s) => s.updateCampaign);
   const showToast = useCampaignStore((s) => s.showToast);
@@ -148,7 +118,7 @@ export const EntityWikiView: React.FC = () => {
   const handleSaveContextNow = () => {
     if (!activeCampaignId || viewRole !== 'gm') return;
     updateCampaign(activeCampaignId, { worldContext: contextDraft });
-    showToast('Janela de Contexto salva e sincronizada na campanha.');
+    showToast('Contexto salvo.');
   };
 
   const handleInsertEditorialStructure = () => {
@@ -213,7 +183,7 @@ export const EntityWikiView: React.FC = () => {
 
     const block = snapshotLines.join('\n');
     setContextDraft((prev) => (prev.trim() ? `${prev.trim()}\n\n${block}` : block));
-    showToast('Resumo vivo do Códice inserido na Janela de Contexto.');
+    showToast('Resumo do códice inserido no contexto.');
   };
 
   const [search, setSearch] = useState('');
@@ -351,106 +321,87 @@ export const EntityWikiView: React.FC = () => {
     : [];
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-[calc(100vh-7.5rem)]">
-      {/* Left Pane: Codex Directory */}
-      <aside className="lg:col-span-4 xl:col-span-3 flex flex-col surface-panel rounded-xl overflow-hidden">
-        <div className="p-3.5 border-b border-white/[0.06] space-y-3">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:h-[calc(100vh-7.5rem)]">
+      {/* Diretório do códice */}
+      <aside className="lg:col-span-4 xl:col-span-3 flex flex-col card overflow-hidden max-h-[70vh] lg:max-h-none">
+        <div className="p-3 border-b border-line space-y-3">
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-baseline gap-2">
-              <h2 className="text-sm font-semibold text-zinc-100 tracking-tight">
-                Códice
-              </h2>
-              <span className="text-xs font-mono text-zinc-500 tabular-nums">
-                {filteredEntities.length}
-              </span>
+            <div className="flex items-center gap-2">
+              <h2 className="section-title">Códice</h2>
+              <span className="badge tabular-nums">{filteredEntities.length}</span>
             </div>
             {viewRole === 'gm' && (
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1">
                 <button
                   onClick={() => setShowPdfImportModal(true)}
-                  className="btn-subtle px-2 py-1 rounded-md text-xs inline-flex items-center gap-1"
-                  title="Ler um PDF com a IA cadastrada e preencher a Wiki"
+                  className="btn btn-ghost btn-icon"
+                  title="Importar PDF para o códice"
                 >
-                  <FileUp className="w-3.5 h-3.5 text-amber-400" />
-                  <span>PDF</span>
-                </button>
-                <button
-                  onClick={() => setSelectedEntityId(WIKI_CONTEXT_WINDOW_ID)}
-                  className={`px-2 py-1 rounded-md text-xs inline-flex items-center gap-1 border transition-colors ${
-                    isContextWindowOpen
-                      ? 'bg-amber-500/15 text-amber-200 border-amber-500/35'
-                      : 'btn-subtle'
-                  }`}
-                  title="Editar a Janela de Contexto da Campanha"
-                >
-                  <FileText className="w-3.5 h-3.5" />
-                  <span>Contexto</span>
+                  <FileUp className="w-4 h-4" />
                 </button>
                 <button
                   onClick={() => setShowNewModal(true)}
-                  className="btn-solid px-2.5 py-1 rounded-md text-xs inline-flex items-center gap-1"
+                  className="btn btn-primary btn-sm"
                 >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Nova</span>
+                  <Plus className="w-4 h-4" />
+                  <span>Nova entrada</span>
                 </button>
               </div>
             )}
           </div>
 
-          {/* Pinned Context Window Card inside Wiki Sidebar */}
+          {/* Atalho para a janela de contexto */}
           {viewRole === 'gm' && (
             <button
               type="button"
               onClick={() => setSelectedEntityId(WIKI_CONTEXT_WINDOW_ID)}
-              className={`w-full p-2.5 rounded-lg border text-left transition-all flex items-start justify-between gap-2 ${
+              className={`w-full px-3 py-2 rounded-md border text-left transition-colors flex items-center justify-between gap-2 ${
                 isContextWindowOpen
-                  ? 'bg-amber-500/[0.09] border-amber-400/40 text-zinc-100'
-                  : 'bg-[#0e0e11] border-white/[0.07] hover:border-white/[0.16] text-zinc-300'
+                  ? 'bg-accent-soft border-accent/30'
+                  : 'bg-surface border-line hover:border-line-strong hover:bg-surface-2'
               }`}
             >
-              <div className="min-w-0 space-y-0.5">
-                <div className="flex items-center gap-1.5">
-                  <FileText className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                  <span className="text-xs font-semibold text-zinc-100 truncate">
-                    Janela de Contexto
-                  </span>
+              <div className="min-w-0 flex items-center gap-2.5">
+                <FileText
+                  className={`w-4 h-4 shrink-0 ${
+                    isContextWindowOpen ? 'text-accent' : 'text-fg-subtle'
+                  }`}
+                />
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-fg truncate">
+                    Janela de contexto
+                  </div>
+                  <p className="text-xs text-fg-subtle truncate">
+                    {contextDraft.trim()
+                      ? `~${contextTokenEstimate} tokens`
+                      : 'Cânone, tom e diretrizes'}
+                  </p>
                 </div>
-                <p className="text-[11px] text-zinc-500 leading-snug line-clamp-1">
-                  {contextDraft.trim()
-                    ? `${contextTokenEstimate} tokens · Memória ativa do mundo & IA`
-                    : 'Defina cânone, tom e diretrizes da campanha'}
-                </p>
               </div>
-              <span
-                className={`text-[10px] font-mono px-1.5 py-0.5 rounded border shrink-0 ${
-                  contextDraft.trim()
-                    ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/25'
-                    : 'bg-white/[0.04] text-zinc-500 border-white/[0.07]'
-                }`}
-              >
+              <span className={`badge shrink-0 ${contextDraft.trim() ? 'badge-success' : ''}`}>
                 {contextDraft.trim() ? 'Ativa' : 'Vazia'}
               </span>
             </button>
           )}
 
           <div className="relative">
-            <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <Search className="w-4 h-4 text-fg-subtle absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Filtrar por nome, @tag ou papel..."
-              className="input-clean w-full pl-8 pr-3 py-1.5 rounded-lg text-xs"
+              placeholder="Buscar por nome, tag ou papel"
+              className="input pl-8"
             />
           </div>
 
           <div className="flex flex-wrap gap-1">
             <button
               onClick={() => setCategoryFilter('all')}
-              className={`px-2 py-0.5 rounded-md text-[11px] font-medium transition-colors ${
+              className={`h-7 px-2.5 rounded-md text-xs font-medium transition-colors ${
                 categoryFilter === 'all'
-                  ? 'bg-zinc-100 text-zinc-950'
-                  : 'text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.04]'
+                  ? 'bg-accent-soft text-accent'
+                  : 'text-fg-muted hover:text-fg hover:bg-surface-2'
               }`}
             >
               Todos
@@ -459,10 +410,10 @@ export const EntityWikiView: React.FC = () => {
               <button
                 key={cat}
                 onClick={() => setCategoryFilter(cat)}
-                className={`px-2 py-0.5 rounded-md text-[11px] font-medium transition-colors ${
+                className={`h-7 px-2.5 rounded-md text-xs font-medium transition-colors ${
                   categoryFilter === cat
-                    ? 'bg-zinc-100 text-zinc-950'
-                    : 'text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.04]'
+                    ? 'bg-accent-soft text-accent'
+                    : 'text-fg-muted hover:text-fg hover:bg-surface-2'
                 }`}
               >
                 {CATEGORY_META[cat].shortLabel}
@@ -471,15 +422,15 @@ export const EntityWikiView: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
+        <div className="flex-1 overflow-y-auto p-1.5 space-y-px">
           {filteredEntities.length === 0 ? (
             <div className="py-12 px-4 text-center space-y-2">
-              <BookOpen className="w-5 h-5 mx-auto text-zinc-600" />
-              <p className="text-xs text-zinc-500">Nenhum registro encontrado.</p>
+              <BookOpen className="w-5 h-5 mx-auto text-fg-subtle" />
+              <p className="text-[13px] text-fg-muted">Nenhum registro encontrado.</p>
               {viewRole === 'gm' && (
                 <button
                   onClick={() => setShowNewModal(true)}
-                  className="text-xs text-zinc-300 hover:text-white underline underline-offset-4"
+                  className="btn btn-secondary btn-sm"
                 >
                   Criar entrada
                 </button>
@@ -490,6 +441,7 @@ export const EntityWikiView: React.FC = () => {
               const isSelected = !isContextWindowOpen && ent.id === currentEntity?.id;
               const unrevealedCount = ent.secrets.filter((s) => !s.isRevealed).length;
               const meta = CATEGORY_META[ent.category];
+              const EntIcon = meta.icon;
 
               return (
                 <button
@@ -498,41 +450,45 @@ export const EntityWikiView: React.FC = () => {
                     setSelectedEntityId(ent.id);
                     setIsEditingPublic(false);
                   }}
-                  className={`w-full px-2.5 py-2 rounded-lg text-left transition-colors flex items-start justify-between gap-2 ${
-                    isSelected
-                      ? 'bg-white/[0.07] text-zinc-100'
-                      : 'text-zinc-400 hover:bg-white/[0.03] hover:text-zinc-200'
+                  className={`w-full px-2.5 py-2 rounded-md text-left transition-colors flex items-center justify-between gap-2 ${
+                    isSelected ? 'bg-accent-soft' : 'hover:bg-surface-2'
                   }`}
                 >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${meta.dot}`} />
-                      <span className="text-xs font-medium text-zinc-100 truncate">
-                        {ent.name}
-                      </span>
-                      {ent.pinnedInSession && (
-                        <Pin className="w-3 h-3 text-zinc-400 shrink-0" />
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1.5 mt-0.5 pl-3">
-                      <span className="font-mono text-[10px] text-zinc-500 truncate">
+                  <div className="min-w-0 flex-1 flex items-center gap-2.5">
+                    <EntIcon
+                      className={`w-4 h-4 shrink-0 ${
+                        isSelected ? 'text-accent' : 'text-fg-subtle'
+                      }`}
+                    />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={`text-sm font-medium truncate ${
+                            isSelected ? 'text-accent' : 'text-fg'
+                          }`}
+                        >
+                          {ent.name}
+                        </span>
+                        {ent.pinnedInSession && (
+                          <Pin className="w-3 h-3 text-fg-subtle shrink-0" />
+                        )}
+                      </div>
+                      <div className="font-mono text-xs text-fg-subtle truncate">
                         {ent.mentionPrefix}
                         {ent.handle}
-                      </span>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1 shrink-0 pt-0.5">
-                    {viewRole === 'gm' && unrevealedCount > 0 && (
-                      <span
-                        title={`${unrevealedCount} segredo(s) oculto(s)`}
-                        className="inline-flex items-center gap-0.5 text-[10px] font-mono text-zinc-400 bg-white/[0.04] border border-white/[0.07] px-1.5 py-0.5 rounded"
-                      >
-                        <Lock className="w-2.5 h-2.5 text-rose-400/80" />
-                        {unrevealedCount}
-                      </span>
-                    )}
-                  </div>
+                  {viewRole === 'gm' && unrevealedCount > 0 && (
+                    <span
+                      title={`${unrevealedCount} segredo(s) oculto(s)`}
+                      className="badge shrink-0 tabular-nums"
+                    >
+                      <Lock className="w-3 h-3" />
+                      {unrevealedCount}
+                    </span>
+                  )}
                 </button>
               );
             })
@@ -540,87 +496,81 @@ export const EntityWikiView: React.FC = () => {
         </div>
       </aside>
 
-      {/* Right Pane: Context Window Editor OR Editorial Entity View */}
-      <div className="lg:col-span-8 xl:col-span-9 flex flex-col surface-panel rounded-xl overflow-y-auto">
+      {/* Painel principal: janela de contexto ou entrada */}
+      <div className="lg:col-span-8 xl:col-span-9 flex flex-col card lg:overflow-y-auto">
         {isContextWindowOpen && viewRole === 'gm' ? (
-          <div className="max-w-4xl w-full mx-auto px-6 sm:px-10 py-8 space-y-6">
-            {/* Header */}
-            <header className="space-y-4 border-b border-white/[0.06] pb-6">
+          <div className="max-w-3xl w-full mx-auto px-4 sm:px-8 py-6 sm:py-8 space-y-6">
+            <header className="space-y-4 border-b border-line pb-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-xs text-amber-300 bg-amber-500/10 border border-amber-500/25">
+                  <span className="badge">
                     <FileText className="w-3 h-3" />
-                    Documento Mestre da Campanha
+                    Documento da campanha
                   </span>
-                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-mono text-zinc-400 bg-[#0e0e11] border border-white/[0.06]">
-                    <span
-                      className={`w-1.5 h-1.5 rounded-full ${
-                        isContextDirty ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400'
-                      }`}
-                    />
-                    {isContextDirty ? 'Salvando alterações...' : 'Sincronizado na nuvem'}
+                  <span className={`badge ${isContextDirty ? 'badge-warning' : 'badge-success'}`}>
+                    {isContextDirty ? 'Salvando…' : 'Salvo'}
                   </span>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setContextPreviewMode(contextPreviewMode === 'edit' ? 'read' : 'edit')
-                    }
-                    className="btn-subtle px-2.5 py-1.5 rounded-lg text-xs inline-flex items-center gap-1.5"
-                  >
-                    {contextPreviewMode === 'edit' ? (
-                      <>
-                        <Eye className="w-3.5 h-3.5" />
-                        <span>Visualizar menções</span>
-                      </>
-                    ) : (
-                      <>
-                        <Edit3 className="w-3.5 h-3.5" />
-                        <span>Voltar à edição</span>
-                      </>
-                    )}
-                  </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="segmented">
+                    <button
+                      type="button"
+                      onClick={() => setContextPreviewMode('edit')}
+                      className={`segmented-item ${
+                        contextPreviewMode === 'edit' ? 'segmented-item-active' : ''
+                      }`}
+                    >
+                      Editar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setContextPreviewMode('read')}
+                      className={`segmented-item ${
+                        contextPreviewMode === 'read' ? 'segmented-item-active' : ''
+                      }`}
+                    >
+                      Visualizar
+                    </button>
+                  </div>
 
                   <button
                     type="button"
                     onClick={handleSaveContextNow}
-                    className="btn-solid px-3 py-1.5 rounded-lg text-xs inline-flex items-center gap-1.5"
+                    className="btn btn-primary btn-sm"
                   >
-                    <Save className="w-3.5 h-3.5" />
-                    <span>Salvar contexto</span>
+                    <Save className="w-4 h-4" />
+                    <span>Salvar</span>
                   </button>
                 </div>
               </div>
 
               <div className="space-y-1.5">
-                <h1 className="text-3xl sm:text-4xl font-serif font-medium text-zinc-100 tracking-tight">
-                  Janela de Contexto
-                </h1>
-                <p className="text-sm text-zinc-400 leading-relaxed">
-                  Edite o cânone vivo de <strong className="text-zinc-200">{campaignName || 'sua campanha'}</strong>: premissa, estado político, eventos recentes, regras da casa e diretrizes criativas. Tudo o que estiver escrito aqui é injetado automaticamente nas gerações do Oráculo Contextual (Gemini).
+                <h1 className="page-title">Janela de contexto</h1>
+                <p className="text-sm text-fg-muted leading-relaxed">
+                  Cânone de <span className="font-medium text-fg">{campaignName || 'sua campanha'}</span>:
+                  premissa, estado político, eventos recentes, regras da casa e diretrizes criativas.
+                  Este texto é incluído automaticamente nas gerações do oráculo contextual.
                 </p>
               </div>
 
-              {/* Helper Toolbar */}
-              <div className="flex flex-wrap items-center gap-2 pt-1">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={handleInsertEditorialStructure}
-                  className="btn-subtle px-2.5 py-1.5 rounded-lg text-xs inline-flex items-center gap-1.5"
+                  className="btn btn-secondary btn-sm"
                 >
-                  <Plus className="w-3.5 h-3.5 text-zinc-400" />
-                  <span>Inserir estrutura base</span>
+                  <Plus className="w-4 h-4" />
+                  <span>Inserir estrutura</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={handleSyncFromWiki}
-                  className="btn-subtle px-2.5 py-1.5 rounded-lg text-xs inline-flex items-center gap-1.5"
+                  className="btn btn-secondary btn-sm"
                 >
-                  <RefreshCw className="w-3.5 h-3.5 text-zinc-400" />
-                  <span>Importar resumo vivo da Wiki</span>
+                  <RefreshCw className="w-4 h-4" />
+                  <span>Importar resumo do códice</span>
                 </button>
 
                 <button
@@ -629,83 +579,81 @@ export const EntityWikiView: React.FC = () => {
                     setActiveModule('plots');
                     setPlotSubTab('generators');
                   }}
-                  className="btn-subtle px-2.5 py-1.5 rounded-lg text-xs inline-flex items-center gap-1.5"
+                  className="btn btn-ghost btn-sm"
                 >
-                  <Compass className="w-3.5 h-3.5 text-zinc-400" />
-                  <span>Abrir Oráculo Contextual</span>
+                  <Compass className="w-4 h-4" />
+                  <span>Abrir oráculo</span>
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setIsSettingsModalOpen(true)}
-                  className="btn-subtle px-2.5 py-1.5 rounded-lg text-xs inline-flex items-center gap-1.5"
+                  className="btn btn-ghost btn-sm"
                 >
-                  <KeyRound className="w-3.5 h-3.5 text-zinc-400" />
+                  <KeyRound className="w-4 h-4" />
                   <span>{geminiApiKey ? 'API Gemini conectada' : 'Configurar API Gemini'}</span>
                 </button>
               </div>
             </header>
 
-            {/* Editable Context Body */}
-            <section className="space-y-2.5">
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                <span className="text-zinc-400">
-                  Use <code className="font-mono text-zinc-200">@</code> para referenciar NPCs/Facções e{' '}
-                  <code className="font-mono text-zinc-200">#</code> para Locais/Relíquias do Códice.
+            <section className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[13px] text-fg-muted">
+                  Use <span className="kbd">@</span> para NPCs e facções e{' '}
+                  <span className="kbd">#</span> para locais e itens.
                 </span>
-                <div className="flex items-center gap-3 font-mono text-[11px] text-zinc-500 tabular-nums">
+                <div className="flex items-center gap-3 text-xs text-fg-subtle tabular-nums">
                   <span>{contextDraft.length} caracteres</span>
                   <span>~{contextTokenEstimate} tokens</span>
-                  <span>{contextMentionCount} vínculos @/#</span>
+                  <span>{contextMentionCount} menções</span>
                 </div>
               </div>
 
               {contextPreviewMode === 'edit' ? (
-                <div className="p-1 rounded-xl bg-[#0b0b0d] border border-white/[0.08]">
+                <div className="rounded-lg border border-line bg-surface focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/15 transition-colors">
                   <MentionTextarea
                     value={contextDraft}
                     onChange={setContextDraft}
                     rows={15}
-                    placeholder="Escreva aqui o contexto vivo da campanha: reinos em guerra, segredos de bastidores, conquistas recentes dos jogadores, clima das sessões e restrições de mundo..."
+                    placeholder="Reinos em guerra, segredos de bastidores, conquistas recentes do grupo, tom das sessões e restrições do mundo."
                     className="w-full bg-transparent border-0 focus:ring-0 text-sm leading-relaxed p-3.5"
                   />
                 </div>
               ) : (
-                <div className="p-5 rounded-xl bg-[#0e0e11] border border-white/[0.08] text-sm text-zinc-200 leading-relaxed whitespace-pre-wrap min-h-[260px]">
+                <div className="p-5 rounded-lg bg-surface-2 border border-line text-sm text-fg leading-relaxed whitespace-pre-wrap min-h-[260px]">
                   {contextDraft.trim() ? (
                     <MentionText text={contextDraft} />
                   ) : (
-                    <span className="text-zinc-500">
-                      Nenhum contexto personalizado definido ainda. Clique em "Voltar à edição" ou "Inserir estrutura base".
+                    <span className="text-fg-subtle">
+                      Nenhum contexto definido. Volte para Editar ou use Inserir estrutura.
                     </span>
                   )}
                 </div>
               )}
             </section>
 
-            {/* Live Combined Context Inspector */}
-            <section className="pt-4 border-t border-white/[0.06] space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="space-y-0.5">
-                  <h3 className="text-xs font-medium text-zinc-200 flex items-center gap-1.5">
-                    <Code2 className="w-3.5 h-3.5 text-zinc-400" />
-                    <span>Injeção combinada no modelo (Janela de Contexto + Códice)</span>
+            <section className="pt-5 border-t border-line space-y-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="space-y-0.5 min-w-0">
+                  <h3 className="section-title flex items-center gap-2">
+                    <Code2 className="w-4 h-4 text-fg-subtle" />
+                    <span>Prompt final enviado ao modelo</span>
                   </h3>
-                  <p className="text-[11px] text-zinc-500">
-                    Além do texto editável acima, o sistema anexa automaticamente {entities.length} entradas do Códice e {fronts.length} frentes de ameaça.
+                  <p className="text-[13px] text-fg-muted">
+                    Inclui este contexto, {entities.length} entradas do códice e {fronts.length} frentes de ameaça.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => setShowCombinedPrompt(!showCombinedPrompt)}
-                  className="btn-subtle px-2.5 py-1 rounded-md text-xs"
+                  className="btn btn-secondary btn-sm"
                 >
-                  {showCombinedPrompt ? 'Ocultar prompt final' : 'Inspecionar prompt final'}
+                  {showCombinedPrompt ? 'Ocultar prompt' : 'Ver prompt'}
                 </button>
               </div>
 
               {showCombinedPrompt && (
-                <pre className="p-4 rounded-xl bg-[#0b0b0d] border border-white/[0.07] text-[11px] font-mono text-zinc-400 whitespace-pre-wrap max-h-64 overflow-y-auto leading-relaxed">
+                <pre className="p-4 rounded-lg bg-surface-2 border border-line text-xs font-mono text-fg-muted whitespace-pre-wrap max-h-64 overflow-y-auto leading-relaxed">
                   {combinedSystemPromptPreview}
                 </pre>
               )}
@@ -713,74 +661,65 @@ export const EntityWikiView: React.FC = () => {
           </div>
         ) : !currentEntity ? (
           <div className="flex-1 flex flex-col items-center justify-center p-10 text-center space-y-4">
-            <div className="w-11 h-11 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-zinc-400">
+            <div className="w-10 h-10 rounded-lg bg-surface-2 border border-line flex items-center justify-center text-fg-subtle">
               <BookOpen className="w-5 h-5" />
             </div>
             <div className="space-y-1 max-w-sm">
-              <h3 className="text-base font-semibold text-zinc-100">
-                Códice vazio
-              </h3>
-              <p className="text-xs text-zinc-500 leading-relaxed">
-                Cadastre personagens (@), locais (#), facções ou relíquias para conectar referências automáticas ao longo da campanha, ou configure a Janela de Contexto.
+              <h3 className="section-title">Códice vazio</h3>
+              <p className="text-[13px] text-fg-muted leading-relaxed">
+                Cadastre personagens (@), locais (#), facções ou itens para criar referências
+                ao longo da campanha, ou configure a janela de contexto.
               </p>
             </div>
             {viewRole === 'gm' && (
               <div className="flex flex-wrap items-center justify-center gap-2">
-                <button
-                  onClick={() => setShowNewModal(true)}
-                  className="btn-solid px-4 py-2 rounded-lg text-xs inline-flex items-center gap-1.5"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Criar primeira entrada</span>
+                <button onClick={() => setShowNewModal(true)} className="btn btn-primary">
+                  <Plus className="w-4 h-4" />
+                  <span>Criar entrada</span>
                 </button>
                 <button
                   onClick={() => setSelectedEntityId(WIKI_CONTEXT_WINDOW_ID)}
-                  className="btn-subtle px-4 py-2 rounded-lg text-xs inline-flex items-center gap-1.5"
+                  className="btn btn-secondary"
                 >
-                  <FileText className="w-3.5 h-3.5" />
-                  <span>Abrir Janela de Contexto</span>
+                  <FileText className="w-4 h-4" />
+                  <span>Abrir janela de contexto</span>
                 </button>
               </div>
             )}
           </div>
         ) : (
-          <div className="max-w-4xl w-full mx-auto px-6 sm:px-10 py-8 space-y-8">
-            {/* Editorial Header */}
-            <header className="space-y-4 border-b border-white/[0.06] pb-6">
+          <div className="max-w-3xl w-full mx-auto px-4 sm:px-8 py-6 sm:py-8 space-y-8">
+            <header className="space-y-4 border-b border-line pb-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs text-zinc-300 bg-white/[0.05] border border-white/[0.07]">
-                    {CatIcon && <CatIcon className="w-3 h-3 text-zinc-400" />}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="badge">
+                    {CatIcon && <CatIcon className="w-3 h-3" />}
                     {CATEGORY_META[currentEntity.category].label}
                   </span>
 
-                  <span className="px-2 py-0.5 rounded-md text-xs font-mono text-zinc-400 bg-[#0e0e11] border border-white/[0.06]">
+                  <span className="badge font-mono">
                     {currentEntity.mentionPrefix}
                     {currentEntity.handle}
                   </span>
 
                   {currentEntity.tags.map((tag, i) => (
-                    <span
-                      key={i}
-                      className="px-2 py-0.5 rounded-md text-[11px] text-zinc-500 bg-white/[0.03]"
-                    >
+                    <span key={i} className="badge bg-transparent">
                       {tag}
                     </span>
                   ))}
                 </div>
 
-                {/* Action Bar */}
                 <div className="flex items-center gap-1.5">
                   <button
                     onClick={() => togglePinEntity(currentEntity.id)}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                    className={`btn btn-sm ${
                       currentEntity.pinnedInSession
-                        ? 'bg-zinc-100 text-zinc-950 border-zinc-100'
-                        : 'btn-subtle'
+                        ? 'btn-secondary bg-accent-soft text-accent border-accent/30 hover:bg-accent-soft'
+                        : 'btn-secondary'
                     }`}
                     title="Fixar como referência rápida no escudo do mestre"
                   >
-                    <Pin className="w-3.5 h-3.5" />
+                    <Pin className="w-4 h-4" />
                     <span>{currentEntity.pinnedInSession ? 'Fixado' : 'Fixar'}</span>
                   </button>
 
@@ -788,20 +727,16 @@ export const EntityWikiView: React.FC = () => {
                     <>
                       <button
                         onClick={() => setIsEditingPublic(!isEditingPublic)}
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                          isEditingPublic
-                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
-                            : 'btn-subtle'
-                        }`}
+                        className={`btn btn-sm ${isEditingPublic ? 'btn-primary' : 'btn-secondary'}`}
                       >
                         {isEditingPublic ? (
                           <>
-                            <Check className="w-3.5 h-3.5" />
+                            <Check className="w-4 h-4" />
                             <span>Concluir</span>
                           </>
                         ) : (
                           <>
-                            <Edit3 className="w-3.5 h-3.5" />
+                            <Edit3 className="w-4 h-4" />
                             <span>Editar</span>
                           </>
                         )}
@@ -810,10 +745,10 @@ export const EntityWikiView: React.FC = () => {
                       {entities.length > 0 && (
                         <button
                           onClick={() => deleteEntity(currentEntity.id)}
-                          className="p-1.5 rounded-lg text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                          className="btn btn-danger-ghost btn-icon"
                           title="Excluir entrada"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-4 h-4" />
                         </button>
                       )}
                     </>
@@ -822,50 +757,47 @@ export const EntityWikiView: React.FC = () => {
               </div>
 
               <div className="space-y-1">
-                <h1 className="text-3xl sm:text-4xl font-serif font-medium text-zinc-100 tracking-tight">
+                <h1 className="text-2xl font-semibold text-fg tracking-tight">
                   {currentEntity.name}
                 </h1>
-                <p className="text-sm text-zinc-400">{currentEntity.subtitle}</p>
+                <p className="text-sm text-fg-muted">{currentEntity.subtitle}</p>
               </div>
 
-              <div className="border-l-2 border-white/[0.14] pl-4 py-0.5 text-sm text-zinc-300 leading-relaxed">
+              <div className="border-l-2 border-line-strong pl-4 py-0.5 text-sm text-fg-muted leading-relaxed">
                 <MentionText text={currentEntity.summary} />
               </div>
 
-              {/* Direct Map Pin Jump Buttons */}
               {linkedMapPins.length > 0 && (
-                <div className="flex flex-wrap items-center gap-2 pt-1">
+                <div className="flex flex-wrap items-center gap-2">
                   {linkedMapPins.map((mp) => (
                     <button
                       key={`${mp.mapId}-${mp.pinId}`}
                       type="button"
                       onClick={() => navigateToMapPin(mp.mapId, mp.pinId)}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/25 transition-colors"
+                      className="btn btn-secondary btn-sm"
                     >
-                      <MapIcon className="w-3.5 h-3.5" />
+                      <MapIcon className="w-4 h-4 text-fg-subtle" />
                       <span>
-                        Ver no Mapa: <strong>{mp.mapName}</strong> ({mp.pinLabel})
+                        {mp.mapName} <span className="text-fg-subtle">· {mp.pinLabel}</span>
                       </span>
-                      <ArrowUpRight className="w-3 h-3" />
+                      <ArrowUpRight className="w-4 h-4 text-fg-subtle" />
                     </button>
                   ))}
                 </div>
               )}
             </header>
 
-            {/* Properties Grid */}
+            {/* Propriedades */}
             {(currentEntity.attributes.length > 0 || viewRole === 'gm') && (
               <section className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-medium text-zinc-400">
-                    Propriedades & descritores
-                  </h3>
+                  <h3 className="section-title">Propriedades</h3>
                   {viewRole === 'gm' && (
                     <button
                       onClick={() => setShowAddAttr(!showAddAttr)}
-                      className="text-xs text-zinc-400 hover:text-zinc-100 inline-flex items-center gap-1 transition-colors"
+                      className="btn btn-ghost btn-sm"
                     >
-                      <Plus className="w-3.5 h-3.5" />
+                      <Plus className="w-4 h-4" />
                       <span>Adicionar</span>
                     </button>
                   )}
@@ -874,26 +806,23 @@ export const EntityWikiView: React.FC = () => {
                 {showAddAttr && viewRole === 'gm' && (
                   <form
                     onSubmit={handleCreateAttribute}
-                    className="p-3 rounded-lg bg-[#0e0e11] border border-white/[0.08] flex flex-wrap items-center gap-2"
+                    className="card-muted p-3 flex flex-wrap items-center gap-2"
                   >
                     <input
                       type="text"
                       value={newAttrLabel}
                       onChange={(e) => setNewAttrLabel(e.target.value)}
-                      placeholder="Propriedade (ex: Alinhamento, Riqueza, CA)"
-                      className="input-clean flex-1 min-w-[160px] px-2.5 py-1.5 rounded-md text-xs"
+                      placeholder="Propriedade (ex.: Alinhamento, CA)"
+                      className="input flex-1 min-w-[160px]"
                     />
                     <input
                       type="text"
                       value={newAttrValue}
                       onChange={(e) => setNewAttrValue(e.target.value)}
                       placeholder="Valor"
-                      className="input-clean flex-1 min-w-[160px] px-2.5 py-1.5 rounded-md text-xs"
+                      className="input flex-1 min-w-[160px]"
                     />
-                    <button
-                      type="submit"
-                      className="btn-solid px-3 py-1.5 rounded-md text-xs"
-                    >
+                    <button type="submit" className="btn btn-primary">
                       Salvar
                     </button>
                   </form>
@@ -904,12 +833,10 @@ export const EntityWikiView: React.FC = () => {
                     {currentEntity.attributes.map((attr) => (
                       <div
                         key={attr.id}
-                        className="px-3 py-2.5 rounded-lg bg-[#0e0e11] border border-white/[0.06] flex items-start justify-between gap-2"
+                        className="card px-3 py-2.5 flex items-start justify-between gap-2"
                       >
                         <div className="min-w-0 flex-1">
-                          <div className="text-[11px] text-zinc-500 truncate">
-                            {attr.label}
-                          </div>
+                          <div className="text-xs text-fg-subtle truncate">{attr.label}</div>
                           {isEditingPublic && viewRole === 'gm' ? (
                             <input
                               type="text"
@@ -921,10 +848,10 @@ export const EntityWikiView: React.FC = () => {
                                   e.target.value
                                 )
                               }
-                              className="input-clean mt-1 w-full px-2 py-0.5 rounded text-xs font-mono"
+                              className="input h-8 mt-1"
                             />
                           ) : (
-                            <div className="text-xs font-mono font-medium text-zinc-200 mt-0.5 break-words tabular-nums">
+                            <div className="text-sm font-medium text-fg mt-0.5 break-words tabular-nums">
                               {attr.value}
                             </div>
                           )}
@@ -934,9 +861,10 @@ export const EntityWikiView: React.FC = () => {
                             onClick={() =>
                               deleteEntityAttribute(currentEntity.id, attr.id)
                             }
-                            className="text-zinc-600 hover:text-rose-400 p-0.5"
+                            className="btn btn-danger-ghost btn-icon h-7 w-7"
+                            title="Remover propriedade"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         )}
                       </div>
@@ -946,39 +874,31 @@ export const EntityWikiView: React.FC = () => {
               </section>
             )}
 
-            {/* Public Lore Section */}
+            {/* Registro público */}
             <section className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Eye className="w-3.5 h-3.5 text-zinc-400" />
-                  <h3 className="text-xs font-medium text-zinc-300">
-                    Registro público
-                  </h3>
-                </div>
-                <span className="text-[11px] text-zinc-500">
-                  Visível aos jogadores
-                </span>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="section-title flex items-center gap-2">
+                  <Eye className="w-4 h-4 text-fg-subtle" />
+                  Registro público
+                </h3>
+                <span className="text-xs text-fg-subtle">Visível aos jogadores</span>
               </div>
 
               {isEditingPublic && viewRole === 'gm' ? (
-                <div className="p-4 rounded-xl bg-[#0e0e11] border border-white/[0.08] space-y-3">
+                <div className="card-muted p-4 space-y-4">
                   <div>
-                    <label className="block text-xs text-zinc-400 mb-1">
-                      Resumo curto
-                    </label>
+                    <label className="label">Resumo</label>
                     <input
                       type="text"
                       value={currentEntity.summary}
                       onChange={(e) =>
                         updateEntity(currentEntity.id, { summary: e.target.value })
                       }
-                      className="input-clean w-full px-3 py-1.5 rounded-lg text-xs"
+                      className="input"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs text-zinc-400 mb-1">
-                      Texto completo (use @ para personagens e # para locais)
-                    </label>
+                    <label className="label">Texto completo</label>
                     <MentionTextarea
                       value={currentEntity.publicContent}
                       onChange={(val) =>
@@ -986,104 +906,88 @@ export const EntityWikiView: React.FC = () => {
                       }
                       rows={6}
                     />
+                    <p className="hint">Use @ para personagens e # para locais.</p>
                   </div>
                 </div>
               ) : (
-                <div className="text-sm text-zinc-300 leading-relaxed">
+                <div className="text-sm text-fg leading-relaxed">
                   <MentionText text={currentEntity.publicContent} />
                 </div>
               )}
             </section>
 
-            {/* GM Confidential / Secrets Section */}
+            {/* Segredos */}
             {(viewRole === 'gm' || visibleSecrets.length > 0) && (
-              <section className="space-y-3 pt-4 border-t border-white/[0.06]">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Lock className="w-3.5 h-3.5 text-zinc-400" />
-                    <h3 className="text-xs font-medium text-zinc-300">
-                      {viewRole === 'gm'
-                        ? 'Notas confidenciais & segredos'
-                        : 'Descobertas reveladas'}
-                    </h3>
-                  </div>
+              <section className="space-y-3 pt-6 border-t border-line">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="section-title flex items-center gap-2">
+                    <Lock className="w-4 h-4 text-fg-subtle" />
+                    {viewRole === 'gm' ? 'Segredos' : 'Descobertas reveladas'}
+                  </h3>
                   {viewRole === 'gm' && (
                     <button
                       onClick={() => setShowAddSecret(!showAddSecret)}
-                      className="btn-subtle px-2.5 py-1 rounded-md text-xs inline-flex items-center gap-1"
+                      className="btn btn-secondary btn-sm"
                     >
-                      <Plus className="w-3.5 h-3.5" />
+                      <Plus className="w-4 h-4" />
                       <span>Novo segredo</span>
                     </button>
                   )}
                 </div>
 
                 {showAddSecret && viewRole === 'gm' && (
-                  <form
-                    onSubmit={handleCreateSecret}
-                    className="p-4 rounded-xl bg-[#0e0e11] border border-white/[0.08] space-y-3"
-                  >
-                    <div className="text-xs font-medium text-zinc-300">
-                      Adicionar nota confidencial
+                  <form onSubmit={handleCreateSecret} className="card-muted p-4 space-y-3">
+                    <div>
+                      <label className="label">Título</label>
+                      <input
+                        type="text"
+                        value={newSecretTitle}
+                        onChange={(e) => setNewSecretTitle(e.target.value)}
+                        placeholder="Ex.: Traição na ponte norte"
+                        className="input"
+                      />
                     </div>
-                    <input
-                      type="text"
-                      value={newSecretTitle}
-                      onChange={(e) => setNewSecretTitle(e.target.value)}
-                      placeholder="Título (ex: Traição na ponte norte)"
-                      className="input-clean w-full px-3 py-1.5 rounded-lg text-xs"
-                    />
-                    <MentionTextarea
-                      value={newSecretContent}
-                      onChange={setNewSecretContent}
-                      rows={3}
-                      placeholder="Descreva o segredo usando @NPC e #Local..."
-                    />
+                    <div>
+                      <label className="label">Conteúdo</label>
+                      <MentionTextarea
+                        value={newSecretContent}
+                        onChange={setNewSecretContent}
+                        rows={3}
+                        placeholder="Descreva o segredo usando @NPC e #Local"
+                      />
+                    </div>
                     <div className="flex justify-end gap-2">
                       <button
                         type="button"
                         onClick={() => setShowAddSecret(false)}
-                        className="btn-subtle px-3 py-1.5 rounded-lg text-xs"
+                        className="btn btn-secondary"
                       >
                         Cancelar
                       </button>
-                      <button
-                        type="submit"
-                        className="btn-solid px-3 py-1.5 rounded-lg text-xs"
-                      >
+                      <button type="submit" className="btn btn-primary">
                         Salvar segredo
                       </button>
                     </div>
                   </form>
                 )}
 
-                <div className="space-y-2.5">
+                <div className="space-y-2">
                   {visibleSecrets.map((sec) => (
                     <div
                       key={sec.id}
-                      className={`p-4 rounded-xl border transition-colors ${
-                        sec.isRevealed
-                          ? 'bg-amber-500/[0.04] border-amber-500/25'
-                          : 'bg-[#0e0e11] border-white/[0.07]'
+                      className={`p-4 rounded-lg border ${
+                        sec.isRevealed ? 'bg-surface border-line' : 'bg-surface-2 border-line'
                       }`}
                     >
                       <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2 min-w-0">
                           {sec.isRevealed ? (
-                            <Unlock className="w-3.5 h-3.5 text-amber-400" />
+                            <Unlock className="w-4 h-4 text-fg-subtle shrink-0" />
                           ) : (
-                            <EyeOff className="w-3.5 h-3.5 text-rose-400/80" />
+                            <EyeOff className="w-4 h-4 text-fg-subtle shrink-0" />
                           )}
-                          <h4 className="text-sm font-medium text-zinc-100">
-                            {sec.title}
-                          </h4>
-                          <span
-                            className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
-                              sec.isRevealed
-                                ? 'bg-amber-500/10 text-amber-300 border-amber-500/25'
-                                : 'bg-white/[0.04] text-zinc-400 border-white/[0.08]'
-                            }`}
-                          >
+                          <h4 className="text-sm font-medium text-fg">{sec.title}</h4>
+                          <span className={`badge ${sec.isRevealed ? 'badge-success' : ''}`}>
                             {sec.isRevealed
                               ? `Revelado${sec.revealedAt ? ` · ${sec.revealedAt}` : ''}`
                               : 'Apenas mestre'}
@@ -1091,7 +995,7 @@ export const EntityWikiView: React.FC = () => {
                         </div>
 
                         {viewRole === 'gm' && (
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1">
                             <button
                               onClick={() =>
                                 revealEntitySecret(
@@ -1100,18 +1004,16 @@ export const EntityWikiView: React.FC = () => {
                                   !sec.isRevealed
                                 )
                               }
-                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
-                                sec.isRevealed ? 'btn-subtle' : 'btn-solid'
-                              }`}
+                              className="btn btn-secondary btn-sm"
                             >
                               {sec.isRevealed ? (
                                 <>
-                                  <EyeOff className="w-3 h-3" />
+                                  <EyeOff className="w-4 h-4" />
                                   <span>Ocultar</span>
                                 </>
                               ) : (
                                 <>
-                                  <Unlock className="w-3 h-3" />
+                                  <Unlock className="w-4 h-4" />
                                   <span>Revelar</span>
                                 </>
                               )}
@@ -1120,16 +1022,16 @@ export const EntityWikiView: React.FC = () => {
                               onClick={() =>
                                 deleteEntitySecret(currentEntity.id, sec.id)
                               }
-                              className="p-1 text-zinc-500 hover:text-rose-400 transition-colors"
+                              className="btn btn-danger-ghost btn-icon"
                               title="Remover segredo"
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              <Trash2 className="w-4 h-4" />
                             </button>
                           </div>
                         )}
                       </div>
 
-                      <div className="text-xs text-zinc-300 leading-relaxed">
+                      <div className="text-sm text-fg-muted leading-relaxed">
                         <MentionText text={sec.content} />
                       </div>
                     </div>
@@ -1138,32 +1040,29 @@ export const EntityWikiView: React.FC = () => {
               </section>
             )}
 
-            {/* Bidirectional Backlinks */}
-            <section className="pt-4 border-t border-white/[0.06] space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Link2 className="w-3.5 h-3.5 text-zinc-400" />
-                  <h3 className="text-xs font-medium text-zinc-300">
-                    Referências cruzadas & mapas
-                  </h3>
-                </div>
-                <span className="text-xs font-mono text-zinc-500 tabular-nums">
-                  {backlinks.length} conexões com {currentEntity.mentionPrefix}
-                  {currentEntity.handle}
+            {/* Referências cruzadas */}
+            <section className="pt-6 border-t border-line space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="section-title flex items-center gap-2">
+                  <Link2 className="w-4 h-4 text-fg-subtle" />
+                  Referências
+                </h3>
+                <span className="text-xs text-fg-subtle tabular-nums">
+                  {backlinks.length} {backlinks.length === 1 ? 'conexão' : 'conexões'}
                 </span>
               </div>
 
               {backlinks.length === 0 ? (
-                <div className="p-4 rounded-xl bg-[#0e0e11] border border-white/[0.05] text-xs text-zinc-500">
+                <div className="card-muted p-4 text-[13px] text-fg-muted">
                   Nenhuma referência encontrada. Cite{' '}
-                  <code className="text-zinc-300 font-mono">
+                  <code className="font-mono text-fg">
                     {currentEntity.mentionPrefix}
                     {currentEntity.handle}
                   </code>{' '}
-                  em notas, missões, outras entradas ou vincule esta entidade em um marcador no Mapa Interativo.
+                  em notas, missões ou outras entradas, ou vincule esta entrada a um marcador no mapa.
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   {backlinks.map((bl) => (
                     <div
                       key={bl.id}
@@ -1187,26 +1086,16 @@ export const EntityWikiView: React.FC = () => {
                           setActiveModule('session');
                         }
                       }}
-                      className="p-3.5 rounded-xl surface-card cursor-pointer space-y-1.5 group"
+                      className="card p-3.5 cursor-pointer space-y-1.5 group transition-colors hover:border-line-strong hover:bg-surface-2"
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span
-                          className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
-                            bl.isSecret
-                              ? 'bg-rose-500/10 text-rose-300 border-rose-500/20'
-                              : bl.sourceType === 'map'
-                              ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
-                              : 'bg-white/[0.04] text-zinc-400 border-white/[0.07]'
-                          }`}
-                        >
+                        <span className={`badge ${bl.isSecret ? 'badge-warning' : ''}`}>
                           {bl.sourceTypeLabel}
                         </span>
-                        <ArrowUpRight className="w-3.5 h-3.5 text-zinc-600 group-hover:text-zinc-200 transition-colors" />
+                        <ArrowUpRight className="w-4 h-4 text-fg-subtle group-hover:text-fg transition-colors" />
                       </div>
-                      <div className="text-xs font-medium text-zinc-200 group-hover:text-white">
-                        {bl.sourceTitle}
-                      </div>
-                      <div className="text-xs text-zinc-500 line-clamp-2">
+                      <div className="text-sm font-medium text-fg">{bl.sourceTitle}</div>
+                      <div className="text-[13px] text-fg-muted line-clamp-2">
                         <MentionText text={bl.excerpt} />
                       </div>
                     </div>
@@ -1218,35 +1107,29 @@ export const EntityWikiView: React.FC = () => {
         )}
       </div>
 
-      {/* Modal: Create New Entity */}
+      {/* Modal: nova entrada */}
       {showNewModal && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <form
-            onSubmit={handleCreateEntity}
-            className="w-full max-w-md rounded-2xl bg-[#121215] border border-white/[0.09] shadow-2xl p-6 space-y-4"
-          >
-            <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
-              <h3 className="text-sm font-semibold text-zinc-100">
-                Nova entrada no códice
-              </h3>
+        <div className="modal-backdrop">
+          <form onSubmit={handleCreateEntity} className="modal max-w-md">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-line">
+              <h3 className="section-title">Nova entrada</h3>
               <button
                 type="button"
                 onClick={() => setShowNewModal(false)}
-                className="p-1 text-zinc-500 hover:text-zinc-200 rounded-md"
+                className="btn btn-ghost btn-icon"
+                title="Fechar"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="space-y-3">
+            <div className="p-5 space-y-4 overflow-y-auto">
               <div>
-                <label className="block text-xs text-zinc-400 mb-1">
-                  Categoria
-                </label>
+                <label className="label">Categoria</label>
                 <select
                   value={newCategory}
                   onChange={(e) => setNewCategory(e.target.value as EntityCategory)}
-                  className="input-clean w-full px-3 py-2 rounded-lg text-xs"
+                  className="input"
                 >
                   <option value="npc">Personagem (NPC) — @menção</option>
                   <option value="faction">Facção — @menção</option>
@@ -1258,56 +1141,44 @@ export const EntityWikiView: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs text-zinc-400 mb-1">
-                  Nome
-                </label>
+                <label className="label">Nome</label>
                 <input
                   type="text"
                   required
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
-                  placeholder="Ex: Capitão Vane ou Cripta do Sol"
-                  className="input-clean w-full px-3 py-2 rounded-lg text-xs"
+                  placeholder="Ex.: Capitão Vane, Cripta do Sol"
+                  className="input"
                 />
               </div>
 
               <div>
-                <label className="block text-xs text-zinc-400 mb-1">
-                  Subtítulo ou papel
-                </label>
+                <label className="label">Subtítulo ou papel</label>
                 <input
                   type="text"
                   value={newSubtitle}
                   onChange={(e) => setNewSubtitle(e.target.value)}
-                  placeholder="Ex: Líder dos mercenários da ponte"
-                  className="input-clean w-full px-3 py-2 rounded-lg text-xs"
+                  placeholder="Ex.: Líder dos mercenários da ponte"
+                  className="input"
                 />
               </div>
 
               <div>
-                <label className="block text-xs text-zinc-400 mb-1">
-                  Resumo inicial (suporta @ e #)
-                </label>
-                <MentionTextarea
-                  value={newSummary}
-                  onChange={setNewSummary}
-                  rows={3}
-                />
+                <label className="label">Resumo</label>
+                <MentionTextarea value={newSummary} onChange={setNewSummary} rows={3} />
+                <p className="hint">Aceita menções com @ e #.</p>
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex justify-end gap-2 px-5 py-4 border-t border-line bg-surface-2">
               <button
                 type="button"
                 onClick={() => setShowNewModal(false)}
-                className="btn-subtle px-3.5 py-2 rounded-lg text-xs"
+                className="btn btn-secondary"
               >
                 Cancelar
               </button>
-              <button
-                type="submit"
-                className="btn-solid px-4 py-2 rounded-lg text-xs"
-              >
+              <button type="submit" className="btn btn-primary">
                 Criar entrada
               </button>
             </div>

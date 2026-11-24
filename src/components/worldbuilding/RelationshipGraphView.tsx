@@ -18,60 +18,33 @@ import {
   UserPlus,
 } from 'lucide-react';
 
-const RELATION_STYLES: Record<
-  RelationType,
-  { stroke: string; badge: string; label: string }
-> = {
-  hostile: {
-    stroke: '#e11d48',
-    badge: 'bg-rose-500/10 text-rose-300 border-rose-500/25',
-    label: 'Hostilidade',
-  },
-  allied: {
-    stroke: '#10b981',
-    badge: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/25',
-    label: 'Aliança',
-  },
-  secret: {
-    stroke: '#d4a853',
-    badge: 'bg-amber-500/10 text-amber-300 border-amber-500/25',
-    label: 'Conspiração',
-  },
-  patron: {
-    stroke: '#a855f7',
-    badge: 'bg-violet-500/10 text-violet-300 border-violet-500/25',
-    label: 'Domínio',
-  },
-  neutral: {
-    stroke: '#71717a',
-    badge: 'bg-white/[0.04] text-zinc-300 border-white/[0.08]',
-    label: 'Comercial / Neutro',
-  },
-  blood: {
-    stroke: '#ec4899',
-    badge: 'bg-pink-500/10 text-pink-300 border-pink-500/25',
-    label: 'Linhagem',
-  },
+// Tipo de vínculo: o traço da aresta é sempre neutro; a natureza aparece no
+// selo da lista (cor semântica) e no padrão do traço (segredo = tracejado).
+const RELATION_STYLES: Record<RelationType, { badge: string; label: string }> = {
+  hostile: { badge: 'badge-danger', label: 'Hostilidade' },
+  allied: { badge: 'badge-success', label: 'Aliança' },
+  secret: { badge: 'badge-warning', label: 'Conspiração' },
+  patron: { badge: 'badge-info', label: 'Domínio' },
+  neutral: { badge: '', label: 'Comercial / Neutro' },
+  blood: { badge: 'badge-accent', label: 'Linhagem' },
 };
 
-const NODE_COLORS: Record<
-  string,
-  { fill: string; border: string; text: string; badge: string }
-> = {
-  npc: { fill: '#131317', border: '#d4a853', text: '#fcd34d', badge: 'NPC' },
-  faction: { fill: '#131317', border: '#a855f7', text: '#d8b4fe', badge: 'FACÇÃO' },
-  location: { fill: '#131317', border: '#10b981', text: '#6ee7b7', badge: 'LOCAL' },
-  player: { fill: '#131317', border: '#6366f1', text: '#a5b4fc', badge: 'PJ' },
-  item: { fill: '#131317', border: '#38bdf8', text: '#7dd3fc', badge: 'ITEM' },
-  monster: { fill: '#131317', border: '#e11d48', text: '#fda4af', badge: 'AMEAÇA' },
-  lore: { fill: '#131317', border: '#71717a', text: '#d4d4d8', badge: 'LORE' },
+const NODE_COLORS: Record<string, { badge: string }> = {
+  npc: { badge: 'NPC' },
+  faction: { badge: 'Facção' },
+  location: { badge: 'Local' },
+  player: { badge: 'PJ' },
+  item: { badge: 'Item' },
+  monster: { badge: 'Ameaça' },
+  lore: { badge: 'Lore' },
+  note: { badge: 'Nota' },
 };
 
 interface UnifiedGraphNode {
   id: string;
   label: string;
   subtitle: string;
-  category: 'npc' | 'faction' | 'location' | 'player' | 'item' | 'monster' | 'lore';
+  category: 'npc' | 'faction' | 'location' | 'player' | 'item' | 'monster' | 'lore' | 'note';
   isManual: boolean;
   entityId?: string;
 }
@@ -227,27 +200,25 @@ export const RelationshipGraphView: React.FC = () => {
   const selectedNode = allNodes.find((n) => n.id === selectedNodeId);
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-[calc(100vh-7.5rem)]">
-      {/* Left: Network Canvas */}
-      <div className="lg:col-span-8 surface-panel rounded-xl flex flex-col overflow-hidden relative">
-        <div className="px-4 py-3 border-b border-white/[0.06] flex flex-wrap items-center justify-between gap-2 z-10">
-          <div className="space-y-0.5">
-            <h2 className="text-sm font-semibold text-zinc-100 tracking-tight">
-              Grafo de relações
-            </h2>
-            <p className="text-xs text-zinc-500">
-              Mapeie alianças, dívidas e intrigas entre personagens e facções.
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:h-[calc(100vh-7.5rem)]">
+      {/* Canvas do grafo */}
+      <div className="lg:col-span-8 card flex flex-col overflow-hidden relative min-h-[420px]">
+        <div className="px-4 py-3 border-b border-line flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="section-title">Grafo de relações</h2>
+            <p className="text-[13px] text-fg-muted">
+              Alianças, dívidas e intrigas entre personagens e facções.
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-2">
             {viewRole === 'gm' && (
               <>
                 <button
                   onClick={() => setShowAddNodeModal(true)}
-                  className="btn-subtle px-2.5 py-1.5 rounded-lg text-xs inline-flex items-center gap-1.5"
+                  className="btn btn-secondary btn-sm"
                 >
-                  <UserPlus className="w-3.5 h-3.5" />
+                  <UserPlus className="w-4 h-4" />
                   <span>Novo nó</span>
                 </button>
 
@@ -257,50 +228,48 @@ export const RelationshipGraphView: React.FC = () => {
                     setConnectingSourceId(null);
                     setMousePos(null);
                   }}
-                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                    isConnectMode ? 'btn-solid' : 'btn-subtle'
-                  }`}
+                  className={`btn btn-sm ${isConnectMode ? 'btn-primary' : 'btn-secondary'}`}
                 >
-                  <Link2 className="w-3.5 h-3.5" />
+                  <Link2 className="w-4 h-4" />
                   <span>
                     {isConnectMode
                       ? connectingSourceId
-                        ? 'Selecione o destino...'
-                        : 'Selecione a origem...'
+                        ? 'Selecione o destino'
+                        : 'Selecione a origem'
                       : 'Conectar nós'}
                   </span>
                 </button>
               </>
             )}
 
-            <div className="flex items-center bg-[#0e0e11] border border-white/[0.06] rounded-lg p-0.5">
+            <div className="flex items-center rounded-md border border-line bg-surface p-0.5">
               <button
                 onClick={() => setZoom((z) => Math.max(0.7, +(z - 0.1).toFixed(1)))}
-                className="p-1.5 rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.04]"
+                className="btn btn-ghost btn-icon h-7 w-7"
                 title="Diminuir zoom"
               >
-                <ZoomOut className="w-3.5 h-3.5" />
+                <ZoomOut className="w-4 h-4" />
               </button>
               <button
                 onClick={() => setZoom((z) => Math.min(1.4, +(z + 0.1).toFixed(1)))}
-                className="p-1.5 rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.04]"
+                className="btn btn-ghost btn-icon h-7 w-7"
                 title="Aumentar zoom"
               >
-                <ZoomIn className="w-3.5 h-3.5" />
+                <ZoomIn className="w-4 h-4" />
               </button>
               <button
                 onClick={() => setZoom(1)}
-                className="p-1.5 rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.04]"
+                className="btn btn-ghost btn-icon h-7 w-7"
                 title="Redefinir zoom"
               >
-                <RotateCcw className="w-3.5 h-3.5" />
+                <RotateCcw className="w-4 h-4" />
               </button>
             </div>
           </div>
         </div>
 
-        {/* SVG Canvas */}
-        <div className="flex-1 relative overflow-hidden bg-[#0b0b0d] select-none">
+        {/* SVG */}
+        <div className="flex-1 relative overflow-hidden bg-surface-2 select-none">
           <svg
             ref={svgRef}
             viewBox={`0 0 ${960 / zoom} ${600 / zoom}`}
@@ -310,8 +279,8 @@ export const RelationshipGraphView: React.FC = () => {
             className="w-full h-full cursor-grab active:cursor-grabbing"
           >
             <defs>
-              <pattern id="graphGrid" width="36" height="36" patternUnits="userSpaceOnUse">
-                <circle cx="1" cy="1" r="1" fill="#232329" />
+              <pattern id="graphGrid" width="32" height="32" patternUnits="userSpaceOnUse">
+                <circle cx="1" cy="1" r="1" className="fill-line-strong" />
               </pattern>
             </defs>
             <rect width="2000" height="2000" fill="url(#graphGrid)" />
@@ -322,13 +291,13 @@ export const RelationshipGraphView: React.FC = () => {
                 y1={getPos(connectingSourceId, 0).y}
                 x2={mousePos.x}
                 y2={mousePos.y}
-                stroke="#e4e4e7"
+                className="stroke-accent"
                 strokeWidth="1.5"
                 strokeDasharray="5 4"
               />
             )}
 
-            {/* Edges */}
+            {/* Arestas */}
             {visibleRelationships.map((rel) => {
               const srcIdx = allNodes.findIndex((n) => n.id === rel.sourceId);
               const tgtIdx = allNodes.findIndex((n) => n.id === rel.targetId);
@@ -336,9 +305,10 @@ export const RelationshipGraphView: React.FC = () => {
 
               const srcPos = getPos(rel.sourceId, srcIdx);
               const tgtPos = getPos(rel.targetId, tgtIdx);
-              const style = RELATION_STYLES[rel.type] || RELATION_STYLES.neutral;
               const midX = (srcPos.x + tgtPos.x) / 2;
               const midY = (srcPos.y + tgtPos.y) / 2;
+              const touchesSelection =
+                rel.sourceId === selectedNodeId || rel.targetId === selectedNodeId;
 
               return (
                 <g key={rel.id}>
@@ -347,28 +317,26 @@ export const RelationshipGraphView: React.FC = () => {
                     y1={srcPos.y}
                     x2={tgtPos.x}
                     y2={tgtPos.y}
-                    stroke={style.stroke}
-                    strokeWidth={rel.isSecret ? 1.75 : 1.5}
+                    className={touchesSelection ? 'stroke-fg-muted' : 'stroke-fg-subtle'}
+                    strokeWidth={touchesSelection ? 1.75 : 1.25}
                     strokeDasharray={rel.isSecret ? '5 4' : undefined}
-                    opacity={0.75}
                   />
                   <rect
-                    x={midX - 62}
+                    x={midX - 64}
                     y={midY - 11}
-                    width="124"
-                    height="20"
+                    width="128"
+                    height="22"
                     rx="5"
-                    fill="#111114"
-                    stroke="#27272a"
+                    className="fill-surface stroke-line"
                     strokeWidth="1"
                   />
                   <text
                     x={midX}
-                    y={midY + 3}
+                    y={midY + 4}
                     textAnchor="middle"
-                    fill="#d4d4d8"
-                    fontSize="9.5"
-                    fontFamily="Plus Jakarta Sans, sans-serif"
+                    className="fill-fg-muted"
+                    fontSize="11"
+                    fontFamily="IBM Plex Sans, sans-serif"
                     fontWeight="500"
                   >
                     {rel.label.length > 20 ? `${rel.label.slice(0, 18)}…` : rel.label}
@@ -377,12 +345,13 @@ export const RelationshipGraphView: React.FC = () => {
               );
             })}
 
-            {/* Nodes */}
+            {/* Nós */}
             {allNodes.map((node, idx) => {
               const pos = getPos(node.id, idx);
               const palette = NODE_COLORS[node.category] || NODE_COLORS.npc;
               const isSelected = node.id === selectedNodeId;
               const isSourceConnect = node.id === connectingSourceId;
+              const highlighted = isSelected || isSourceConnect;
 
               return (
                 <g
@@ -397,57 +366,56 @@ export const RelationshipGraphView: React.FC = () => {
                   }}
                   className="cursor-pointer"
                 >
-                  {(isSelected || isSourceConnect) && (
+                  {highlighted && (
                     <circle
-                      r="35"
+                      r="32"
                       fill="none"
-                      stroke={isSourceConnect ? '#10b981' : '#e4e4e7'}
-                      strokeWidth="1.25"
-                      strokeDasharray="3 3"
-                      opacity="0.7"
+                      className="stroke-accent"
+                      strokeWidth="2"
+                      opacity={isSourceConnect ? 1 : 0.35}
                     />
                   )}
                   <circle
-                    r="26"
-                    fill={palette.fill}
-                    stroke={palette.border}
-                    strokeWidth={isSelected ? '2' : '1.5'}
+                    r="27"
+                    className={
+                      highlighted ? 'fill-accent-soft stroke-accent' : 'fill-surface stroke-line-strong'
+                    }
+                    strokeWidth={highlighted ? 1.5 : 1}
                   />
                   <text
                     y="-3"
                     textAnchor="middle"
-                    fill={palette.text}
-                    fontSize="8"
-                    fontFamily="JetBrains Mono, monospace"
-                    fontWeight="600"
+                    className={highlighted ? 'fill-accent' : 'fill-fg-subtle'}
+                    fontSize="10"
+                    fontFamily="IBM Plex Sans, sans-serif"
+                    fontWeight="500"
                   >
                     {palette.badge}
                   </text>
                   <text
-                    y="9"
+                    y="11"
                     textAnchor="middle"
-                    fill="#f4f4f5"
-                    fontSize="9.5"
-                    fontFamily="Plus Jakarta Sans, sans-serif"
+                    className="fill-fg"
+                    fontSize="11"
+                    fontFamily="IBM Plex Sans, sans-serif"
                     fontWeight="600"
                   >
                     {node.label.slice(0, 10)}
                   </text>
                   <rect
-                    x="-60"
-                    y="31"
-                    width="120"
-                    height="18"
+                    x="-62"
+                    y="33"
+                    width="124"
+                    height="20"
                     rx="4"
-                    fill="#0e0e11"
-                    stroke="#232329"
+                    className="fill-surface stroke-line"
                   />
                   <text
-                    y="43"
+                    y="47"
                     textAnchor="middle"
-                    fill="#d4d4d8"
-                    fontSize="9.5"
-                    fontFamily="Plus Jakarta Sans, sans-serif"
+                    className="fill-fg-muted"
+                    fontSize="11"
+                    fontFamily="IBM Plex Sans, sans-serif"
                     fontWeight="500"
                   >
                     {node.subtitle.length > 18
@@ -461,40 +429,43 @@ export const RelationshipGraphView: React.FC = () => {
         </div>
       </div>
 
-      {/* Right Column: Inspector & Edge Builder */}
-      <div className="lg:col-span-4 flex flex-col gap-3.5 overflow-y-auto pr-1">
+      {/* Inspetor e criação de vínculos */}
+      <div className="lg:col-span-4 flex flex-col gap-4 lg:overflow-y-auto">
         {selectedNode && (
-          <div className="surface-panel rounded-xl p-4 space-y-2.5">
-            <div className="flex items-start justify-between gap-2">
+          <div className="card p-4">
+            <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <span className="text-[10px] font-mono text-zinc-500">
-                  {NODE_COLORS[selectedNode.category]?.badge || 'NÓ'} · {selectedNode.label}
-                </span>
-                <h3 className="text-base font-serif font-medium text-zinc-100 truncate">
-                  {selectedNode.subtitle}
-                </h3>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="badge">
+                    {NODE_COLORS[selectedNode.category]?.badge || 'Nó'}
+                  </span>
+                  <span className="text-xs font-mono text-fg-subtle truncate">
+                    {selectedNode.label}
+                  </span>
+                </div>
+                <h3 className="section-title truncate">{selectedNode.subtitle}</h3>
               </div>
 
-              <div className="flex items-center gap-1.5 shrink-0">
+              <div className="flex items-center gap-1 shrink-0">
                 {selectedNode.entityId && (
                   <button
                     onClick={() => {
                       setSelectedEntityId(selectedNode.entityId!);
                       setWorldSubTab('wiki');
                     }}
-                    className="btn-subtle px-2.5 py-1 rounded-md text-xs inline-flex items-center gap-1"
+                    className="btn btn-secondary btn-sm"
                   >
-                    <span>Códice</span>
-                    <ExternalLink className="w-3 h-3" />
+                    <span>Abrir no códice</span>
+                    <ExternalLink className="w-4 h-4" />
                   </button>
                 )}
                 {selectedNode.isManual && viewRole === 'gm' && (
                   <button
                     onClick={() => deleteManualGraphNode(selectedNode.id)}
-                    className="p-1.5 rounded-md text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10"
+                    className="btn btn-danger-ghost btn-icon"
                     title="Excluir nó manual"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
+                    <Trash2 className="w-4 h-4" />
                   </button>
                 )}
               </div>
@@ -502,18 +473,19 @@ export const RelationshipGraphView: React.FC = () => {
           </div>
         )}
 
-        {/* Active Edges */}
-        <div className="surface-panel rounded-xl p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <h4 className="text-xs font-medium text-zinc-200">
-              Vínculos ativos
-            </h4>
-            <span className="text-[11px] font-mono text-zinc-500 tabular-nums">
-              {visibleRelationships.length}
-            </span>
+        {/* Vínculos ativos */}
+        <div className="card">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-line">
+            <h4 className="section-title">Vínculos</h4>
+            <span className="badge tabular-nums">{visibleRelationships.length}</span>
           </div>
 
-          <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+          <div className="max-h-72 overflow-y-auto divide-y divide-line">
+            {visibleRelationships.length === 0 && (
+              <p className="px-4 py-6 text-[13px] text-fg-subtle text-center">
+                Nenhum vínculo registrado.
+              </p>
+            )}
             {visibleRelationships.map((rel) => {
               const src = allNodes.find((n) => n.id === rel.sourceId);
               const tgt = allNodes.find((n) => n.id === rel.targetId);
@@ -522,30 +494,29 @@ export const RelationshipGraphView: React.FC = () => {
               const isEditing = editingEdgeId === rel.id;
 
               return (
-                <div
-                  key={rel.id}
-                  className="p-2.5 rounded-lg bg-[#0e0e11] border border-white/[0.06] text-xs space-y-1.5"
-                >
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="font-mono text-[11px] text-zinc-300 truncate">
-                      {src.label} → {tgt.label}
+                <div key={rel.id} className="px-4 py-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[13px] text-fg truncate">
+                      <span className="font-medium">{src.label}</span>
+                      <span className="text-fg-subtle"> → </span>
+                      <span className="font-medium">{tgt.label}</span>
                     </span>
 
                     {viewRole === 'gm' && (
-                      <div className="flex items-center gap-0.5 shrink-0">
+                      <div className="flex items-center shrink-0">
                         <button
                           onClick={() => {
                             setEditingEdgeId(rel.id);
                             setEditingEdgeLabel(rel.label);
                           }}
-                          className="p-1 rounded hover:bg-white/[0.05] text-zinc-500 hover:text-zinc-200"
+                          className="btn btn-ghost btn-icon h-7 w-7"
                           title="Editar rótulo"
                         >
-                          <Edit3 className="w-3 h-3" />
+                          <Edit3 className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => toggleRevealRelationship(rel.id)}
-                          className="p-1 rounded hover:bg-white/[0.05] text-zinc-500 hover:text-zinc-200"
+                          className="btn btn-ghost btn-icon h-7 w-7"
                           title={
                             rel.isSecret && !rel.isRevealed
                               ? 'Revelar aos jogadores'
@@ -553,29 +524,30 @@ export const RelationshipGraphView: React.FC = () => {
                           }
                         >
                           {rel.isSecret && !rel.isRevealed ? (
-                            <EyeOff className="w-3 h-3 text-rose-400" />
+                            <EyeOff className="w-4 h-4" />
                           ) : (
-                            <Eye className="w-3 h-3 text-zinc-400" />
+                            <Eye className="w-4 h-4" />
                           )}
                         </button>
                         <button
                           onClick={() => deleteRelationship(rel.id)}
-                          className="p-1 rounded hover:bg-rose-500/10 text-zinc-500 hover:text-rose-400"
+                          className="btn btn-danger-ghost btn-icon h-7 w-7"
                           title="Excluir vínculo"
                         >
-                          <Trash2 className="w-3 h-3" />
+                          <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
                     )}
                   </div>
 
                   {isEditing ? (
-                    <div className="flex items-center gap-1.5 pt-1">
+                    <div className="flex items-center gap-1.5">
                       <input
                         type="text"
                         value={editingEdgeLabel}
                         onChange={(e) => setEditingEdgeLabel(e.target.value)}
-                        className="input-clean flex-1 px-2 py-1 rounded text-xs"
+                        className="input h-8 flex-1"
+                        autoFocus
                       />
                       <button
                         onClick={() => {
@@ -584,27 +556,27 @@ export const RelationshipGraphView: React.FC = () => {
                           }
                           setEditingEdgeId(null);
                         }}
-                        className="btn-solid p-1 rounded"
+                        className="btn btn-primary btn-icon"
+                        title="Salvar"
                       >
-                        <Check className="w-3 h-3" />
+                        <Check className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => setEditingEdgeId(null)}
-                        className="btn-subtle p-1 rounded"
+                        className="btn btn-secondary btn-icon"
+                        title="Cancelar"
                       >
-                        <X className="w-3 h-3" />
+                        <X className="w-4 h-4" />
                       </button>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-medium border ${style.badge}`}
-                      >
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className={`badge ${style.badge}`} title={style.label}>
                         {rel.label}
                       </span>
                       {rel.isSecret && !rel.isRevealed && (
-                        <span className="inline-flex items-center gap-1 text-[10px] text-rose-400/90 font-mono">
-                          <Lock className="w-2.5 h-2.5" /> Oculto
+                        <span className="badge">
+                          <Lock className="w-3 h-3" /> Oculto
                         </span>
                       )}
                     </div>
@@ -615,26 +587,21 @@ export const RelationshipGraphView: React.FC = () => {
           </div>
         </div>
 
-        {/* Form to Create Manual Connection */}
+        {/* Novo vínculo */}
         {viewRole === 'gm' && (
-          <form
-            onSubmit={handleCreateRelationship}
-            className="surface-panel rounded-xl p-4 space-y-3"
-          >
-            <div className="flex items-center gap-1.5">
-              <Plus className="w-3.5 h-3.5 text-zinc-400" />
-              <h4 className="text-xs font-medium text-zinc-200">
-                Novo vínculo
-              </h4>
+          <form onSubmit={handleCreateRelationship} className="card">
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-line">
+              <Plus className="w-4 h-4 text-fg-subtle" />
+              <h4 className="section-title">Novo vínculo</h4>
             </div>
 
-            <div className="grid grid-cols-1 gap-2.5 text-xs">
+            <div className="p-4 space-y-3">
               <div>
-                <label className="block text-[11px] text-zinc-400 mb-1">Origem</label>
+                <label className="label">Origem</label>
                 <select
                   value={sourceId}
                   onChange={(e) => setSourceId(e.target.value)}
-                  className="input-clean w-full px-2.5 py-1.5 rounded-lg"
+                  className="input"
                 >
                   {allNodes.map((n) => (
                     <option key={n.id} value={n.id}>
@@ -645,11 +612,11 @@ export const RelationshipGraphView: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-[11px] text-zinc-400 mb-1">Destino</label>
+                <label className="label">Destino</label>
                 <select
                   value={targetId}
                   onChange={(e) => setTargetId(e.target.value)}
-                  className="input-clean w-full px-2.5 py-1.5 rounded-lg"
+                  className="input"
                 >
                   {allNodes.map((n) => (
                     <option key={n.id} value={n.id}>
@@ -660,24 +627,22 @@ export const RelationshipGraphView: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-[11px] text-zinc-400 mb-1">
-                  Descrição da relação
-                </label>
+                <label className="label">Descrição</label>
                 <input
                   type="text"
                   value={edgeLabel}
                   onChange={(e) => setEdgeLabel(e.target.value)}
-                  placeholder='Ex: "Irmão traidor", "Credor de"...'
-                  className="input-clean w-full px-2.5 py-1.5 rounded-lg"
+                  placeholder="Ex.: Irmão traidor, Credor de"
+                  className="input"
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] text-zinc-400 mb-1">Natureza</label>
+                <label className="label">Natureza</label>
                 <select
                   value={edgeType}
                   onChange={(e) => setEdgeType(e.target.value as RelationType)}
-                  className="input-clean w-full px-2.5 py-1.5 rounded-lg"
+                  className="input"
                 >
                   <option value="secret">Conspiração / Segredo</option>
                   <option value="hostile">Hostilidade / Rivalidade</option>
@@ -688,51 +653,43 @@ export const RelationshipGraphView: React.FC = () => {
                 </select>
               </div>
 
-              <label className="flex items-center gap-2 text-zinc-400 cursor-pointer pt-0.5 select-none">
+              <label className="flex items-center gap-2 text-sm text-fg-muted cursor-pointer select-none">
                 <input
                   type="checkbox"
+                  className="checkbox"
                   checked={edgeIsSecret}
                   onChange={(e) => setEdgeIsSecret(e.target.checked)}
                 />
-                <span>Vínculo oculto dos jogadores</span>
+                <span>Ocultar dos jogadores</span>
               </label>
 
-              <button
-                type="submit"
-                className="btn-solid w-full py-2 rounded-lg text-xs"
-              >
-                Conectar nós
+              <button type="submit" className="btn btn-primary w-full">
+                Criar vínculo
               </button>
             </div>
           </form>
         )}
       </div>
 
-      {/* Modal: Add Manual Node */}
+      {/* Modal: novo nó manual */}
       {showAddNodeModal && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <form
-            onSubmit={handleCreateManualNode}
-            className="max-w-md w-full rounded-2xl bg-[#121215] border border-white/[0.09] p-6 space-y-4 shadow-2xl"
-          >
-            <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
-              <h3 className="text-sm font-semibold text-zinc-100">
-                Novo nó avulso no grafo
-              </h3>
+        <div className="modal-backdrop">
+          <form onSubmit={handleCreateManualNode} className="modal max-w-md">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-line">
+              <h3 className="section-title">Novo nó</h3>
               <button
                 type="button"
                 onClick={() => setShowAddNodeModal(false)}
-                className="p-1 text-zinc-500 hover:text-zinc-200"
+                className="btn btn-ghost btn-icon"
+                title="Fechar"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="space-y-3 text-xs">
+            <div className="p-5 space-y-4">
               <div>
-                <label className="block text-[11px] text-zinc-400 mb-1">
-                  Categoria
-                </label>
+                <label className="label">Categoria</label>
                 <select
                   value={newNodeCategory}
                   onChange={(e) =>
@@ -740,7 +697,7 @@ export const RelationshipGraphView: React.FC = () => {
                       e.target.value as 'npc' | 'faction' | 'location' | 'player'
                     )
                   }
-                  className="input-clean w-full px-3 py-2 rounded-lg"
+                  className="input"
                 >
                   <option value="npc">Personagem (NPC)</option>
                   <option value="faction">Facção / Organização</option>
@@ -750,46 +707,39 @@ export const RelationshipGraphView: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-[11px] text-zinc-400 mb-1">
-                  Identificador curto
-                </label>
+                <label className="label">Identificador</label>
                 <input
                   type="text"
                   required
                   value={newNodeLabel}
                   onChange={(e) => setNewNodeLabel(e.target.value)}
-                  placeholder="Ex: @ConselhoReal, #FortalezaNorte"
-                  className="input-clean w-full px-3 py-2 rounded-lg"
+                  placeholder="Ex.: @ConselhoReal, #FortalezaNorte"
+                  className="input"
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] text-zinc-400 mb-1">
-                  Nome completo ou papel
-                </label>
+                <label className="label">Nome ou papel</label>
                 <input
                   type="text"
                   value={newNodeSubtitle}
                   onChange={(e) => setNewNodeSubtitle(e.target.value)}
-                  placeholder="Ex: Capitão da Guarda Real"
-                  className="input-clean w-full px-3 py-2 rounded-lg"
+                  placeholder="Ex.: Capitão da Guarda Real"
+                  className="input"
                 />
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex justify-end gap-2 px-5 py-4 border-t border-line bg-surface-2">
               <button
                 type="button"
                 onClick={() => setShowAddNodeModal(false)}
-                className="btn-subtle px-3.5 py-2 rounded-lg text-xs"
+                className="btn btn-secondary"
               >
                 Cancelar
               </button>
-              <button
-                type="submit"
-                className="btn-solid px-4 py-2 rounded-lg text-xs"
-              >
-                Inserir nó
+              <button type="submit" className="btn btn-primary">
+                Adicionar nó
               </button>
             </div>
           </form>

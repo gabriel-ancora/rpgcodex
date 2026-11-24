@@ -1,4 +1,6 @@
-// Procedural Web Audio API Mixer for RPG Soundboard & Ambience
+import { useEffect } from 'react';
+
+// Mixer procedural (Web Audio API) para trilhas ambiente e efeitos da sessão
 export type AmbienceTrackId =
   | 'combat_pulse'
   | 'heavy_rain'
@@ -29,7 +31,9 @@ class ProceduralAudioEngine {
       this.masterGain.connect(this.ctx.destination);
     }
     if (this.ctx.state === 'suspended') {
-      this.ctx.resume();
+      this.ctx.resume().catch(() => {
+        // o navegador exige um gesto do usuário; a próxima interação tenta de novo
+      });
     }
     return this.ctx;
   }
@@ -74,7 +78,7 @@ class ProceduralAudioEngine {
   }
 
   public stopAll(): void {
-    for (const id of this.activeTracks.keys()) {
+    for (const id of Array.from(this.activeTracks.keys())) {
       this.stopTrack(id);
     }
   }
@@ -85,9 +89,30 @@ class ProceduralAudioEngine {
       try {
         track.stopFn();
       } catch {
-        // ignore already stopped
+        // já parado
+      }
+      try {
+        track.gainNode.disconnect();
+      } catch {
+        // já desconectado
       }
       this.activeTracks.delete(trackId);
+    }
+  }
+
+  /** Para tudo e libera o AudioContext. Chamar ao sair da sessão e ao encerrar a conta. */
+  public dispose(): void {
+    this.stopAll();
+    try {
+      this.masterGain?.disconnect();
+    } catch {
+      // ignore
+    }
+    this.masterGain = null;
+    const ctx = this.ctx;
+    this.ctx = null;
+    if (ctx && ctx.state !== 'closed') {
+      ctx.close().catch(() => {});
     }
   }
 
@@ -346,4 +371,12 @@ class ProceduralAudioEngine {
 }
 
 export const soundEngine = new ProceduralAudioEngine();
+
+/**
+ * Hook para a tela da sessão: para todo o áudio e libera o contexto ao desmontar.
+ * Uso: chamar `useSoundCleanup()` no componente do cockpit.
+ */
+export function useSoundCleanup(): void {
+  useEffect(() => () => soundEngine.dispose(), []);
+}
 

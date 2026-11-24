@@ -1,8 +1,9 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { sheetContentFields } from "./lib/characterValidators";
 
 /**
- * OBSIDIAN CODEX — CONVEX PRODUCTION DATABASE SCHEMA
+ * CODEX — CONVEX PRODUCTION DATABASE SCHEMA
  * Multi-tenancy por campaignId, Autenticação Nativa, File Storage,
  * Fichas D&D 5e Sincronizadas, Combate/Dados em Tempo Real e Névoa de Guerra.
  */
@@ -13,19 +14,33 @@ export default defineSchema({
     email: v.string(),
     passwordHash: v.string(),
     salt: v.string(),
-    role: v.union(v.literal("dm"), v.literal("player")),
+    // Algoritmo do hash: ausente = legado (SHA-256 simples), "pbkdf2" = PBKDF2-SHA256.
+    hashAlgo: v.optional(v.literal("pbkdf2")),
+    hashIterations: v.optional(v.number()),
+    // Legado: preferência de interface. NUNCA usado para autorização.
+    role: v.optional(v.union(v.literal("dm"), v.literal("player"))),
     avatarUrl: v.optional(v.string()),
     createdAt: v.string(),
+  }).index("by_email", ["email"]),
+
+  // Controle de força bruta no login (por e-mail normalizado).
+  loginAttempts: defineTable({
+    email: v.string(),
+    failures: v.number(),
+    lastFailureAt: v.number(),
+    lockedUntil: v.optional(v.number()),
   }).index("by_email", ["email"]),
 
   userSessions: defineTable({
     token: v.string(),
     userId: v.id("users"),
+    sessionRole: v.optional(v.union(v.literal("dm"), v.literal("player"))),
     expiresAt: v.number(),
     createdAt: v.string(),
   })
     .index("by_token", ["token"])
-    .index("by_user", ["userId"]),
+    .index("by_user", ["userId"])
+    .index("by_expires", ["expiresAt"]),
 
   // 1. Campanhas & Multi-Tenancy
   campaigns: defineTable({
@@ -49,6 +64,35 @@ export default defineSchema({
     .index("by_slug", ["slugId"])
     .index("by_invite_code", ["inviteCode"])
     .index("by_dm", ["dmUserId"]),
+
+  // Participação em campanhas (fonte indexada; `campaigns.memberUserIds` é mantido por compatibilidade).
+  campaignMembers: defineTable({
+    campaignDocId: v.id("campaigns"),
+    userId: v.string(),
+    role: v.union(v.literal("dm"), v.literal("player")),
+    joinedAt: v.string(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_campaign", ["campaignDocId"])
+    .index("by_campaign_user", ["campaignDocId", "userId"]),
+
+  // Uploads pendentes: vincula cada arquivo enviado ao usuário (e campanha) que pediu a URL.
+  pendingUploads: defineTable({
+    userId: v.string(),
+    campaignId: v.optional(v.string()),
+    purpose: v.union(v.literal("image"), v.literal("pdf")),
+    storageId: v.optional(v.id("_storage")),
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_storage", ["storageId"]),
+
+  // Limite de chamadas de IA por usuário (janela fixa de 1 hora).
+  aiUsage: defineTable({
+    userId: v.string(),
+    windowStart: v.number(),
+    count: v.number(),
+  }).index("by_user", ["userId"]),
 
   // 2. Entidades da Wiki Viva (@ e #)
   entities: defineTable({
@@ -162,6 +206,7 @@ export default defineSchema({
     presetSvgType: v.optional(v.string()),
     customImageUrl: v.optional(v.string()),
     storageId: v.optional(v.id("_storage")),
+    isPublicToPlayers: v.optional(v.boolean()),
     shapes: v.optional(
       v.array(
         v.object({
@@ -362,6 +407,8 @@ export default defineSchema({
     conditions: v.array(v.string()),
     notes: v.string(),
     entityId: v.optional(v.string()),
+    // Combatente oculto dos jogadores (emboscadas, reforços).
+    isHidden: v.optional(v.boolean()),
   }).index("by_campaign", ["campaignId"]),
 
   combatState: defineTable({
@@ -424,6 +471,8 @@ export default defineSchema({
     title: v.string(),
     inGameDate: v.string(),
     author: v.string(),
+    // Usuário autor (ausente em registros legados: somente o Mestre pode editar).
+    authorUserId: v.optional(v.string()),
     content: v.string(),
     isPublic: v.boolean(),
   }).index("by_campaign", ["campaignId"]),
@@ -497,111 +546,7 @@ export default defineSchema({
     playerId: v.string(),
     playerName: v.string(),
     campaignTitle: v.string(),
-    name: v.string(),
-    avatarUrl: v.optional(v.string()),
-    race: v.string(),
-    racialTraits: v.array(v.string()),
-    className: v.string(),
-    subclass: v.optional(v.string()),
-    level: v.number(),
-    background: v.string(),
-    alignment: v.string(),
-    hp: v.number(),
-    maxHp: v.number(),
-    tempHp: v.number(),
-    armorClass: v.number(),
-    speed: v.string(),
-    hitDice: v.string(),
-    hitDiceUsed: v.number(),
-    proficiencyBonus: v.number(),
-    passivePerception: v.number(),
-    statGenerationMethod: v.optional(
-      v.union(v.literal("standard"), v.literal("roll4d6"), v.literal("random"))
-    ),
-    baseStats: v.optional(
-      v.object({
-        str: v.number(),
-        dex: v.number(),
-        con: v.number(),
-        int: v.number(),
-        wis: v.number(),
-        cha: v.number(),
-      })
-    ),
-    stats: v.object({
-      str: v.number(),
-      dex: v.number(),
-      con: v.number(),
-      int: v.number(),
-      wis: v.number(),
-      cha: v.number(),
-    }),
-    proficiencies: v.array(v.string()),
-    originFeat: v.optional(v.string()),
-    savingThrows: v.optional(v.array(v.string())),
-    weaponMasteries: v.optional(v.array(v.string())),
-    classFeatures: v.optional(
-      v.array(
-        v.object({
-          level: v.number(),
-          name: v.string(),
-          source: v.string(),
-          description: v.string(),
-        })
-      )
-    ),
-    classResources: v.optional(
-      v.array(
-        v.object({
-          label: v.string(),
-          value: v.string(),
-        })
-      )
-    ),
-    spellSlots: v.object({
-      level1: v.object({ used: v.number(), max: v.number() }),
-      level2: v.object({ used: v.number(), max: v.number() }),
-      level3: v.object({ used: v.number(), max: v.number() }),
-      level4: v.optional(v.object({ used: v.number(), max: v.number() })),
-      level5: v.optional(v.object({ used: v.number(), max: v.number() })),
-      level6: v.optional(v.object({ used: v.number(), max: v.number() })),
-      level7: v.optional(v.object({ used: v.number(), max: v.number() })),
-      level8: v.optional(v.object({ used: v.number(), max: v.number() })),
-      level9: v.optional(v.object({ used: v.number(), max: v.number() })),
-      pactSlots: v.optional(
-        v.object({ level: v.number(), used: v.number(), max: v.number() })
-      ),
-    }),
-    spells: v.array(
-      v.object({
-        id: v.string(),
-        index: v.string(),
-        name: v.string(),
-        level: v.number(),
-        school: v.string(),
-        castingTime: v.string(),
-        range: v.string(),
-        components: v.string(),
-        duration: v.string(),
-        description: v.string(),
-        prepared: v.optional(v.boolean()),
-      })
-    ),
-    equipment: v.array(
-      v.object({
-        id: v.string(),
-        name: v.string(),
-        category: v.string(),
-        damage: v.optional(v.string()),
-        armorClass: v.optional(v.string()),
-        mastery: v.optional(v.string()),
-        weight: v.optional(v.string()),
-        quantity: v.number(),
-        equipped: v.boolean(),
-        notes: v.optional(v.string()),
-      })
-    ),
-    notes: v.string(),
+    ...sheetContentFields,
     updatedAt: v.string(),
   })
     .index("by_campaign", ["campaignId"])

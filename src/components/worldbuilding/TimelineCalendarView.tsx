@@ -14,16 +14,16 @@ import {
   Edit3,
   GripVertical,
   Check,
-  X,
   Link2,
 } from 'lucide-react';
 
-const VISUAL_TAG_STYLES: Record<TimelineVisualTag, string> = {
-  Batalha: 'bg-rose-500/10 text-rose-300 border-rose-500/20',
-  Política: 'bg-amber-500/10 text-amber-300 border-amber-500/20',
-  Mágica: 'bg-sky-500/10 text-sky-300 border-sky-500/20',
-  'Marco do Grupo': 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20',
-  Cataclismo: 'bg-violet-500/10 text-violet-300 border-violet-500/20',
+// Cor do marcador de cada tipo de evento (apenas um ponto discreto ao lado do rótulo).
+const VISUAL_TAG_DOT: Record<TimelineVisualTag, string> = {
+  Batalha: 'bg-danger',
+  Política: 'bg-warning',
+  Mágica: 'bg-info',
+  'Marco do Grupo': 'bg-success',
+  Cataclismo: 'bg-accent',
 };
 
 export const TimelineCalendarView: React.FC = () => {
@@ -142,22 +142,31 @@ export const TimelineCalendarView: React.FC = () => {
     setNewMonthName('');
   };
 
+  const tagOptions = (
+    <>
+      <option value="Batalha">Batalha</option>
+      <option value="Política">Política</option>
+      <option value="Mágica">Mágica</option>
+      <option value="Marco do Grupo">Marco do grupo</option>
+      <option value="Cataclismo">Cataclismo</option>
+    </>
+  );
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-[calc(100vh-7.5rem)] overflow-y-auto pr-1">
-      {/* Left Column: Calendar, Moons & Era Settings */}
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-full overflow-y-auto pb-4 items-start">
+      {/* Coluna esquerda: calendário, luas, eras */}
       <div className="lg:col-span-5 space-y-4">
-        <div className="p-5 rounded-xl surface-panel space-y-4">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-zinc-200">
-              <Calendar className="w-4 h-4 text-zinc-400" />
-              <h2 className="text-sm font-semibold tracking-tight">
-                {calendar.calendarName}
-              </h2>
+        <section className="card">
+          <div className="px-4 py-3 border-b border-line flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <Calendar className="w-4 h-4 text-fg-subtle shrink-0" />
+              <h2 className="section-title truncate">{calendar.calendarName}</h2>
             </div>
             <select
               value={calendar.epochName}
               onChange={(e) => updateCalendarConfig({ epochName: e.target.value })}
-              className="input-clean px-2.5 py-1 rounded-lg text-[11px] font-mono"
+              className="input h-8 w-auto max-w-[50%] text-[13px]"
+              aria-label="Era atual"
             >
               {availableEras.map((era) => (
                 <option key={era} value={era}>
@@ -167,215 +176,222 @@ export const TimelineCalendarView: React.FC = () => {
             </select>
           </div>
 
-          <div className="p-5 rounded-xl bg-[#0e0e11] border border-white/[0.06] text-center space-y-1">
-            <span className="text-[11px] text-zinc-500">
-              {weekdayName} · {currentMonth?.season}
-            </span>
-            <div className="text-2xl font-serif font-medium text-zinc-100">
-              Dia {calendar.currentDay} de {currentMonth?.name}
-            </div>
-            <div className="text-xs font-mono text-zinc-400 tabular-nums">
-              Ano {calendar.currentYear} · {calendar.epochName}
-            </div>
-          </div>
-
-          {viewRole === 'gm' && (
-            <div className="space-y-2">
-              <span className="text-[11px] text-zinc-500 block">
-                Passagem de tempo
-              </span>
-              <div className="grid grid-cols-4 gap-1.5">
-                <button
-                  onClick={() => advanceCalendarDays(-1)}
-                  className="btn-subtle py-1.5 px-2 rounded-lg text-xs font-mono inline-flex items-center justify-center gap-1"
-                >
-                  <ChevronLeft className="w-3.5 h-3.5" /> 1d
-                </button>
-                <button
-                  onClick={() => advanceCalendarDays(1)}
-                  className="btn-solid py-1.5 px-2 rounded-lg text-xs font-mono inline-flex items-center justify-center gap-1"
-                >
-                  +1d <ChevronRight className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => advanceCalendarDays(7)}
-                  className="btn-subtle py-1.5 px-2 rounded-lg text-xs font-mono"
-                >
-                  +7d
-                </button>
-                <button
-                  onClick={() => advanceCalendarDays(30)}
-                  className="btn-subtle py-1.5 px-2 rounded-lg text-xs font-mono"
-                >
-                  +30d
-                </button>
+          <div className="p-4 space-y-4">
+            <div className="card-muted px-4 py-5 text-center">
+              <div className="text-[13px] text-fg-muted">
+                {weekdayName} · {currentMonth?.season}
               </div>
-            </div>
-          )}
-        </div>
-
-        {/* Lunar Cycles */}
-        <div className="p-5 rounded-xl surface-panel space-y-3">
-          <div className="flex items-center gap-2 text-zinc-200">
-            <Moon className="w-4 h-4 text-zinc-400" />
-            <h3 className="text-xs font-medium">Ciclos lunares</h3>
-          </div>
-          <div className="space-y-2.5">
-            {calendar.moons.map((moon) => {
-              const phase = getMoonPhaseLabel(moon.cycleDays, moon.offset);
-              return (
-                <div
-                  key={moon.id}
-                  className="p-3 rounded-xl bg-[#0e0e11] border border-white/[0.06] space-y-1.5"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="w-3 h-3 rounded-full border border-white/20"
-                        style={{ backgroundColor: moon.color }}
-                      />
-                      <span className="text-xs font-medium text-zinc-100">
-                        {moon.name}
-                      </span>
-                    </div>
-                    <span className="text-[11px] font-mono text-zinc-400">
-                      {phase.name}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-zinc-500 leading-relaxed">
-                    {moon.lore}
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Custom Eras & Months */}
-        {viewRole === 'gm' && (
-          <div className="p-5 rounded-xl surface-panel space-y-3">
-            <h3 className="text-xs font-medium text-zinc-300">
-              Configurar eras & meses
-            </h3>
-
-            <form onSubmit={handleAddEra} className="flex gap-2 text-xs">
-              <input
-                type="text"
-                value={newEraName}
-                onChange={(e) => setNewEraName(e.target.value)}
-                placeholder="Nova era (ex: Era das Cinzas)"
-                className="input-clean flex-1 px-2.5 py-1.5 rounded-lg"
-              />
-              <button
-                type="submit"
-                className="btn-subtle px-3 py-1.5 rounded-lg"
-              >
-                + Era
-              </button>
-            </form>
-
-            <form onSubmit={handleAddCustomMonth} className="flex gap-2 text-xs">
-              <input
-                type="text"
-                value={newMonthName}
-                onChange={(e) => setNewMonthName(e.target.value)}
-                placeholder="Novo mês (ex: Vento Gélido)"
-                className="input-clean flex-1 px-2.5 py-1.5 rounded-lg"
-              />
-              <select
-                value={newMonthSeason}
-                onChange={(e) => setNewMonthSeason(e.target.value)}
-                className="input-clean px-2 py-1.5 rounded-lg"
-              >
-                <option value="Primavera">Primavera</option>
-                <option value="Verão">Verão</option>
-                <option value="Outono">Outono</option>
-                <option value="Inverno">Inverno</option>
-              </select>
-              <button
-                type="submit"
-                className="btn-subtle px-3 py-1.5 rounded-lg"
-              >
-                + Mês
-              </button>
-            </form>
-          </div>
-        )}
-      </div>
-
-      {/* Right Column: Chronological Timeline */}
-      <div className="lg:col-span-7 surface-panel rounded-xl p-5 flex flex-col justify-between">
-        <div className="space-y-5">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] pb-3.5">
-            <div className="space-y-0.5">
-              <h2 className="text-sm font-semibold text-zinc-100 tracking-tight">
-                Cronologia da campanha
-              </h2>
-              <p className="text-xs text-zinc-500">
-                Arraste marcos para reordenar e conecte entradas do códice.
-              </p>
+              <div className="mt-1 text-xl font-semibold text-fg">
+                Dia {calendar.currentDay} de {currentMonth?.name}
+              </div>
+              <div className="mt-0.5 text-[13px] text-fg-muted tabular-nums">
+                Ano {calendar.currentYear} · {calendar.epochName}
+              </div>
             </div>
 
             {viewRole === 'gm' && (
-              <button
-                onClick={() => setShowAddEvent(!showAddEvent)}
-                className="btn-solid px-3 py-1.5 rounded-lg text-xs inline-flex items-center gap-1.5"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Novo marco</span>
-              </button>
+              <div>
+                <span className="label">Avançar tempo</span>
+                <div className="grid grid-cols-4 gap-2">
+                  <button
+                    onClick={() => advanceCalendarDays(-1)}
+                    className="btn btn-secondary btn-sm"
+                    aria-label="Voltar 1 dia"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                    <span className="tabular-nums">1d</span>
+                  </button>
+                  <button
+                    onClick={() => advanceCalendarDays(1)}
+                    className="btn btn-primary btn-sm"
+                    aria-label="Avançar 1 dia"
+                  >
+                    <span className="tabular-nums">1d</span>
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => advanceCalendarDays(7)}
+                    className="btn btn-secondary btn-sm tabular-nums"
+                  >
+                    +7d
+                  </button>
+                  <button
+                    onClick={() => advanceCalendarDays(30)}
+                    className="btn btn-secondary btn-sm tabular-nums"
+                  >
+                    +30d
+                  </button>
+                </div>
+              </div>
             )}
           </div>
+        </section>
 
-          {/* Add Event Form */}
-          {showAddEvent && viewRole === 'gm' && (
-            <form
-              onSubmit={handleAddEvent}
-              className="p-4 rounded-xl bg-[#0e0e11] border border-white/[0.08] space-y-3 text-xs"
-            >
-              <div className="font-medium text-zinc-200">
-                Registrar evento histórico ou de sessão
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+        {/* Ciclos lunares */}
+        <section className="card">
+          <div className="px-4 py-3 border-b border-line flex items-center gap-2">
+            <Moon className="w-4 h-4 text-fg-subtle" />
+            <h3 className="section-title">Luas</h3>
+          </div>
+          <ul className="divide-y divide-line">
+            {calendar.moons.map((moon) => {
+              const phase = getMoonPhaseLabel(moon.cycleDays, moon.offset);
+              return (
+                <li key={moon.id} className="px-4 py-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className="w-2.5 h-2.5 rounded-full border border-line-strong shrink-0"
+                        style={{ backgroundColor: moon.color }}
+                        aria-hidden="true"
+                      />
+                      <span className="text-sm font-medium text-fg truncate">
+                        {moon.name}
+                      </span>
+                    </div>
+                    <span className="text-[13px] text-fg-muted shrink-0">{phase.name}</span>
+                  </div>
+                  {moon.lore && (
+                    <p className="mt-1 text-[13px] text-fg-muted">{moon.lore}</p>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+
+        {/* Eras e meses personalizados */}
+        {viewRole === 'gm' && (
+          <section className="card">
+            <div className="px-4 py-3 border-b border-line">
+              <h3 className="section-title">Eras e meses</h3>
+            </div>
+            <div className="p-4 space-y-3">
+              <form onSubmit={handleAddEra} className="flex gap-2">
                 <input
                   type="text"
-                  required
-                  value={evTitle}
-                  onChange={(e) => setEvTitle(e.target.value)}
-                  placeholder="Título do evento..."
-                  className="input-clean md:col-span-2 px-3 py-1.5 rounded-lg"
+                  value={newEraName}
+                  onChange={(e) => setNewEraName(e.target.value)}
+                  placeholder="Nova era (ex.: Era das Cinzas)"
+                  className="input flex-1 min-w-0"
+                  aria-label="Nome da nova era"
+                />
+                <button type="submit" className="btn btn-secondary shrink-0">
+                  Adicionar era
+                </button>
+              </form>
+
+              <form onSubmit={handleAddCustomMonth} className="flex flex-wrap sm:flex-nowrap gap-2">
+                <input
+                  type="text"
+                  value={newMonthName}
+                  onChange={(e) => setNewMonthName(e.target.value)}
+                  placeholder="Novo mês (ex.: Vento Gélido)"
+                  className="input flex-1 min-w-0"
+                  aria-label="Nome do novo mês"
                 />
                 <select
-                  value={evVisualTag}
-                  onChange={(e) => setEvVisualTag(e.target.value as TimelineVisualTag)}
-                  className="input-clean px-2.5 py-1.5 rounded-lg"
+                  value={newMonthSeason}
+                  onChange={(e) => setNewMonthSeason(e.target.value)}
+                  className="input w-auto"
+                  aria-label="Estação"
                 >
-                  <option value="Batalha">Batalha</option>
-                  <option value="Política">Política</option>
-                  <option value="Mágica">Mágica</option>
-                  <option value="Marco do Grupo">Marco do Grupo</option>
-                  <option value="Cataclismo">Cataclismo</option>
+                  <option value="Primavera">Primavera</option>
+                  <option value="Verão">Verão</option>
+                  <option value="Outono">Outono</option>
+                  <option value="Inverno">Inverno</option>
                 </select>
+                <button type="submit" className="btn btn-secondary shrink-0">
+                  Adicionar mês
+                </button>
+              </form>
+            </div>
+          </section>
+        )}
+      </div>
+
+      {/* Coluna direita: cronologia */}
+      <section className="lg:col-span-7 card">
+        <div className="px-4 py-3 border-b border-line flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="section-title">Cronologia</h2>
+            <p className="text-[13px] text-fg-muted">
+              {viewRole === 'gm'
+                ? 'Arraste os eventos para reordenar.'
+                : 'Eventos conhecidos da campanha.'}
+            </p>
+          </div>
+
+          {viewRole === 'gm' && (
+            <button
+              onClick={() => setShowAddEvent(!showAddEvent)}
+              className="btn btn-primary"
+              aria-expanded={showAddEvent}
+            >
+              <Plus className="w-4 h-4" />
+              <span>Adicionar evento</span>
+            </button>
+          )}
+        </div>
+
+        <div className="p-4 space-y-5">
+          {/* Formulário de novo evento */}
+          {showAddEvent && viewRole === 'gm' && (
+            <form onSubmit={handleAddEvent} className="card-muted p-4 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="md:col-span-2">
+                  <label htmlFor="ev-title" className="label">
+                    Título
+                  </label>
+                  <input
+                    id="ev-title"
+                    type="text"
+                    required
+                    value={evTitle}
+                    onChange={(e) => setEvTitle(e.target.value)}
+                    placeholder="Ex.: Queda da Torre Norte"
+                    className="input"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="ev-tag" className="label">
+                    Tipo
+                  </label>
+                  <select
+                    id="ev-tag"
+                    value={evVisualTag}
+                    onChange={(e) => setEvVisualTag(e.target.value as TimelineVisualTag)}
+                    className="input"
+                  >
+                    {tagOptions}
+                  </select>
+                </div>
               </div>
 
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div>
-                  <label className="block text-[11px] text-zinc-400 mb-1">Dia</label>
+                  <label htmlFor="ev-day" className="label">
+                    Dia
+                  </label>
                   <input
+                    id="ev-day"
                     type="number"
                     min={1}
                     max={35}
                     value={evDay}
                     onChange={(e) => setEvDay(Number(e.target.value))}
-                    className="input-clean w-full px-2.5 py-1.5 rounded-lg"
+                    className="input tabular-nums"
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] text-zinc-400 mb-1">Mês</label>
+                  <label htmlFor="ev-month" className="label">
+                    Mês
+                  </label>
                   <select
+                    id="ev-month"
                     value={evMonth}
                     onChange={(e) => setEvMonth(Number(e.target.value))}
-                    className="input-clean w-full px-2.5 py-1.5 rounded-lg"
+                    className="input"
                   >
                     {calendar.months.map((m, idx) => (
                       <option key={m.id} value={idx}>
@@ -385,20 +401,26 @@ export const TimelineCalendarView: React.FC = () => {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[11px] text-zinc-400 mb-1">Ano</label>
+                  <label htmlFor="ev-year" className="label">
+                    Ano
+                  </label>
                   <input
+                    id="ev-year"
                     type="number"
                     value={evYear}
                     onChange={(e) => setEvYear(Number(e.target.value))}
-                    className="input-clean w-full px-2.5 py-1.5 rounded-lg"
+                    className="input tabular-nums"
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] text-zinc-400 mb-1">Era</label>
+                  <label htmlFor="ev-epoch" className="label">
+                    Era
+                  </label>
                   <select
+                    id="ev-epoch"
                     value={evEpoch}
                     onChange={(e) => setEvEpoch(e.target.value)}
-                    className="input-clean w-full px-2.5 py-1.5 rounded-lg"
+                    className="input"
                   >
                     {availableEras.map((era) => (
                       <option key={era} value={era}>
@@ -410,15 +432,16 @@ export const TimelineCalendarView: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-[11px] text-zinc-400 mb-1">
-                  Vincular entrada do códice (opcional)
+                <label htmlFor="ev-link" className="label">
+                  Entrada do códice vinculada
                 </label>
                 <select
+                  id="ev-link"
                   value={evLinkedHandle}
                   onChange={(e) => setEvLinkedHandle(e.target.value)}
-                  className="input-clean w-full px-2.5 py-1.5 rounded-lg"
+                  className="input"
                 >
-                  <option value="">Nenhum vínculo direto</option>
+                  <option value="">Nenhuma</option>
                   {entities.map((ent) => (
                     <option key={ent.id} value={`${ent.mentionPrefix}${ent.handle}`}>
                       {ent.mentionPrefix}
@@ -428,211 +451,251 @@ export const TimelineCalendarView: React.FC = () => {
                 </select>
               </div>
 
-              <MentionTextarea
-                rows={3}
-                value={evDesc}
-                onChange={setEvDesc}
-                placeholder="Descrição com suporte a menções (@NPC, #Local)..."
-              />
+              <div>
+                <span className="label">Descrição</span>
+                <MentionTextarea
+                  rows={3}
+                  value={evDesc}
+                  onChange={setEvDesc}
+                  placeholder="Descreva o evento. Use @ e # para mencionar entradas."
+                />
+              </div>
 
-              <div className="flex items-center justify-between pt-1">
-                <label className="flex items-center gap-2 text-zinc-400 cursor-pointer select-none">
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                <label className="flex items-center gap-2 text-sm text-fg-muted cursor-pointer select-none">
                   <input
                     type="checkbox"
+                    className="checkbox"
                     checked={evSecret}
                     onChange={(e) => setEvSecret(e.target.checked)}
                   />
                   <span>Ocultar dos jogadores</span>
                 </label>
-                <button
-                  type="submit"
-                  className="btn-solid px-4 py-1.5 rounded-lg"
-                >
-                  Salvar evento
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddEvent(false)}
+                    className="btn btn-secondary"
+                  >
+                    Cancelar
+                  </button>
+                  <button type="submit" className="btn btn-primary">
+                    Salvar evento
+                  </button>
+                </div>
               </div>
             </form>
           )}
 
-          {/* Vertical Timeline Rail */}
-          <div className="relative pl-6 border-l border-white/[0.09] space-y-3.5 py-1">
-            {visibleEvents.map((ev) => {
-              const monthName = calendar.months[ev.monthIndex]?.name || 'Mês 1';
-              const isEditing = editingEventId === ev.id;
-              const vTag: TimelineVisualTag =
-                ev.visualTag ||
-                (ev.category === 'cataclysm'
-                  ? 'Cataclismo'
-                  : ev.category === 'intrigue'
-                  ? 'Política'
-                  : ev.category === 'session'
-                  ? 'Marco do Grupo'
-                  : 'Batalha');
-
-              return (
-                <div
-                  key={ev.id}
-                  draggable={viewRole === 'gm'}
-                  onDragStart={() => setDraggedEventId(ev.id)}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={() => {
-                    if (draggedEventId) {
-                      reorderTimelineEvents(draggedEventId, ev.id);
-                      setDraggedEventId(null);
-                    }
-                  }}
-                  className="relative group"
+          {visibleEvents.length === 0 && !showAddEvent && (
+            <div className="py-10 text-center">
+              <p className="text-sm font-medium text-fg">Nenhum evento</p>
+              <p className="mt-1 text-[13px] text-fg-muted">
+                {viewRole === 'gm'
+                  ? 'Registre marcos históricos e acontecimentos das sessões.'
+                  : 'O mestre ainda não revelou eventos.'}
+              </p>
+              {viewRole === 'gm' && (
+                <button
+                  onClick={() => setShowAddEvent(true)}
+                  className="btn btn-secondary mt-4"
                 >
-                  <div className="w-2.5 h-2.5 rounded-full bg-[#111114] border-2 border-zinc-400 absolute -left-[29.5px] top-4" />
+                  <Plus className="w-4 h-4" />
+                  <span>Adicionar evento</span>
+                </button>
+              )}
+            </div>
+          )}
 
-                  <div className="p-4 rounded-xl bg-[#0e0e11] border border-white/[0.06] hover:border-white/[0.13] transition-colors space-y-2">
-                    {isEditing ? (
-                      <div className="space-y-2.5 text-xs">
-                        <div className="grid grid-cols-3 gap-2">
-                          <input
-                            type="text"
-                            value={editTitle}
-                            onChange={(e) => setEditTitle(e.target.value)}
-                            className="input-clean col-span-2 px-2.5 py-1.5 rounded font-medium"
-                          />
-                          <input
-                            type="number"
-                            value={editYear}
-                            onChange={(e) => setEditYear(Number(e.target.value))}
-                            className="input-clean px-2.5 py-1.5 rounded"
-                          />
-                        </div>
-                        <select
-                          value={editTag}
-                          onChange={(e) => setEditTag(e.target.value as TimelineVisualTag)}
-                          className="input-clean px-2.5 py-1 rounded"
-                        >
-                          <option value="Batalha">Batalha</option>
-                          <option value="Política">Política</option>
-                          <option value="Mágica">Mágica</option>
-                          <option value="Marco do Grupo">Marco do Grupo</option>
-                          <option value="Cataclismo">Cataclismo</option>
-                        </select>
-                        <textarea
-                          rows={2}
-                          value={editDesc}
-                          onChange={(e) => setEditDesc(e.target.value)}
-                          className="input-clean w-full px-2.5 py-1.5 rounded"
-                        />
-                        <div className="flex justify-end gap-1.5">
-                          <button
-                            onClick={() => {
-                              updateTimelineEvent(ev.id, {
-                                title: editTitle,
-                                year: editYear,
-                                visualTag: editTag,
-                                description: editDesc,
-                              });
-                              setEditingEventId(null);
-                            }}
-                            className="btn-solid px-3 py-1 rounded inline-flex items-center gap-1"
-                          >
-                            <Check className="w-3 h-3" /> Salvar
-                          </button>
-                          <button
-                            onClick={() => setEditingEventId(null)}
-                            className="btn-subtle px-2.5 py-1 rounded"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            {viewRole === 'gm' && (
-                              <span title="Arraste para reordenar">
-                                <GripVertical className="w-3.5 h-3.5 text-zinc-600 cursor-grab" />
-                              </span>
-                            )}
-                            <span className="text-[11px] font-mono text-zinc-400 tabular-nums">
-                              {ev.day} de {monthName}, {ev.year} {ev.epoch}
-                            </span>
+          {/* Linha do tempo */}
+          {visibleEvents.length > 0 && (
+            <ol className="relative ml-1.5 pl-6 border-l border-line space-y-3">
+              {visibleEvents.map((ev) => {
+                const monthName = calendar.months[ev.monthIndex]?.name || 'Mês 1';
+                const isEditing = editingEventId === ev.id;
+                const vTag: TimelineVisualTag =
+                  ev.visualTag ||
+                  (ev.category === 'cataclysm'
+                    ? 'Cataclismo'
+                    : ev.category === 'intrigue'
+                    ? 'Política'
+                    : ev.category === 'session'
+                    ? 'Marco do Grupo'
+                    : 'Batalha');
+                const isHidden = ev.isSecret && !ev.isRevealed;
 
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-medium border ${VISUAL_TAG_STYLES[vTag]}`}
+                return (
+                  <li
+                    key={ev.id}
+                    draggable={viewRole === 'gm'}
+                    onDragStart={() => setDraggedEventId(ev.id)}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={() => {
+                      if (draggedEventId) {
+                        reorderTimelineEvents(draggedEventId, ev.id);
+                        setDraggedEventId(null);
+                      }
+                    }}
+                    className="relative group"
+                  >
+                    <span
+                      className="absolute -left-[30px] top-4 w-2.5 h-2.5 rounded-full bg-surface border-2 border-line-strong"
+                      aria-hidden="true"
+                    />
+
+                    <div className="rounded-md border border-line bg-surface hover:border-line-strong transition-colors p-3.5">
+                      {isEditing ? (
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-3 gap-2">
+                            <input
+                              type="text"
+                              value={editTitle}
+                              onChange={(e) => setEditTitle(e.target.value)}
+                              className="input col-span-2"
+                              aria-label="Título"
+                            />
+                            <input
+                              type="number"
+                              value={editYear}
+                              onChange={(e) => setEditYear(Number(e.target.value))}
+                              className="input tabular-nums"
+                              aria-label="Ano"
+                            />
+                          </div>
+                          <select
+                            value={editTag}
+                            onChange={(e) => setEditTag(e.target.value as TimelineVisualTag)}
+                            className="input w-auto"
+                            aria-label="Tipo"
+                          >
+                            {tagOptions}
+                          </select>
+                          <textarea
+                            rows={3}
+                            value={editDesc}
+                            onChange={(e) => setEditDesc(e.target.value)}
+                            className="input"
+                            aria-label="Descrição"
+                          />
+                          <div className="flex justify-end gap-2">
+                            <button
+                              onClick={() => setEditingEventId(null)}
+                              className="btn btn-secondary btn-sm"
                             >
-                              {vTag}
-                            </span>
+                              Cancelar
+                            </button>
+                            <button
+                              onClick={() => {
+                                updateTimelineEvent(ev.id, {
+                                  title: editTitle,
+                                  year: editYear,
+                                  visualTag: editTag,
+                                  description: editDesc,
+                                });
+                                setEditingEventId(null);
+                              }}
+                              className="btn btn-primary btn-sm"
+                            >
+                              <Check className="w-4 h-4" />
+                              <span>Salvar</span>
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
+                              {viewRole === 'gm' && (
+                                <span title="Arraste para reordenar" className="-ml-1">
+                                  <GripVertical className="w-4 h-4 text-fg-subtle cursor-grab" />
+                                </span>
+                              )}
+                              <span className="text-xs text-fg-subtle tabular-nums">
+                                {ev.day} de {monthName}, {ev.year} {ev.epoch}
+                              </span>
+                              <span className="badge">
+                                <span
+                                  className={`w-1.5 h-1.5 rounded-full ${VISUAL_TAG_DOT[vTag]}`}
+                                  aria-hidden="true"
+                                />
+                                {vTag}
+                              </span>
+                              {viewRole === 'gm' && isHidden && (
+                                <span className="badge badge-warning">Oculto</span>
+                              )}
+                            </div>
+
+                            {viewRole === 'gm' && (
+                              <div className="flex items-center -mr-1.5 -mt-1 shrink-0">
+                                <button
+                                  onClick={() => {
+                                    setEditingEventId(ev.id);
+                                    setEditTitle(ev.title);
+                                    setEditYear(ev.year);
+                                    setEditDesc(ev.description);
+                                    setEditTag(vTag);
+                                  }}
+                                  className="btn btn-ghost btn-icon"
+                                  title="Editar evento"
+                                  aria-label="Editar evento"
+                                >
+                                  <Edit3 className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => toggleRevealTimelineEvent(ev.id)}
+                                  className="btn btn-ghost btn-icon"
+                                  title={isHidden ? 'Revelar aos jogadores' : 'Ocultar dos jogadores'}
+                                  aria-label={isHidden ? 'Revelar aos jogadores' : 'Ocultar dos jogadores'}
+                                >
+                                  {isHidden ? (
+                                    <EyeOff className="w-4 h-4" />
+                                  ) : (
+                                    <Eye className="w-4 h-4" />
+                                  )}
+                                </button>
+                                <button
+                                  onClick={() => deleteTimelineEvent(ev.id)}
+                                  className="btn btn-danger-ghost btn-icon"
+                                  title="Excluir evento"
+                                  aria-label="Excluir evento"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            )}
                           </div>
 
-                          {viewRole === 'gm' && (
-                            <div className="flex items-center gap-0.5">
-                              <button
-                                onClick={() => {
-                                  setEditingEventId(ev.id);
-                                  setEditTitle(ev.title);
-                                  setEditYear(ev.year);
-                                  setEditDesc(ev.description);
-                                  setEditTag(vTag);
-                                }}
-                                className="p-1 rounded hover:bg-white/[0.05] text-zinc-500 hover:text-zinc-200"
-                                title="Editar evento"
-                              >
-                                <Edit3 className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => toggleRevealTimelineEvent(ev.id)}
-                                className="p-1 rounded hover:bg-white/[0.05] text-zinc-500 hover:text-zinc-200"
-                                title={
-                                  ev.isSecret && !ev.isRevealed
-                                    ? 'Revelar aos jogadores'
-                                    : 'Ocultar dos jogadores'
-                                }
-                              >
-                                {ev.isSecret && !ev.isRevealed ? (
-                                  <EyeOff className="w-3.5 h-3.5 text-rose-400" />
-                                ) : (
-                                  <Eye className="w-3.5 h-3.5 text-zinc-400" />
-                                )}
-                              </button>
-                              <button
-                                onClick={() => deleteTimelineEvent(ev.id)}
-                                className="p-1 rounded hover:bg-rose-500/10 text-zinc-500 hover:text-rose-400"
-                                title="Excluir evento"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                          <h4 className="text-sm font-semibold text-fg">{ev.title}</h4>
+                          {ev.description && (
+                            <div className="text-sm text-fg-muted">
+                              <MentionText text={ev.description} />
+                            </div>
+                          )}
+
+                          {ev.linkedWikiHandles && ev.linkedWikiHandles.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                              <Link2 className="w-4 h-4 text-fg-subtle" aria-hidden="true" />
+                              {ev.linkedWikiHandles.map((h) => (
+                                <button
+                                  key={h}
+                                  onClick={() => navigateToHandle(h)}
+                                  className="badge font-mono hover:border-line-strong hover:text-fg transition-colors"
+                                >
+                                  {h}
+                                </button>
+                              ))}
                             </div>
                           )}
                         </div>
-
-                        <h4 className="text-base font-serif font-medium text-zinc-100">
-                          {ev.title}
-                        </h4>
-                        <div className="text-xs text-zinc-300 leading-relaxed">
-                          <MentionText text={ev.description} />
-                        </div>
-
-                        {ev.linkedWikiHandles && ev.linkedWikiHandles.length > 0 && (
-                          <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                            <Link2 className="w-3 h-3 text-zinc-500" />
-                            {ev.linkedWikiHandles.map((h) => (
-                              <button
-                                key={h}
-                                onClick={() => navigateToHandle(h)}
-                                className="px-2 py-0.5 rounded bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.07] text-[10px] font-mono text-zinc-300 transition-colors"
-                              >
-                                {h}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
         </div>
-      </div>
+      </section>
     </div>
   );
 };

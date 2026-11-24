@@ -1,12 +1,15 @@
 {
-  "name": "rpgifier-obsidian-codex",
+  "name": "codex",
   "private": true,
   "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "Preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p .",
+    "convex:dev": "convex dev",
+    "convex:deploy": "convex deploy"
   },
   "dependencies": {
     "convex": "^1.47.0",

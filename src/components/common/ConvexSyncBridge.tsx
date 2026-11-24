@@ -5,8 +5,12 @@ import {
   useCampaignStore,
   DEFAULT_CALENDAR,
   DEFAULT_PARTY_RESOURCES,
+  reconcileCampaignList,
+  selectIsCampaignDm,
 } from '../../store/useCampaignStore';
+import { draftKey, flushPendingWrites, getPendingPatch, isPendingCreation, isTempId } from '../../store/mutations';
 import {
+  CampaignSummary,
   Entity,
   RelationshipEdge,
   ManualGraphNode,
@@ -20,69 +24,64 @@ import {
   PersonalJournalNote,
   TimelineEvent,
   Combatant,
+  PartyResources,
+  GraphNodePosition,
 } from '../../types/campaign';
 
 /**
  * ConvexSyncBridge
- * Escuta todas as queries reativas do Convex com isolamento Multi-Tenancy (campaignId)
- * e Névoa de Guerra no servidor (viewerRole + sessionToken), sincronizando fichas 5e,
- * combate, dados em tempo real, mapas, tramas e diários entre múltiplos navegadores.
+ *
+ * Assina as queries reativas do Convex da campanha ativa e copia os resultados para a store.
+ * O servidor é a fonte da verdade, com duas exceções protegidas aqui:
+ *  1. Criações pendentes: itens otimistas com id temporário continuam visíveis até o servidor
+ *     devolver o id definitivo (e a seleção que aponta para eles não é trocada).
+ *  2. Rascunhos: campos que o usuário está digitando (patches agendados/em voo de `mutations.ts`)
+ *     são reaplicados por cima do snapshot, para que o texto não "volte" no meio da digitação.
  */
+
+/** Ids virtuais de seleção (ex.: "__context_window__") nunca são trocados pela bridge. */
+const isVirtualId = (id: string) => id.startsWith('__');
+
+/** Mantém, ao fim da lista do servidor, os itens otimistas cuja criação ainda está pendente. */
+function keepPending<T extends { id: string }>(server: T[], local: T[]): T[] {
+  const pending = local.filter((x) => isTempId(x.id) && isPendingCreation(x.id));
+  if (pending.length === 0) return server;
+  const known = new Set(server.map((s) => s.id));
+  return [...server, ...pending.filter((p) => !known.has(p.id))];
+}
+
+/** Reaplica por cima de `item` o rascunho registrado para `key`, se houver. */
+function withDraft<T extends object>(item: T, key: string): T {
+  const draft = getPendingPatch(key);
+  return draft ? ({ ...item, ...draft } as T) : item;
+}
+
+const selectionStillValid = (selected: string, ids: string[]) =>
+  selected !== '' && (ids.includes(selected) || isVirtualId(selected) || isPendingCreation(selected));
+
 export const ConvexSyncBridge: React.FC = () => {
   const activeCampaignId = useCampaignStore((s) => s.activeCampaignId);
-  const viewRole = useCampaignStore((s) => s.viewRole);
-  const workspaceMode = useCampaignStore((s) => s.workspaceMode);
-  const currentRoute = useCampaignStore((s) => s.currentRoute);
-  const campaigns = useCampaignStore((s) => s.campaigns);
+  const previewAsPlayer = useCampaignStore((s) => s.previewAsPlayer);
+  const isCampaignDm = useCampaignStore(selectIsCampaignDm);
   const sessionToken = useCampaignStore((s) => s.sessionToken);
-  const currentUser = useCampaignStore((s) => s.currentUser);
 
   const hasSession = Boolean(sessionToken);
   const hasActiveCampaign = Boolean(sessionToken && activeCampaignId);
-  const activeCamp = campaigns.find((c) => c.id === activeCampaignId);
-  const serverViewerRole = activeCamp?.isDm === false ? 'player' : viewRole;
+  // O papel enviado ao servidor: o Mestre pode pedir a visão de jogador; jogadores nunca recebem a do Mestre.
+  const viewerRole: 'gm' | 'player' = isCampaignDm && !previewAsPlayer ? 'gm' : 'player';
 
   const tenantArgs = hasActiveCampaign
-    ? {
-        campaignId: activeCampaignId,
-        viewerRole: serverViewerRole,
-        sessionToken: sessionToken || undefined,
-      }
+    ? { campaignId: activeCampaignId, viewerRole, sessionToken: sessionToken! }
     : 'skip';
-
   const campaignOnlyArgs = hasActiveCampaign
-    ? {
-        campaignId: activeCampaignId,
-      }
+    ? { campaignId: activeCampaignId, sessionToken: sessionToken! }
     : 'skip';
 
-  // Validação reativa de sessão autenticada
-  const meData = useQuery(
-    api.auth.me,
-    sessionToken ? { sessionToken } : 'skip'
-  );
-
-  // Lista de campanhas do usuário autenticado
-  const campaignsData = useQuery(
-    api.campaign.list,
-    hasSession ? { sessionToken: sessionToken || undefined } : 'skip'
-  );
-
-  // Fichas D&D 5e (do usuário logado ou da campanha ativa)
-  const shouldIncludeOwnSheets =
-    workspaceMode === 'player' ||
-    currentRoute === '/player-dashboard' ||
-    !activeCampaignId;
-
+  const meData = useQuery(api.auth.me, sessionToken ? { sessionToken } : 'skip');
+  const campaignsData = useQuery(api.campaign.list, hasSession ? { sessionToken: sessionToken! } : 'skip');
   const sheetsData = useQuery(
     api.characters.list,
-    hasSession && (shouldIncludeOwnSheets || Boolean(activeCampaignId))
-      ? {
-          campaignId: activeCampaignId || undefined,
-          playerId: currentUser?.id,
-          includeAllPlayerSheets: shouldIncludeOwnSheets,
-        }
-      : 'skip'
+    hasSession ? { sessionToken: sessionToken || undefined, campaignId: activeCampaignId || undefined } : 'skip'
   );
 
   const entitiesData = useQuery(api.entities.list, tenantArgs);
@@ -93,170 +92,156 @@ export const ConvexSyncBridge: React.FC = () => {
   const frontsData = useQuery(api.plots.listFronts, tenantArgs);
   const scenesData = useQuery(api.plots.listScenes, tenantArgs);
   const combatantsData = useQuery(api.session.listCombatants, tenantArgs);
-  const combatStateData = useQuery(api.session.getCombatState, campaignOnlyArgs);
+  const combatStateData = useQuery(api.session.getCombatState, tenantArgs);
   const diceRollsData = useQuery(api.session.listDiceRolls, campaignOnlyArgs);
   const scratchpadData = useQuery(api.session.listScratchpad, tenantArgs);
   const questsData = useQuery(api.portal.listQuests, tenantArgs);
   const journalData = useQuery(api.portal.listJournal, tenantArgs);
-  const personalNotesData = useQuery(
-    api.portal.listPersonalNotes,
-    hasActiveCampaign
-      ? {
-          campaignId: activeCampaignId,
-          playerId: currentUser?.id,
-          viewerRole: serverViewerRole,
-          sessionToken: sessionToken || undefined,
-        }
-      : 'skip'
-  );
+  const personalNotesData = useQuery(api.portal.listPersonalNotes, tenantArgs);
   const resourcesData = useQuery(api.portal.getResources, campaignOnlyArgs);
 
-  // Sincronização de autenticação / expiração de token
+  // Grava rascunhos ao ocultar/fechar a página, para que nada digitado se perca.
+  useEffect(() => {
+    const flush = () => void flushPendingWrites();
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    window.addEventListener('beforeunload', flush);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('beforeunload', flush);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
+
+  // Sessão: token expirado/inválido encerra tudo (inclusive o escopo da campanha).
   useEffect(() => {
     if (!sessionToken || meData === undefined) return;
     if (meData === null) {
+      useCampaignStore.getState().expireSession();
+      return;
+    }
+    const cur = useCampaignStore.getState().currentUser;
+    if (
+      !cur ||
+      cur.id !== meData.id ||
+      cur.name !== meData.name ||
+      cur.email !== meData.email ||
+      cur.avatarUrl !== meData.avatarUrl
+    ) {
       useCampaignStore.setState({
-        sessionToken: null,
-        currentUser: null,
-        currentRoute: '/login',
-        campaigns: [],
-        activeCampaignId: '',
-        campaignName: '',
-        characterSheets: [],
-        activeCharacterId: '',
-      });
-    } else {
-      useCampaignStore.setState({
-        currentUser: {
-          id: meData.id,
-          name: meData.name,
-          email: meData.email,
-          role: meData.role,
-          avatarUrl: meData.avatarUrl,
-        },
+        currentUser: { id: meData.id, name: meData.name, email: meData.email, avatarUrl: meData.avatarUrl },
       });
     }
   }, [meData, sessionToken]);
 
-  // Lista de campanhas na nuvem (100% autoritativa)
+  // Lista de campanhas (autoritativa; o papel em cada uma vem de `isDm`).
   useEffect(() => {
     if (campaignsData === undefined) return;
-    useCampaignStore.setState((state) => {
-      if (campaignsData.length === 0) {
-        return {
-          campaigns: [],
-          activeCampaignId: '',
-          campaignName: '',
-          entities: [],
-          relationships: [],
-          graphPositions: [],
-          manualGraphNodes: [],
-          maps: [],
-          timeline: [],
-          fronts: [],
-          mysteryNodes: [],
-          combatants: [],
-          diceLogs: [],
-          scratchpad: [],
-          quests: [],
-          journal: [],
-          personalJournalNotes: [],
-          calendar: DEFAULT_CALENDAR,
-          partyResources: DEFAULT_PARTY_RESOURCES,
-        };
+    const st = useCampaignStore.getState();
+    const list = reconcileCampaignList(campaignsData as CampaignSummary[], st.campaigns);
+    useCampaignStore.setState({ campaigns: list, campaignsLoaded: true });
+
+    // A campanha ativa deixou de existir/participar (excluída, removida pelo Mestre): sai dela.
+    if (st.activeCampaignId && !list.some((c) => c.id === st.activeCampaignId)) {
+      const wasInCampaign = st.currentRoute === '/campaign/session' || st.currentRoute === '/campaign/player-view';
+      useCampaignStore.getState().setActiveCampaign('');
+      if (wasInCampaign) {
+        useCampaignStore.getState().setCurrentRoute('/campaigns');
+        useCampaignStore.getState().showToast('Esta campanha não está mais disponível.', 'error');
       }
-
-      const activeFound =
-        campaignsData.find((c) => c.id === state.activeCampaignId) ||
-        (state.workspaceMode === 'dm'
-          ? campaignsData.find((c) => c.isDm) || campaignsData[0]
-          : campaignsData[0]);
-
-      const mustFallbackToPlayerView =
-        state.currentRoute === '/campaign/session' && activeFound?.isDm === false;
-
-      return {
-        campaigns: campaignsData,
-        activeCampaignId: activeFound.id,
-        campaignName: activeFound.title,
-        ...(mustFallbackToPlayerView
-          ? { currentRoute: '/campaign/player-view', viewRole: 'player' as const }
-          : {}),
-      };
-    });
+    }
   }, [campaignsData]);
 
-  // Fichas D&D 5e sincronizadas em tempo real
+  // Fichas D&D 5e
   useEffect(() => {
     if (sheetsData === undefined) return;
     useCampaignStore.setState((state) => {
-      const sheets = sheetsData as CharacterSheet[];
+      const sheets = keepPending(sheetsData as CharacterSheet[], state.characterSheets);
       const activeExists = sheets.some((s) => s.id === state.activeCharacterId);
-      const inspectExists = sheets.some(
-        (s) => s.id === state.inspectingCharacterId
-      );
+      const inspectExists = sheets.some((s) => s.id === state.inspectingCharacterId);
       return {
         characterSheets: sheets,
-        activeCharacterId: activeExists
-          ? state.activeCharacterId
-          : sheets[0]?.id || '',
-        inspectingCharacterId: inspectExists
-          ? state.inspectingCharacterId
-          : sheets[0]?.id || null,
+        activeCharacterId: activeExists || isPendingCreation(state.activeCharacterId) ? state.activeCharacterId : sheets[0]?.id || '',
+        inspectingCharacterId:
+          inspectExists || isPendingCreation(state.inspectingCharacterId) ? state.inspectingCharacterId : sheets[0]?.id || null,
       };
     });
   }, [sheetsData]);
 
-  // Wiki Viva (Entidades + Névoa de Guerra)
+  // Códice
   useEffect(() => {
     if (entitiesData === undefined) return;
     useCampaignStore.setState((state) => {
-      const selectedExists = entitiesData.some(
-        (e) => e.id === state.selectedEntityId
-      );
+      const server = (entitiesData as Entity[]).map((e) => {
+        const withText = withDraft(e, draftKey.entity(e.id));
+        return {
+          ...withText,
+          attributes: withText.attributes.map((a) => withDraft(a, draftKey.attribute(a.id))),
+        };
+      });
+      const entities = keepPending(server, state.entities);
+      const ids = entities.map((e) => e.id);
       return {
-        entities: entitiesData as Entity[],
-        selectedEntityId: selectedExists
+        entities,
+        // Só troca a seleção quando o item realmente deixou de existir (nunca durante uma criação pendente).
+        selectedEntityId: selectionStillValid(state.selectedEntityId, ids)
           ? state.selectedEntityId
-          : entitiesData[0]?.id || '',
+          : entities[0]?.id || '',
       };
     });
   }, [entitiesData]);
 
-  // Grafo de Relacionamentos + Posições + Nós Manuais
+  // Grafo
   useEffect(() => {
     if (relsData === undefined) return;
-    useCampaignStore.setState({
-      relationships: relsData.relationships as RelationshipEdge[],
-      graphPositions: relsData.positions,
-      manualGraphNodes: (relsData.manualNodes || []) as ManualGraphNode[],
+    useCampaignStore.setState((state) => {
+      const withPos = <T extends { x: number; y: number }>(item: T, id: string): T => withDraft(item, draftKey.graphNode(id));
+      const positions = (relsData.positions as GraphNodePosition[]).map((p) => withPos(p, p.entityId));
+      const pendingPositions = state.graphPositions.filter(
+        (p) => isTempId(p.entityId) && isPendingCreation(p.entityId) && !positions.some((x) => x.entityId === p.entityId)
+      );
+      const manual = ((relsData.manualNodes || []) as ManualGraphNode[]).map((n) => withPos(n, n.id));
+      return {
+        relationships: keepPending(relsData.relationships as RelationshipEdge[], state.relationships),
+        graphPositions: [...positions, ...pendingPositions],
+        manualGraphNodes: keepPending(manual, state.manualGraphNodes),
+      };
     });
   }, [relsData]);
 
-  // Mapas Interativos + Shapes Vetoriais + URLs de Cloud Storage
+  // Mapas
   useEffect(() => {
     if (mapsData === undefined) return;
     useCampaignStore.setState((state) => {
-      const cloudMaps = mapsData as CampaignMap[];
-      const selectedExists = cloudMaps.some((m) => m.id === state.selectedMapId);
+      const localById = new Map(state.maps.map((m) => [m.id, m]));
+      const server = (mapsData as CampaignMap[]).map((m) => {
+        const local = localById.get(m.id);
+        return local ? { ...m, pins: keepPending(m.pins, local.pins) } : m;
+      });
+      const maps = keepPending(server, state.maps);
       return {
-        maps: cloudMaps,
-        selectedMapId: selectedExists
+        maps,
+        selectedMapId: selectionStillValid(
+          state.selectedMapId,
+          maps.map((m) => m.id)
+        )
           ? state.selectedMapId
-          : cloudMaps[0]?.id || '',
+          : maps[0]?.id || '',
       };
     });
   }, [mapsData]);
 
-  // Calendário Fantástico
+  // Calendário
   useEffect(() => {
     if (calendarData === undefined) return;
+    const campaignId = useCampaignStore.getState().activeCampaignId;
     if (calendarData === null) {
       useCampaignStore.setState({ calendar: DEFAULT_CALENDAR });
       return;
     }
-    useCampaignStore.setState((state) => ({
-      calendar: {
+    useCampaignStore.setState((state) => {
+      const base = {
         ...state.calendar,
         calendarName: calendarData.calendarName,
         epochName: calendarData.epochName,
@@ -266,123 +251,137 @@ export const ConvexSyncBridge: React.FC = () => {
         weekdays: calendarData.weekdays,
         months: calendarData.months,
         moons: calendarData.moons,
-        availableEras:
-          calendarData.availableEras ?? state.calendar.availableEras,
-      },
-    }));
+        availableEras: calendarData.availableEras ?? state.calendar.availableEras,
+      };
+      return { calendar: withDraft(base, draftKey.calendar(campaignId)) };
+    });
   }, [calendarData]);
 
-  // Linha do Tempo
+  // Cronologia
   useEffect(() => {
     if (eventsData === undefined) return;
-    useCampaignStore.setState({
-      timeline: eventsData as TimelineEvent[],
-    });
+    useCampaignStore.setState((state) => ({
+      timeline: keepPending(
+        (eventsData as TimelineEvent[]).map((ev) => withDraft(ev, draftKey.timeline(ev.id))),
+        state.timeline
+      ),
+    }));
   }, [eventsData]);
 
-  // Frentes de Ameaça
+  // Frentes
   useEffect(() => {
     if (frontsData === undefined) return;
-    useCampaignStore.setState({
-      fronts: frontsData as ThreatFront[],
-    });
+    useCampaignStore.setState((state) => ({ fronts: keepPending(frontsData as ThreatFront[], state.fronts) }));
   }, [frontsData]);
 
-  // Fluxograma de Cenas & Pistas
+  // Cenas e pistas
   useEffect(() => {
     if (scenesData === undefined) return;
-    useCampaignStore.setState({
-      mysteryNodes: scenesData as MysterySceneNode[],
-    });
+    useCampaignStore.setState((state) => ({
+      mysteryNodes: keepPending(
+        (scenesData as MysterySceneNode[]).map((n) => withDraft(n, draftKey.scene(n.id))),
+        state.mysteryNodes
+      ),
+    }));
   }, [scenesData]);
 
-  // Rastreador de Combate & Estado de Turno/Rodada
+  // Combate: lista e turno (índice/id relativos ao que este usuário enxerga)
   useEffect(() => {
     if (combatantsData === undefined) return;
-    useCampaignStore.setState({
-      combatants: combatantsData as Combatant[],
-    });
+    useCampaignStore.setState((state) => ({
+      combatants: keepPending(combatantsData as Combatant[], state.combatants),
+    }));
   }, [combatantsData]);
 
   useEffect(() => {
     if (!combatStateData) return;
     useCampaignStore.setState({
       activeCombatTurnIndex: combatStateData.activeCombatTurnIndex,
+      activeCombatantId: combatStateData.activeCombatantId,
       combatRound: combatStateData.combatRound,
     });
   }, [combatStateData]);
 
-  // Rolagens de Dados Multijogador em Tempo Real
+  // Dados (as rolagens são do servidor; timestamps em ISO)
   useEffect(() => {
     if (diceRollsData === undefined) return;
-    useCampaignStore.setState({
-      diceLogs: diceRollsData as DiceRollLog[],
-    });
+    useCampaignStore.setState({ diceLogs: diceRollsData as DiceRollLog[] });
   }, [diceRollsData]);
 
-  // Scratchpad (Oculto automaticamente para jogadores)
+  // Bloco de notas (o servidor devolve vazio para quem não é Mestre)
   useEffect(() => {
-    if (viewRole === 'player') {
-      useCampaignStore.setState({ scratchpad: [] });
-      return;
-    }
     if (scratchpadData === undefined) return;
-    useCampaignStore.setState({
-      scratchpad: scratchpadData.map((s) => ({
-        id: s.id,
-        text: s.text,
-        timestamp: s.timestamp,
-        convertedEntityHandle: s.convertedEntityHandle,
-      })),
-    });
-  }, [scratchpadData, viewRole]);
+    useCampaignStore.setState((state) => ({
+      scratchpad: keepPending(
+        scratchpadData.map((s) => ({
+          id: s.id,
+          text: s.text,
+          timestamp: s.timestamp,
+          convertedEntityHandle: s.convertedEntityHandle,
+        })),
+        state.scratchpad
+      ),
+    }));
+  }, [scratchpadData]);
 
-  // Missões (Quests)
+  // Missões
   useEffect(() => {
     if (questsData === undefined) return;
-    useCampaignStore.setState({
-      quests: questsData as Quest[],
-    });
+    useCampaignStore.setState((state) => ({ quests: keepPending(questsData as Quest[], state.quests) }));
   }, [questsData]);
 
-  // Diário Coletivo
+  // Diário coletivo (`canEdit` vem do servidor)
   useEffect(() => {
     if (journalData === undefined) return;
-    useCampaignStore.setState({
-      journal: journalData as SessionJournalEntry[],
-    });
+    useCampaignStore.setState((state) => ({
+      journal: keepPending(
+        (journalData as SessionJournalEntry[]).map((j) => withDraft(j, draftKey.journal(j.id))),
+        state.journal
+      ),
+    }));
   }, [journalData]);
 
-  // Diário Pessoal dos Jogadores (com privacidade respeitada pelo servidor)
+  // Diário pessoal (`isOwn` vem do servidor)
   useEffect(() => {
     if (personalNotesData === undefined) return;
-    useCampaignStore.setState({
-      personalJournalNotes: personalNotesData as PersonalJournalNote[],
-    });
+    useCampaignStore.setState((state) => ({
+      personalJournalNotes: keepPending(
+        (personalNotesData as PersonalJournalNote[]).map((n) => withDraft(n, draftKey.personalNote(n.id))),
+        state.personalJournalNotes
+      ),
+    }));
   }, [personalNotesData]);
 
-  // Recursos Compartilhados & Base
+  // Recursos do grupo e base
   useEffect(() => {
     if (resourcesData === undefined) return;
     if (resourcesData === null) {
       useCampaignStore.setState({ partyResources: DEFAULT_PARTY_RESOURCES });
       return;
     }
-    useCampaignStore.setState({
-      partyResources: {
-        gold: resourcesData.gold,
-        silver: resourcesData.silver,
-        copper: resourcesData.copper,
-        rations: resourcesData.rations,
-        torches: resourcesData.torches,
-        healerKits: resourcesData.healerKits,
-        items: resourcesData.items as PartyResourcesItem[],
-        stronghold: resourcesData.stronghold as any,
-      },
+    const campaignId = useCampaignStore.getState().activeCampaignId;
+    useCampaignStore.setState((state) => {
+      const stronghold = withDraft(
+        resourcesData.stronghold as PartyResources['stronghold'],
+        draftKey.stronghold(campaignId)
+      );
+      return {
+        partyResources: {
+          gold: resourcesData.gold,
+          silver: resourcesData.silver,
+          copper: resourcesData.copper,
+          rations: resourcesData.rations,
+          torches: resourcesData.torches,
+          healerKits: resourcesData.healerKits,
+          items: keepPending(resourcesData.items as PartyResources['items'], state.partyResources.items),
+          stronghold: {
+            ...stronghold,
+            upgrades: keepPending(stronghold.upgrades, state.partyResources.stronghold.upgrades),
+          },
+        },
+      };
     });
   }, [resourcesData]);
 
   return null;
 };
-
-type PartyResourcesItem = import('../../types/campaign').PartyResources['items'][number];

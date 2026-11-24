@@ -7,6 +7,10 @@ interface ProgressClockSvgProps {
   onSelectSegment?: (newFilled: number) => void;
 }
 
+/**
+ * Relógio de progresso. Usa `currentColor` + classes de token para funcionar
+ * nos temas claro e escuro.
+ */
 export const ProgressClockSvg: React.FC<ProgressClockSvgProps> = ({
   segments,
   filled,
@@ -14,16 +18,17 @@ export const ProgressClockSvg: React.FC<ProgressClockSvgProps> = ({
   onSelectSegment,
 }) => {
   const center = size / 2;
-  const radius = size / 2 - 5;
+  const radius = size / 2 - 3;
 
   const isCritical = filled >= segments - 1;
   const isTriggered = filled >= segments;
 
-  const activeFill = isTriggered
-    ? '#e11d48'
+  // Cor de preenchimento: neutra no progresso normal, status quando crítico/disparado.
+  const fillClass = isTriggered
+    ? 'text-danger'
     : isCritical
-    ? '#e5a93c'
-    : '#d4a853';
+    ? 'text-warning'
+    : 'text-fg-muted';
 
   const renderWedges = () => {
     const wedges = [];
@@ -52,54 +57,83 @@ export const ProgressClockSvg: React.FC<ProgressClockSvgProps> = ({
         <path
           key={i}
           d={pathData}
-          fill={isFilled ? activeFill : '#0e0e11'}
-          fillOpacity={isFilled ? 0.85 : 1}
-          stroke="#27272a"
-          strokeWidth="1.25"
+          className={`${isFilled ? fillClass : 'text-surface-2'} ${
+            onSelectSegment ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''
+          }`}
+          fill="currentColor"
           onClick={() => {
             if (!onSelectSegment) return;
             const targetVal = i + 1 === filled ? i : i + 1;
             onSelectSegment(targetVal);
           }}
-          className={
-            onSelectSegment
-              ? 'cursor-pointer hover:opacity-85 transition-opacity'
-              : ''
-          }
         />
       );
     }
     return wedges;
   };
 
+  const renderSpokes = () => {
+    const spokes = [];
+    const angleStep = (2 * Math.PI) / segments;
+    for (let i = 0; i < segments; i++) {
+      const a = i * angleStep - Math.PI / 2;
+      spokes.push(
+        <line
+          key={i}
+          x1={center}
+          y1={center}
+          x2={center + radius * Math.cos(a)}
+          y2={center + radius * Math.sin(a)}
+          stroke="currentColor"
+          strokeWidth="1.5"
+        />
+      );
+    }
+    return spokes;
+  };
+
+  const hubRadius = Math.max(12, size * 0.17);
+
   return (
     <div className="relative inline-flex items-center justify-center select-none">
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
         {renderWedges()}
+        <g className="text-surface pointer-events-none">{renderSpokes()}</g>
         <circle
           cx={center}
           cy={center}
           r={radius}
           fill="none"
-          stroke={isTriggered ? '#e11d48' : '#3f3f46'}
-          strokeWidth="1.5"
+          stroke="currentColor"
+          strokeWidth="1"
+          className={isTriggered ? 'text-danger' : 'text-line-strong'}
         />
         <circle
           cx={center}
           cy={center}
-          r={15}
-          fill="#0b0b0d"
-          stroke="#27272a"
-          strokeWidth="1.25"
+          r={hubRadius}
+          fill="currentColor"
+          className="text-surface pointer-events-none"
+        />
+        <circle
+          cx={center}
+          cy={center}
+          r={hubRadius}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1"
+          className="text-line pointer-events-none"
         />
         <text
           x={center}
-          y={center + 3.5}
+          y={center}
+          dy="0.35em"
           textAnchor="middle"
-          fill="#e4e4e7"
-          fontSize="10"
-          fontFamily="JetBrains Mono, monospace"
+          fill="currentColor"
+          fontSize={Math.max(10, Math.round(size * 0.12))}
+          fontFamily="'IBM Plex Mono', ui-monospace, monospace"
           fontWeight="600"
+          className="text-fg pointer-events-none"
         >
           {filled}/{segments}
         </text>

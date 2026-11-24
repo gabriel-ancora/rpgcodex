@@ -12,6 +12,12 @@ import {
   X,
 } from 'lucide-react';
 
+const STATUS_META: Record<Quest['status'], { label: string; badge: string }> = {
+  active: { label: 'Em andamento', badge: 'badge-info' },
+  completed: { label: 'Concluída', badge: 'badge-success' },
+  failed: { label: 'Falhou', badge: 'badge-danger' },
+};
+
 export const QuestLogView: React.FC = () => {
   const quests = useCampaignStore((s) => s.quests);
   const viewRole = useCampaignStore((s) => s.viewRole);
@@ -79,28 +85,24 @@ export const QuestLogView: React.FC = () => {
   };
 
   return (
-    <div className="space-y-5 h-[calc(100vh-7.5rem)] overflow-y-auto pr-1">
-      {/* Header Bar */}
-      <div className="p-4 rounded-xl surface-panel flex flex-wrap items-center justify-between gap-3">
-        <div className="space-y-0.5">
-          <h2 className="text-base font-semibold text-zinc-100 tracking-tight">
-            Missões & contratos
-          </h2>
-          <p className="text-xs text-zinc-500">
-            Objetivos ativos, recompensas acordadas e progresso do grupo.
+    <div className="space-y-4 h-[calc(100vh-7.5rem)] overflow-y-auto pr-1">
+      {/* Cabeçalho */}
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="section-title">Missões</h2>
+          <p className="text-[13px] text-fg-muted">
+            Objetivos, recompensas e progresso do grupo.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1 bg-[#0e0e11] border border-white/[0.06] rounded-lg p-1">
+          <div className="segmented overflow-x-auto max-w-full">
             {(['all', 'active', 'completed', 'failed'] as const).map((st) => (
               <button
                 key={st}
                 onClick={() => setStatusFilter(st)}
-                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
-                  statusFilter === st
-                    ? 'bg-zinc-100 text-zinc-950'
-                    : 'text-zinc-500 hover:text-zinc-200'
+                className={`segmented-item ${
+                  statusFilter === st ? 'segmented-item-active' : ''
                 }`}
               >
                 {st === 'all'
@@ -109,186 +111,159 @@ export const QuestLogView: React.FC = () => {
                   ? 'Ativas'
                   : st === 'completed'
                   ? 'Concluídas'
-                  : 'Falhadas'}
+                  : 'Falhas'}
               </button>
             ))}
           </div>
 
           {viewRole === 'gm' && (
-            <button
-              onClick={() => setShowAddQuest(true)}
-              className="btn-solid px-3 py-1.5 rounded-lg text-xs inline-flex items-center gap-1.5"
-            >
-              <Plus className="w-3.5 h-3.5" />
+            <button onClick={() => setShowAddQuest(true)} className="btn btn-primary btn-sm">
+              <Plus className="w-4 h-4" />
               <span>Nova missão</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* Quests Grid */}
+      {/* Lista */}
       {filteredQuests.length === 0 ? (
-        <div className="py-14 px-6 rounded-xl surface-panel text-center space-y-3">
-          <Scroll className="w-6 h-6 text-zinc-600 mx-auto" />
-          <div className="space-y-1">
-            <h3 className="text-sm font-medium text-zinc-300">
-              Nenhuma missão encontrada
-            </h3>
-            <p className="text-xs text-zinc-500 max-w-md mx-auto">
-              {statusFilter === 'all'
-                ? 'Nenhum contrato registrado para esta campanha.'
-                : 'Nenhuma missão corresponde ao filtro selecionado.'}
-            </p>
-          </div>
+        <div className="card py-12 px-6 text-center">
+          <Scroll className="w-5 h-5 text-fg-subtle mx-auto mb-3" />
+          <h3 className="text-sm font-medium text-fg">Nenhuma missão encontrada</h3>
+          <p className="text-[13px] text-fg-muted max-w-md mx-auto mt-1">
+            {statusFilter === 'all'
+              ? 'Nenhuma missão registrada nesta campanha.'
+              : 'Nenhuma missão corresponde ao filtro selecionado.'}
+          </p>
           {viewRole === 'gm' && (
-            <button
-              onClick={() => setShowAddQuest(true)}
-              className="btn-solid px-4 py-2 rounded-lg text-xs"
-            >
-              Publicar primeira missão
+            <button onClick={() => setShowAddQuest(true)} className="btn btn-primary btn-sm mt-4">
+              Criar missão
             </button>
           )}
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {filteredQuests.map((quest) => {
-            const completedCount = quest.objectives.filter(
-              (o) => o.completed
-            ).length;
+            const completedCount = quest.objectives.filter((o) => o.completed).length;
             const totalCount = Math.max(1, quest.objectives.length);
             const pct = Math.round((completedCount / totalCount) * 100);
+            const meta = STATUS_META[quest.status];
 
             return (
               <div
                 key={quest.id}
-                className={`p-5 rounded-xl surface-panel flex flex-col justify-between gap-4 ${
+                className={`card flex flex-col justify-between ${
                   quest.status === 'failed' ? 'opacity-75' : ''
                 }`}
               >
-                <div className="space-y-3.5">
+                <div className="p-4 space-y-4">
                   <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-400">
-                          <span
-                            className={`w-1.5 h-1.5 rounded-full ${
-                              quest.status === 'active'
-                                ? 'bg-amber-400'
-                                : quest.status === 'completed'
-                                ? 'bg-emerald-400'
-                                : 'bg-rose-400'
-                            }`}
-                          />
-                          {quest.status === 'active'
-                            ? 'Em andamento'
-                            : quest.status === 'completed'
-                            ? 'Concluída'
-                            : 'Falhada'}
-                        </span>
-                        <span className="text-zinc-600">·</span>
-                        <span className="text-xs text-zinc-500">
-                          {quest.subtitle}
-                        </span>
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`badge ${meta.badge}`}>{meta.label}</span>
+                        <span className="text-xs text-fg-subtle">{quest.subtitle}</span>
                       </div>
-
-                      <h3 className="text-xl font-serif font-medium text-zinc-100">
-                        {quest.title}
-                      </h3>
+                      <h3 className="text-base font-semibold text-fg">{quest.title}</h3>
                     </div>
 
                     {viewRole === 'gm' && (
                       <select
                         value={quest.status}
                         onChange={(e) =>
-                          updateQuestStatus(
-                            quest.id,
-                            e.target.value as Quest['status']
-                          )
+                          updateQuestStatus(quest.id, e.target.value as Quest['status'])
                         }
-                        className="input-clean px-2.5 py-1 rounded-lg text-xs"
+                        className="input h-8 w-auto text-[13px]"
+                        aria-label="Status da missão"
                       >
                         <option value="active">Em andamento</option>
                         <option value="completed">Concluída</option>
-                        <option value="failed">Falhada</option>
+                        <option value="failed">Falhou</option>
                       </select>
                     )}
                   </div>
 
-                  {/* Giver & Location */}
-                  <div className="flex flex-wrap items-center gap-3 text-xs bg-[#0e0e11] px-3 py-2 rounded-lg border border-white/[0.06]">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-zinc-500">Patrono:</span>
-                      <MentionText text={quest.giverHandle} className="inline" />
+                  {/* Patrono e local */}
+                  <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[13px]">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <dt className="text-fg-subtle">Patrono</dt>
+                      <dd className="truncate">
+                        <MentionText text={quest.giverHandle} className="inline" />
+                      </dd>
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-zinc-500">Local:</span>
-                      <MentionText text={quest.locationHandle} className="inline" />
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <dt className="text-fg-subtle">Local</dt>
+                      <dd className="truncate">
+                        <MentionText text={quest.locationHandle} className="inline" />
+                      </dd>
                     </div>
-                  </div>
+                  </dl>
 
-                  {/* Description */}
-                  <div className="text-xs text-zinc-300 leading-relaxed">
+                  {/* Descrição */}
+                  <div className="text-sm text-fg leading-relaxed">
                     <MentionText text={quest.description} />
                   </div>
 
-                  {/* Objectives */}
+                  {/* Objetivos */}
                   <div className="space-y-2">
-                    <div className="flex items-center justify-between text-[11px] font-mono tabular-nums">
-                      <span className="text-zinc-400">
-                        Objetivos ({completedCount}/{quest.objectives.length})
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-medium text-fg-muted">
+                        Objetivos{' '}
+                        <span className="tabular-nums text-fg-subtle font-normal">
+                          {completedCount}/{quest.objectives.length}
+                        </span>
                       </span>
-                      <span className="text-zinc-300">{pct}%</span>
+                      <span className="tabular-nums text-fg-subtle">{pct}%</span>
                     </div>
-                    <div className="w-full h-1 rounded-full bg-white/[0.07] overflow-hidden">
+                    <div className="w-full h-1.5 rounded-full bg-surface-3 overflow-hidden">
                       <div
-                        className="h-full bg-zinc-200 transition-all"
+                        className={`h-full transition-all ${
+                          pct === 100 ? 'bg-success' : 'bg-fg-muted'
+                        }`}
                         style={{ width: `${pct}%` }}
                       />
                     </div>
 
-                    <div className="space-y-1.5 pt-1">
+                    <ul className="rounded-md border border-line divide-y divide-line overflow-hidden">
                       {quest.objectives.map((obj) => (
-                        <div
+                        <li
                           key={obj.id}
                           onClick={() => toggleQuestObjective(quest.id, obj.id)}
-                          className={`p-2.5 rounded-lg border text-xs flex items-start gap-2.5 cursor-pointer transition-colors ${
-                            obj.completed
-                              ? 'bg-white/[0.02] border-white/[0.05] text-zinc-500 line-through'
-                              : 'bg-[#0e0e11] border-white/[0.06] hover:border-white/[0.14] text-zinc-200'
+                          className={`px-3 py-2 text-[13px] flex items-start gap-2.5 cursor-pointer hover:bg-surface-2 transition-colors ${
+                            obj.completed ? 'text-fg-subtle line-through' : 'text-fg'
                           }`}
                         >
                           {obj.completed ? (
-                            <CheckSquare className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                            <CheckSquare className="w-4 h-4 text-success shrink-0 mt-px" />
                           ) : (
-                            <Square className="w-3.5 h-3.5 text-zinc-600 shrink-0 mt-0.5" />
+                            <Square className="w-4 h-4 text-fg-subtle shrink-0 mt-px" />
                           )}
                           <div className="flex-1 leading-relaxed">
                             <MentionText text={obj.text} />
                           </div>
-                        </div>
+                        </li>
                       ))}
-                    </div>
+                    </ul>
                   </div>
 
-                  {/* GM Secret Note */}
+                  {/* Nota do mestre */}
                   {viewRole === 'gm' && quest.gmSecretNote && (
-                    <div className="p-3 rounded-xl bg-rose-500/[0.04] border border-rose-500/20 space-y-1">
-                      <div className="flex items-center gap-1.5 text-[11px] font-medium text-rose-300">
-                        <Lock className="w-3 h-3" />
-                        <span>Nota confidencial do mestre</span>
+                    <div className="card-muted p-3 space-y-1">
+                      <div className="flex items-center gap-1.5 text-xs font-medium text-fg-muted">
+                        <Lock className="w-3.5 h-3.5" />
+                        <span>Nota do mestre</span>
                       </div>
-                      <div className="text-xs text-zinc-300 leading-relaxed">
+                      <div className="text-[13px] text-fg leading-relaxed">
                         <MentionText text={quest.gmSecretNote} />
                       </div>
                     </div>
                   )}
                 </div>
 
-                {/* Reward Footer */}
-                <div className="pt-3 border-t border-white/[0.06] flex items-center gap-2 text-xs text-zinc-300">
-                  <Coins className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                {/* Recompensa */}
+                <div className="px-4 py-2.5 border-t border-line flex items-center gap-2 text-[13px] text-fg">
+                  <Coins className="w-4 h-4 text-fg-subtle shrink-0" />
                   <span>
-                    <span className="text-zinc-500">Recompensa:</span> {quest.reward}
+                    <span className="text-fg-subtle">Recompensa:</span> {quest.reward}
                   </span>
                 </div>
               </div>
@@ -297,83 +272,94 @@ export const QuestLogView: React.FC = () => {
         </div>
       )}
 
-      {/* Modal: Add Quest */}
+      {/* Modal: nova missão */}
       {showAddQuest && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <form
-            onSubmit={handleCreateQuest}
-            className="w-full max-w-md rounded-2xl bg-[#121215] border border-white/[0.09] p-6 space-y-3.5 text-xs shadow-2xl"
-          >
-            <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
-              <h3 className="text-sm font-semibold text-zinc-100">
-                Nova missão
-              </h3>
+        <div className="modal-backdrop">
+          <form onSubmit={handleCreateQuest} className="modal max-w-md max-h-[90vh]">
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-line">
+              <h3 className="section-title">Nova missão</h3>
               <button
                 type="button"
                 onClick={() => setShowAddQuest(false)}
-                className="p-1 text-zinc-500 hover:text-zinc-200"
+                className="btn btn-ghost btn-sm btn-icon"
+                title="Fechar"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <input
-              type="text"
-              required
-              value={qTitle}
-              onChange={(e) => setQTitle(e.target.value)}
-              placeholder="Título da missão"
-              className="input-clean w-full px-3 py-2 rounded-lg"
-            />
-            <div className="grid grid-cols-2 gap-2">
-              <input
-                type="text"
-                value={qGiver}
-                onChange={(e) => setQGiver(e.target.value)}
-                placeholder="Patrono (ex: @CapitaoGuarda)"
-                className="input-clean px-3 py-1.5 rounded-lg"
-              />
-              <input
-                type="text"
-                value={qLoc}
-                onChange={(e) => setQLoc(e.target.value)}
-                placeholder="Local (ex: #RuinasNorte)"
-                className="input-clean px-3 py-1.5 rounded-lg"
-              />
+            <div className="px-5 py-4 space-y-4 overflow-y-auto">
+              <div>
+                <label className="label">Título</label>
+                <input
+                  type="text"
+                  required
+                  value={qTitle}
+                  onChange={(e) => setQTitle(e.target.value)}
+                  className="input"
+                />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Patrono</label>
+                  <input
+                    type="text"
+                    value={qGiver}
+                    onChange={(e) => setQGiver(e.target.value)}
+                    placeholder="Ex.: @CapitaoGuarda"
+                    className="input"
+                  />
+                </div>
+                <div>
+                  <label className="label">Local</label>
+                  <input
+                    type="text"
+                    value={qLoc}
+                    onChange={(e) => setQLoc(e.target.value)}
+                    placeholder="Ex.: #RuinasNorte"
+                    className="input"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="label">Descrição</label>
+                <textarea
+                  rows={2}
+                  value={qDesc}
+                  onChange={(e) => setQDesc(e.target.value)}
+                  className="input"
+                />
+              </div>
+              <div>
+                <label className="label">Objetivos</label>
+                <textarea
+                  rows={3}
+                  value={qObjs}
+                  onChange={(e) => setQObjs(e.target.value)}
+                  placeholder="Um por linha"
+                  className="input"
+                />
+              </div>
+              <div>
+                <label className="label">Recompensa</label>
+                <input
+                  type="text"
+                  value={qReward}
+                  onChange={(e) => setQReward(e.target.value)}
+                  placeholder="Ex.: 300 PO"
+                  className="input"
+                />
+              </div>
             </div>
-            <textarea
-              rows={2}
-              value={qDesc}
-              onChange={(e) => setQDesc(e.target.value)}
-              placeholder="Descrição da missão..."
-              className="input-clean w-full px-3 py-2 rounded-lg"
-            />
-            <textarea
-              rows={3}
-              value={qObjs}
-              onChange={(e) => setQObjs(e.target.value)}
-              placeholder="Objetivos parciais (1 por linha)..."
-              className="input-clean w-full px-3 py-2 rounded-lg"
-            />
-            <input
-              type="text"
-              value={qReward}
-              onChange={(e) => setQReward(e.target.value)}
-              placeholder="Recompensa prometida (ex: 300 PO)"
-              className="input-clean w-full px-3 py-2 rounded-lg"
-            />
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex justify-end gap-2 px-5 py-3 border-t border-line bg-surface-2">
               <button
                 type="button"
                 onClick={() => setShowAddQuest(false)}
-                className="btn-subtle px-3.5 py-2 rounded-lg"
+                className="btn btn-secondary"
               >
                 Cancelar
               </button>
-              <button
-                type="submit"
-                className="btn-solid px-4 py-2 rounded-lg"
-              >
-                Publicar missão
+              <button type="submit" className="btn btn-primary">
+                Criar missão
               </button>
             </div>
           </form>

@@ -21,6 +21,19 @@ export interface BacklinkItem {
   isSecret: boolean;
 }
 
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Casa `@Handle` ou `#Handle` apenas quando o handle termina ali: `@Vane` não casa com `@Vanessa`
+ * nem com `@Vane-Sul`. Os caracteres de handle seguem a mesma regra de MentionText.
+ */
+function buildMentionMatcher(handle: string): RegExp {
+  return new RegExp(
+    `(?:^|[^\\p{L}\\p{N}_-])[@#]${escapeRegExp(handle)}(?![\\p{L}\\p{N}_-])`,
+    'iu'
+  );
+}
+
 export function computeBacklinksForEntity(
   target: Entity,
   data: {
@@ -35,18 +48,15 @@ export function computeBacklinksForEntity(
   viewRole: ViewRole
 ): BacklinkItem[] {
   const results: BacklinkItem[] = [];
-  const fullToken = `${target.mentionPrefix}${target.handle}`.toLowerCase();
-  const bareHandle = target.handle.toLowerCase();
-
-  const matchesMention = (text?: string): boolean => {
-    if (!text) return false;
-    const lower = text.toLowerCase();
-    return lower.includes(fullToken) || lower.includes(`@${bareHandle}`) || lower.includes(`#${bareHandle}`);
-  };
+  const isPlayerView = viewRole === 'player';
+  const mention = buildMentionMatcher(target.handle);
+  const matchesMention = (text?: string): boolean => Boolean(text) && mention.test(text as string);
 
   // 1. Other Entities
   for (const ent of data.entities) {
     if (ent.id === target.id) continue;
+    // Entradas ocultas nunca aparecem como origem de backlink para jogadores.
+    if (isPlayerView && !ent.isPublicToPlayers) continue;
     if (matchesMention(ent.publicContent) || matchesMention(ent.summary)) {
       results.push({
         id: `bl-ent-pub-${ent.id}`,

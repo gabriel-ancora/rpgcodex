@@ -1,142 +1,179 @@
-import { query, mutation } from "./_generated/server";
+import { query, mutation, MutationCtx, QueryCtx } from "./_generated/server";
+import { Doc } from "./_generated/dataModel";
 import { v } from "convex/values";
 import {
-  matchesCampaign,
-  normalizeCampaignId,
-  resolveEffectiveRole,
-  assertDmPermission,
+  requireDm,
+  requireMember,
+  requireDmOfRecord,
+  memberOrNull,
+  effectiveRole,
+  collectByCampaign,
+  firstByCampaign,
+  getOrThrow,
+  ViewerRole,
 } from "./lib/tenancy";
+
+/**
+ * Modo Sessão: combate, rolagens de dados e bloco de notas do Mestre.
+ *
+ * Combate: todas as escritas são exclusivas do Mestre (não há vínculo entre
+ * combatente e ficha de jogador que permita delegar PV/condições ao jogador).
+ */
+
+export type HealthState = "healthy" | "wounded" | "bloodied" | "down";
+
+function healthStateOf(hp: number, maxHp: number): HealthState {
+  if (hp <= 0) return "down";
+  const ratio = hp / Math.max(1, maxHp);
+  if (ratio <= 0.5) return "bloodied";
+  if (ratio < 1) return "wounded";
+  return "healthy";
+}
+
+/** Ordem canônica da iniciativa (maior primeiro; empate pela ordem de criação). */
+function sortCombatants(list: Doc<"combatants">[]) {
+  return [...list].sort(
+    (a, b) => b.initiative - a.initiative || a._creationTime - b._creationTime
+  );
+}
+
+async function sortedCombatants(ctx: QueryCtx, keys: string[]) {
+  return sortCombatants(await collectByCampaign(ctx, "combatants", keys));
+}
+
+function combatantView(c: Doc<"combatants">, role: ViewerRole) {
+  const base = {
+    _id: c._id,
+    _creationTime: c._creationTime,
+    id: c._id as string,
+    campaignId: c.campaignId,
+    name: c.name,
+    type: c.type,
+    initiative: c.initiative,
+    conditions: c.conditions,
+    entityId: c.entityId,
+    isHidden: c.isHidden ?? false,
+    healthState: healthStateOf(c.hp, c.maxHp),
+  };
+  if (role === "gm" || c.type === "pc") {
+    return { ...base, hp: c.hp as number | undefined, maxHp: c.maxHp as number | undefined, armorClass: c.armorClass as number | undefined, notes: c.notes as string | undefined };
+  }
+  // Jogadores não recebem PV/CA/notas exatos de NPCs e monstros.
+  return {
+    ...base,
+    hp: undefined as number | undefined,
+    maxHp: undefined as number | undefined,
+    armorClass: undefined as number | undefined,
+    notes: undefined as string | undefined,
+  };
+}
 
 export const listCombatants = query({
   args: {
-    campaignId: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
     viewerRole: v.optional(v.union(v.literal("gm"), v.literal("player"))),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const role = await resolveEffectiveRole(ctx, {
-      sessionToken: args.sessionToken,
-      viewerRole: args.viewerRole,
-      campaignId: args.campaignId,
-    });
-
-    const list = await ctx.db.query("combatants").collect();
+    const access = await memberOrNull(ctx, args.sessionToken, args.campaignId);
+    if (!access) return [];
+    const role = effectiveRole(access, args.viewerRole);
+    const list = await sortedCombatants(ctx, access.keys);
     return list
-      .filter((c) => matchesCampaign(c.campaignId, args.campaignId))
-      .sort((a, b) => b.initiative - a.initiative)
-      .map((c) => ({
-        ...c,
-        id: c._id,
-        // Na visão do jogador, oculta notas táticas internas de monstros
-        notes: role === "player" && c.type === "monster" ? "" : c.notes,
-      }));
+      .filter((c) => role === "gm" || !c.isHidden)
+      .map((c) => combatantView(c, role));
   },
 });
 
 export const getCombatState = query({
-  args: { campaignId: v.optional(v.string()) },
+  args: {
+    sessionToken: v.string(),
+    campaignId: v.string(),
+    viewerRole: v.optional(v.union(v.literal("gm"), v.literal("player"))),
+  },
   handler: async (ctx, args) => {
-    const normId = normalizeCampaignId(args.campaignId);
-    const existing = await ctx.db
-      .query("combatState")
-      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
-      .first();
+    const access = await memberOrNull(ctx, args.sessionToken, args.campaignId);
+    if (!access) return null;
+    const role = effectiveRole(access, args.viewerRole);
 
-    return (
-      existing ?? {
-        campaignId: normId,
-        activeCombatTurnIndex: 0,
-        combatRound: 1,
-      }
-    );
+    const state = await firstByCampaign(ctx, "combatState", access.keys);
+    const all = await sortedCombatants(ctx, access.keys);
+    const rawIndex = state?.activeCombatTurnIndex ?? 0;
+    const active = all.length > 0 ? all[rawIndex % all.length] : undefined;
+
+    // O índice devolvido é relativo à lista que o próprio visualizador recebe.
+    const visible = role === "gm" ? all : all.filter((c) => !c.isHidden);
+    const activeVisible = active && (role === "gm" || !active.isHidden) ? active : undefined;
+    const activeIndex = activeVisible
+      ? visible.findIndex((c) => c._id === activeVisible._id)
+      : -1;
+
+    return {
+      campaignId: access.canonicalId,
+      activeCombatTurnIndex: activeIndex,
+      activeCombatantId: activeVisible ? (activeVisible._id as string) : null,
+      combatRound: state?.combatRound ?? 1,
+    };
   },
 });
 
+async function upsertCombatState(
+  ctx: MutationCtx,
+  canonicalId: string,
+  keys: string[],
+  next: { activeCombatTurnIndex: number; combatRound: number }
+) {
+  const existing = await firstByCampaign(ctx, "combatState", keys);
+  const payload = { ...next, updatedAt: new Date().toISOString() };
+  if (existing) {
+    await ctx.db.patch(existing._id, payload);
+  } else {
+    await ctx.db.insert("combatState", { campaignId: canonicalId, ...payload });
+  }
+}
+
 export const nextTurn = mutation({
   args: {
-    campaignId: v.optional(v.string()),
-    sessionToken: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
   },
   handler: async (ctx, args) => {
-    await assertDmPermission(ctx, args.sessionToken, args.campaignId);
-    const normId = normalizeCampaignId(args.campaignId);
-    const allCombatants = await ctx.db.query("combatants").collect();
-    const count = allCombatants.filter((c) =>
-      matchesCampaign(c.campaignId, normId)
-    ).length;
+    const { canonicalId, keys } = await requireDm(ctx, args.sessionToken, args.campaignId);
+    const count = (await collectByCampaign(ctx, "combatants", keys)).length;
     if (count === 0) return;
 
-    const existing = await ctx.db
-      .query("combatState")
-      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
-      .first();
-
+    const existing = await firstByCampaign(ctx, "combatState", keys);
     const currentIdx = existing?.activeCombatTurnIndex ?? 0;
     const currentRound = existing?.combatRound ?? 1;
     const nextIdx = (currentIdx + 1) % count;
-    const nextRound = nextIdx === 0 ? currentRound + 1 : currentRound;
-
-    if (existing) {
-      await ctx.db.patch(existing._id, {
-        activeCombatTurnIndex: nextIdx,
-        combatRound: nextRound,
-        updatedAt: new Date().toISOString(),
-      });
-    } else {
-      await ctx.db.insert("combatState", {
-        campaignId: normId,
-        activeCombatTurnIndex: nextIdx,
-        combatRound: nextRound,
-        updatedAt: new Date().toISOString(),
-      });
-    }
+    await upsertCombatState(ctx, canonicalId, keys, {
+      activeCombatTurnIndex: nextIdx,
+      combatRound: nextIdx === 0 ? currentRound + 1 : currentRound,
+    });
   },
 });
 
 export const rollAllInitiatives = mutation({
   args: {
-    campaignId: v.optional(v.string()),
-    sessionToken: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
   },
   handler: async (ctx, args) => {
-    await assertDmPermission(ctx, args.sessionToken, args.campaignId);
-    const normId = normalizeCampaignId(args.campaignId);
-    const all = await ctx.db.query("combatants").collect();
-    const campaignCombatants = all.filter((c) =>
-      matchesCampaign(c.campaignId, normId)
-    );
-
-    for (const c of campaignCombatants) {
+    const { canonicalId, keys } = await requireDm(ctx, args.sessionToken, args.campaignId);
+    const combatants = await collectByCampaign(ctx, "combatants", keys);
+    for (const c of combatants) {
       const bonus = c.type === "pc" ? 3 : 2;
       const rolled = Math.floor(Math.random() * 20) + 1 + bonus;
-      await ctx.db.patch(c._id, { initiative: rolled, campaignId: normId });
+      await ctx.db.patch(c._id, { initiative: rolled });
     }
-
-    const existing = await ctx.db
-      .query("combatState")
-      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
-      .first();
-
-    if (existing) {
-      await ctx.db.patch(existing._id, {
-        activeCombatTurnIndex: 0,
-        combatRound: 1,
-        updatedAt: new Date().toISOString(),
-      });
-    } else {
-      await ctx.db.insert("combatState", {
-        campaignId: normId,
-        activeCombatTurnIndex: 0,
-        combatRound: 1,
-        updatedAt: new Date().toISOString(),
-      });
-    }
+    await upsertCombatState(ctx, canonicalId, keys, { activeCombatTurnIndex: 0, combatRound: 1 });
   },
 });
 
 export const addCombatant = mutation({
   args: {
-    campaignId: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
     name: v.string(),
     type: v.union(v.literal("pc"), v.literal("npc"), v.literal("monster")),
     initiative: v.number(),
@@ -146,234 +183,259 @@ export const addCombatant = mutation({
     conditions: v.array(v.string()),
     notes: v.string(),
     entityId: v.optional(v.string()),
+    isHidden: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
+    const { canonicalId } = await requireDm(ctx, args.sessionToken, args.campaignId);
+    const { sessionToken: _t, campaignId: _c, ...data } = args;
+    const maxHp = Math.max(1, Math.floor(data.maxHp));
     return await ctx.db.insert("combatants", {
-      ...args,
-      campaignId: normalizeCampaignId(args.campaignId),
+      ...data,
+      maxHp,
+      hp: Math.max(0, Math.min(maxHp, Math.floor(data.hp))),
+      campaignId: canonicalId,
     });
   },
 });
 
+async function loadCombatantForDm(ctx: MutationCtx, sessionToken: string, id: string) {
+  const comb = await getOrThrow(ctx, "combatants", id);
+  await requireDmOfRecord(ctx, sessionToken, comb.campaignId);
+  return comb;
+}
+
 export const adjustHp = mutation({
   args: {
+    sessionToken: v.string(),
     id: v.string(),
     delta: v.number(),
   },
   handler: async (ctx, args) => {
-    const combId = ctx.db.normalizeId("combatants", args.id);
-    if (!combId) return;
-    const comb = await ctx.db.get(combId);
-    if (!comb) return;
-
-    const nextHp = Math.max(0, Math.min(comb.maxHp, comb.hp + args.delta));
-    await ctx.db.patch(combId, { hp: nextHp });
+    const comb = await loadCombatantForDm(ctx, args.sessionToken, args.id);
+    const nextHp = Math.max(0, Math.min(comb.maxHp, comb.hp + Math.trunc(args.delta)));
+    await ctx.db.patch(comb._id, { hp: nextHp });
   },
 });
 
 export const toggleCondition = mutation({
   args: {
+    sessionToken: v.string(),
     id: v.string(),
     condition: v.string(),
   },
   handler: async (ctx, args) => {
-    const combId = ctx.db.normalizeId("combatants", args.id);
-    if (!combId) return;
-    const comb = await ctx.db.get(combId);
-    if (!comb) return;
-
+    const comb = await loadCombatantForDm(ctx, args.sessionToken, args.id);
     const has = comb.conditions.includes(args.condition);
-    const updated = has
-      ? comb.conditions.filter((c) => c !== args.condition)
-      : [...comb.conditions, args.condition];
+    await ctx.db.patch(comb._id, {
+      conditions: has
+        ? comb.conditions.filter((c) => c !== args.condition)
+        : [...comb.conditions, args.condition],
+    });
+  },
+});
 
-    await ctx.db.patch(combId, { conditions: updated });
+/** Oculta/revela um combatente para os jogadores. */
+export const setCombatantHidden = mutation({
+  args: {
+    sessionToken: v.string(),
+    id: v.string(),
+    isHidden: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const comb = await loadCombatantForDm(ctx, args.sessionToken, args.id);
+    await ctx.db.patch(comb._id, { isHidden: args.isHidden });
   },
 });
 
 export const removeCombatant = mutation({
-  args: { id: v.string() },
+  args: {
+    sessionToken: v.string(),
+    id: v.string(),
+  },
   handler: async (ctx, args) => {
-    const combId = ctx.db.normalizeId("combatants", args.id);
-    if (!combId) return;
-    await ctx.db.delete(combId);
+    const comb = await loadCombatantForDm(ctx, args.sessionToken, args.id);
+    await ctx.db.delete(comb._id);
   },
 });
 
 export const clearCombatants = mutation({
   args: {
-    campaignId: v.optional(v.string()),
-    sessionToken: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
   },
   handler: async (ctx, args) => {
-    await assertDmPermission(ctx, args.sessionToken, args.campaignId);
-    const normId = normalizeCampaignId(args.campaignId);
-    const list = await ctx.db.query("combatants").collect();
-    for (const c of list) {
-      if (matchesCampaign(c.campaignId, normId)) {
-        await ctx.db.delete(c._id);
-      }
-    }
-
-    const existingState = await ctx.db
-      .query("combatState")
-      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
-      .first();
-    if (existingState) {
-      await ctx.db.patch(existingState._id, {
-        activeCombatTurnIndex: 0,
-        combatRound: 1,
-        updatedAt: new Date().toISOString(),
-      });
-    }
+    const { canonicalId, keys } = await requireDm(ctx, args.sessionToken, args.campaignId);
+    const list = await collectByCampaign(ctx, "combatants", keys);
+    for (const c of list) await ctx.db.delete(c._id);
+    await upsertCombatState(ctx, canonicalId, keys, { activeCombatTurnIndex: 0, combatRound: 1 });
   },
 });
 
 // ============================================================================
-// ROLADOR DE DADOS MULTIJOGADOR EM TEMPO REAL
+// ROLADOR DE DADOS MULTIJOGADOR (resultados gerados no servidor)
 // ============================================================================
+
+const MAX_STORED_ROLLS = 40;
+
 export const listDiceRolls = query({
-  args: { campaignId: v.optional(v.string()) },
+  args: { sessionToken: v.string(), campaignId: v.string() },
   handler: async (ctx, args) => {
-    const normId = normalizeCampaignId(args.campaignId);
-    if (!normId) return [];
-    const rolls = await ctx.db
-      .query("diceRolls")
-      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
-      .order("desc")
-      .take(30);
-
-    return rolls.map((r) => ({
-      ...r,
-      id: r._id,
-    }));
+    const access = await memberOrNull(ctx, args.sessionToken, args.campaignId);
+    if (!access) return [];
+    const rolls: Doc<"diceRolls">[] = [];
+    for (const key of access.keys) {
+      rolls.push(
+        ...(await ctx.db
+          .query("diceRolls")
+          .withIndex("by_campaign", (q) => q.eq("campaignId", key))
+          .order("desc")
+          .take(30))
+      );
+    }
+    return rolls
+      .sort((a, b) => b._creationTime - a._creationTime)
+      .slice(0, 30)
+      .map((r) => ({ ...r, id: r._id }));
   },
 });
 
+/**
+ * Rola dados no servidor. Qualquer membro da campanha pode rolar; o nome de quem
+ * rolou vem da sessão. Retorna a rolagem gravada.
+ */
 export const addDiceRoll = mutation({
   args: {
-    campaignId: v.optional(v.string()),
-    rollerName: v.optional(v.string()),
-    formula: v.string(),
-    rolls: v.array(v.number()),
-    modifier: v.number(),
-    total: v.number(),
-    label: v.string(),
-    timestamp: v.string(),
-    isCrit: v.optional(v.boolean()),
-    isFumble: v.optional(v.boolean()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
+    sides: v.number(),
+    count: v.optional(v.number()),
+    modifier: v.optional(v.number()),
+    label: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const normId = normalizeCampaignId(args.campaignId);
-    if (!normId) return null;
-    const insertedId = await ctx.db.insert("diceRolls", {
-      ...args,
-      campaignId: normId,
-    });
+    const { user, canonicalId, keys } = await requireMember(
+      ctx,
+      args.sessionToken,
+      args.campaignId
+    );
 
-    // Mantém apenas as 40 rolagens mais recentes da campanha
-    const all = await ctx.db
-      .query("diceRolls")
-      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
-      .order("desc")
-      .collect();
-    if (all.length > 40) {
-      for (const stale of all.slice(40)) {
-        await ctx.db.delete(stale._id);
-      }
+    const sides = Math.floor(args.sides);
+    const count = Math.floor(args.count ?? 1);
+    const modifier = Math.trunc(args.modifier ?? 0);
+    if (!Number.isFinite(sides) || sides < 2 || sides > 1000) {
+      throw new Error("Número de faces inválido (2 a 1000).");
+    }
+    if (!Number.isFinite(count) || count < 1 || count > 100) {
+      throw new Error("Quantidade de dados inválida (1 a 100).");
+    }
+    if (!Number.isFinite(modifier) || Math.abs(modifier) > 1000) {
+      throw new Error("Modificador inválido.");
+    }
+    const label = (args.label ?? "Rolagem").trim().slice(0, 80) || "Rolagem";
+
+    const rolls: number[] = [];
+    for (let i = 0; i < count; i++) rolls.push(Math.floor(Math.random() * sides) + 1);
+    const total = rolls.reduce((acc, n) => acc + n, 0) + modifier;
+    const modStr = modifier > 0 ? ` + ${modifier}` : modifier < 0 ? ` - ${Math.abs(modifier)}` : "";
+
+    const doc = {
+      campaignId: canonicalId,
+      rollerName: user.name,
+      formula: `${count}d${sides}${modStr}`,
+      rolls,
+      modifier,
+      total,
+      label,
+      // ISO 8601; formatação para exibição no cliente.
+      timestamp: new Date().toISOString(),
+      isCrit: sides === 20 && rolls.includes(20),
+      isFumble: sides === 20 && rolls.includes(1) && !rolls.includes(20),
+    };
+    const insertedId = await ctx.db.insert("diceRolls", doc);
+
+    // Mantém apenas as rolagens mais recentes da campanha.
+    for (const key of keys) {
+      const recent = await ctx.db
+        .query("diceRolls")
+        .withIndex("by_campaign", (q) => q.eq("campaignId", key))
+        .order("desc")
+        .take(MAX_STORED_ROLLS + 50);
+      for (const stale of recent.slice(MAX_STORED_ROLLS)) await ctx.db.delete(stale._id);
     }
 
-    return insertedId;
+    return { ...doc, id: insertedId as string };
   },
 });
 
 export const clearDiceRolls = mutation({
-  args: { campaignId: v.optional(v.string()) },
+  args: { sessionToken: v.string(), campaignId: v.string() },
   handler: async (ctx, args) => {
-    const normId = normalizeCampaignId(args.campaignId);
-    const all = await ctx.db
-      .query("diceRolls")
-      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
-      .collect();
-    for (const r of all) {
-      await ctx.db.delete(r._id);
-    }
+    const { keys } = await requireDm(ctx, args.sessionToken, args.campaignId);
+    const all = await collectByCampaign(ctx, "diceRolls", keys);
+    for (const r of all) await ctx.db.delete(r._id);
   },
 });
 
 // ============================================================================
-// SCRATCHPAD DO MESTRE (PROTEGIDO DA VISÃO DO JOGADOR)
+// SCRATCHPAD DO MESTRE (nunca enviado a jogadores)
 // ============================================================================
+
 export const listScratchpad = query({
   args: {
-    campaignId: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
     viewerRole: v.optional(v.union(v.literal("gm"), v.literal("player"))),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const role = await resolveEffectiveRole(ctx, {
-      sessionToken: args.sessionToken,
-      viewerRole: args.viewerRole,
-      campaignId: args.campaignId,
-    });
-    if (role === "player") return [];
-
-    const list = await ctx.db.query("scratchpadNotes").collect();
-    return list
-      .filter((s) => matchesCampaign(s.campaignId, args.campaignId))
-      .map((s) => ({
-        ...s,
-        id: s._id,
-      }));
+    const access = await memberOrNull(ctx, args.sessionToken, args.campaignId);
+    if (!access || effectiveRole(access, args.viewerRole) !== "gm") return [];
+    const list = await collectByCampaign(ctx, "scratchpadNotes", access.keys);
+    return list.map((s) => ({ ...s, id: s._id }));
   },
 });
 
 export const addScratchpad = mutation({
   args: {
-    campaignId: v.optional(v.string()),
-    sessionToken: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
     text: v.string(),
     timestamp: v.string(),
   },
   handler: async (ctx, args) => {
-    await assertDmPermission(ctx, args.sessionToken, args.campaignId);
-    const { sessionToken: _, ...data } = args;
+    const { canonicalId } = await requireDm(ctx, args.sessionToken, args.campaignId);
     return await ctx.db.insert("scratchpadNotes", {
-      ...data,
-      campaignId: normalizeCampaignId(args.campaignId),
+      text: args.text,
+      timestamp: args.timestamp,
+      campaignId: canonicalId,
     });
   },
 });
 
+async function loadNoteForDm(ctx: MutationCtx, sessionToken: string, id: string) {
+  const note = await getOrThrow(ctx, "scratchpadNotes", id);
+  await requireDmOfRecord(ctx, sessionToken, note.campaignId);
+  return note;
+}
+
 export const removeScratchpad = mutation({
   args: {
+    sessionToken: v.string(),
     id: v.string(),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const noteId = ctx.db.normalizeId("scratchpadNotes", args.id);
-    if (!noteId) return;
-    const note = await ctx.db.get(noteId);
-    if (!note) return;
-    await assertDmPermission(ctx, args.sessionToken, note.campaignId);
-    await ctx.db.delete(noteId);
+    const note = await loadNoteForDm(ctx, args.sessionToken, args.id);
+    await ctx.db.delete(note._id);
   },
 });
 
 export const markScratchpadConverted = mutation({
   args: {
+    sessionToken: v.string(),
     id: v.string(),
     convertedEntityHandle: v.string(),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const noteId = ctx.db.normalizeId("scratchpadNotes", args.id);
-    if (!noteId) return;
-    const note = await ctx.db.get(noteId);
-    if (!note) return;
-    await assertDmPermission(ctx, args.sessionToken, note.campaignId);
-    await ctx.db.patch(noteId, {
-      convertedEntityHandle: args.convertedEntityHandle,
-    });
+    const note = await loadNoteForDm(ctx, args.sessionToken, args.id);
+    await ctx.db.patch(note._id, { convertedEntityHandle: args.convertedEntityHandle });
   },
 });

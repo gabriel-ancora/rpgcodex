@@ -1,32 +1,83 @@
-import { query, mutation } from "./_generated/server";
+import { query, mutation, MutationCtx } from "./_generated/server";
+import { Doc } from "./_generated/dataModel";
 import { v } from "convex/values";
 import {
-  matchesCampaign,
-  normalizeCampaignId,
-  resolveEffectiveRole,
-  assertDmPermission,
+  requireDm,
+  requireMember,
+  requireDmOfRecord,
+  requireMemberOfRecord,
+  memberOrNull,
+  effectiveRole,
+  collectByCampaign,
+  firstByCampaign,
+  getOrThrow,
+  ERR_NOT_FOUND,
 } from "./lib/tenancy";
+import { getOrCreatePartyResources } from "./lib/defaults";
+
+/**
+ * Portal dos jogadores: missões, diários e recursos do grupo.
+ *
+ * Permissões:
+ *  - Missões: somente o Mestre altera (inclusive objetivos).
+ *  - Diário coletivo: qualquer membro escreve; edição/remoção pelo autor ou pelo Mestre.
+ *  - Diário pessoal: somente o dono; o Mestre lê apenas notas compartilhadas com ele.
+ *  - Recursos do grupo (moedas, suprimentos, inventário e base): qualquer membro altera,
+ *    pois a interface do Portal permite que jogadores administrem o inventário comum.
+ *    A substituição completa (restauração de backup) é exclusiva do Mestre.
+ */
+
+const viewerRoleValidator = v.optional(v.union(v.literal("gm"), v.literal("player")));
+
+const questStatusValidator = v.union(
+  v.literal("active"),
+  v.literal("completed"),
+  v.literal("failed")
+);
+
+const objectiveValidator = v.object({
+  id: v.string(),
+  text: v.string(),
+  completed: v.boolean(),
+  isSecret: v.optional(v.boolean()),
+});
+
+const noteCategoryValidator = v.union(
+  v.literal("theory"),
+  v.literal("secret"),
+  v.literal("backstory"),
+  v.literal("goal")
+);
+
+const itemCategoryValidator = v.union(
+  v.literal("weapon"),
+  v.literal("relic"),
+  v.literal("consumable"),
+  v.literal("document"),
+  v.literal("treasure")
+);
+
+function randomSuffix() {
+  return Math.random().toString(36).slice(2, 8);
+}
+
+// ============================================================================
+// MISSÕES
+// ============================================================================
 
 export const listQuests = query({
   args: {
-    campaignId: v.optional(v.string()),
-    viewerRole: v.optional(v.union(v.literal("gm"), v.literal("player"))),
-    sessionToken: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
+    viewerRole: viewerRoleValidator,
   },
   handler: async (ctx, args) => {
-    const role = await resolveEffectiveRole(ctx, {
-      sessionToken: args.sessionToken,
-      viewerRole: args.viewerRole,
-      campaignId: args.campaignId,
-    });
-
-    const list = await ctx.db.query("quests").collect();
-    return list
-      .filter((q) => {
-        if (!matchesCampaign(q.campaignId, args.campaignId)) return false;
-        if (role === "player" && !q.isPublic) return false;
-        return true;
-      })
+    const access = await memberOrNull(ctx, args.sessionToken, args.campaignId);
+    if (!access) return [];
+    const role = effectiveRole(access, args.viewerRole);
+    const quests = await collectByCampaign(ctx, "quests", access.keys);
+    return quests
+      .filter((q) => role === "gm" || q.isPublic)
       .map((q) => ({
         ...q,
         id: q._id,
@@ -41,316 +92,286 @@ export const listQuests = query({
 
 export const createQuest = mutation({
   args: {
-    campaignId: v.optional(v.string()),
-    sessionToken: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
     title: v.string(),
     subtitle: v.string(),
     giverHandle: v.string(),
     locationHandle: v.string(),
-    status: v.union(
-      v.literal("active"),
-      v.literal("completed"),
-      v.literal("failed")
-    ),
-    isPublic: v.boolean(),
+    status: questStatusValidator,
+    // Padrão: oculta dos jogadores.
+    isPublic: v.optional(v.boolean()),
     description: v.string(),
     gmSecretNote: v.optional(v.string()),
     reward: v.string(),
-    objectives: v.array(
-      v.object({
-        id: v.string(),
-        text: v.string(),
-        completed: v.boolean(),
-        isSecret: v.optional(v.boolean()),
-      })
-    ),
+    objectives: v.array(objectiveValidator),
   },
   handler: async (ctx, args) => {
-    await assertDmPermission(ctx, args.sessionToken, args.campaignId);
-    const { sessionToken: _, ...data } = args;
+    const { canonicalId } = await requireDm(ctx, args.sessionToken, args.campaignId);
+    const { sessionToken: _t, campaignId: _c, isPublic, ...data } = args;
     return await ctx.db.insert("quests", {
       ...data,
-      campaignId: normalizeCampaignId(args.campaignId),
+      isPublic: isPublic === true,
+      campaignId: canonicalId,
     });
   },
 });
 
+async function loadQuestForDm(ctx: MutationCtx, sessionToken: string, questId: string) {
+  const quest = await getOrThrow(ctx, "quests", questId);
+  await requireDmOfRecord(ctx, sessionToken, quest.campaignId);
+  return quest;
+}
+
 export const updateQuestStatus = mutation({
   args: {
+    sessionToken: v.string(),
     questId: v.string(),
-    status: v.union(
-      v.literal("active"),
-      v.literal("completed"),
-      v.literal("failed")
-    ),
-    sessionToken: v.optional(v.string()),
+    status: questStatusValidator,
   },
   handler: async (ctx, args) => {
-    const questId = ctx.db.normalizeId("quests", args.questId);
-    if (!questId) return;
-    const quest = await ctx.db.get(questId);
-    if (!quest) return;
-    await assertDmPermission(ctx, args.sessionToken, quest.campaignId);
-    await ctx.db.patch(questId, { status: args.status });
+    const quest = await loadQuestForDm(ctx, args.sessionToken, args.questId);
+    await ctx.db.patch(quest._id, { status: args.status });
   },
 });
 
 export const toggleObjective = mutation({
   args: {
+    sessionToken: v.string(),
     questId: v.string(),
     objectiveId: v.string(),
   },
   handler: async (ctx, args) => {
-    const questId = ctx.db.normalizeId("quests", args.questId);
-    if (!questId) return;
-    const quest = await ctx.db.get(questId);
-    if (!quest) return;
-
-    const updated = quest.objectives.map((o) =>
-      o.id === args.objectiveId ? { ...o, completed: !o.completed } : o
-    );
-    await ctx.db.patch(questId, { objectives: updated });
+    const quest = await loadQuestForDm(ctx, args.sessionToken, args.questId);
+    if (!quest.objectives.some((o) => o.id === args.objectiveId)) throw new Error(ERR_NOT_FOUND);
+    await ctx.db.patch(quest._id, {
+      objectives: quest.objectives.map((o) =>
+        o.id === args.objectiveId ? { ...o, completed: !o.completed } : o
+      ),
+    });
   },
 });
 
 export const removeQuest = mutation({
   args: {
+    sessionToken: v.string(),
     questId: v.string(),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const questId = ctx.db.normalizeId("quests", args.questId);
-    if (!questId) return;
-    const quest = await ctx.db.get(questId);
-    if (!quest) return;
-    await assertDmPermission(ctx, args.sessionToken, quest.campaignId);
-    await ctx.db.delete(questId);
+    const quest = await loadQuestForDm(ctx, args.sessionToken, args.questId);
+    await ctx.db.delete(quest._id);
   },
 });
 
+// ============================================================================
+// DIÁRIO COLETIVO
+// ============================================================================
+
 export const listJournal = query({
   args: {
-    campaignId: v.optional(v.string()),
-    viewerRole: v.optional(v.union(v.literal("gm"), v.literal("player"))),
-    sessionToken: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
+    viewerRole: viewerRoleValidator,
   },
   handler: async (ctx, args) => {
-    const role = await resolveEffectiveRole(ctx, {
-      sessionToken: args.sessionToken,
-      viewerRole: args.viewerRole,
-      campaignId: args.campaignId,
-    });
-
-    const list = await ctx.db.query("journalEntries").collect();
-    return list
-      .filter((j) => {
-        if (!matchesCampaign(j.campaignId, args.campaignId)) return false;
-        if (role === "player" && !j.isPublic) return false;
-        return true;
-      })
+    const access = await memberOrNull(ctx, args.sessionToken, args.campaignId);
+    if (!access) return [];
+    const role = effectiveRole(access, args.viewerRole);
+    const entries = await collectByCampaign(ctx, "journalEntries", access.keys);
+    return entries
+      .filter((j) => role === "gm" || j.isPublic || j.authorUserId === access.user.id)
       .map((j) => ({
         ...j,
         id: j._id,
+        canEdit: access.isDm || j.authorUserId === access.user.id,
       }));
   },
 });
 
 export const addJournal = mutation({
   args: {
-    campaignId: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
     sessionNumber: v.number(),
     title: v.string(),
     inGameDate: v.string(),
-    author: v.string(),
+    // Nome exibido (personagem ou jogador); se vazio, usa o nome da conta.
+    author: v.optional(v.string()),
     content: v.string(),
     isPublic: v.boolean(),
   },
   handler: async (ctx, args) => {
+    const { user, canonicalId } = await requireMember(ctx, args.sessionToken, args.campaignId);
     return await ctx.db.insert("journalEntries", {
-      ...args,
-      campaignId: normalizeCampaignId(args.campaignId),
+      campaignId: canonicalId,
+      sessionNumber: args.sessionNumber,
+      title: args.title,
+      inGameDate: args.inGameDate,
+      author: args.author?.trim() || user.name,
+      authorUserId: user.id,
+      content: args.content,
+      isPublic: args.isPublic,
     });
   },
 });
 
+async function loadJournalForEditor(ctx: MutationCtx, sessionToken: string, journalId: string) {
+  const entry = await getOrThrow(ctx, "journalEntries", journalId);
+  const access = await requireMemberOfRecord(ctx, sessionToken, entry.campaignId);
+  if (!access.isDm && entry.authorUserId !== access.user.id) {
+    throw new Error("Apenas o autor ou o Mestre pode alterar esta crônica.");
+  }
+  return entry;
+}
+
 export const updateJournal = mutation({
   args: {
+    sessionToken: v.string(),
     journalId: v.string(),
     title: v.optional(v.string()),
     content: v.optional(v.string()),
     isPublic: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const journalId = ctx.db.normalizeId("journalEntries", args.journalId);
-    if (!journalId) return;
-    const { journalId: _, ...updates } = args;
-    await ctx.db.patch(journalId, updates);
+    const entry = await loadJournalForEditor(ctx, args.sessionToken, args.journalId);
+    const { journalId: _j, sessionToken: _t, ...updates } = args;
+    const clean = Object.fromEntries(
+      Object.entries(updates).filter(([, val]) => val !== undefined)
+    );
+    await ctx.db.patch(entry._id, clean);
   },
 });
 
 export const removeJournal = mutation({
-  args: { journalId: v.string() },
+  args: {
+    sessionToken: v.string(),
+    journalId: v.string(),
+  },
   handler: async (ctx, args) => {
-    const journalId = ctx.db.normalizeId("journalEntries", args.journalId);
-    if (!journalId) return;
-    await ctx.db.delete(journalId);
+    const entry = await loadJournalForEditor(ctx, args.sessionToken, args.journalId);
+    await ctx.db.delete(entry._id);
   },
 });
 
 // ============================================================================
-// DIÁRIO PESSOAL DOS JOGADORES (COM PRIVACIDADE PARA O MESTRE)
+// DIÁRIO PESSOAL
 // ============================================================================
+
+/**
+ * Notas pessoais do usuário da sessão. O Mestre (em visão de Mestre) também
+ * recebe as notas de jogadores que foram explicitamente compartilhadas com ele.
+ */
 export const listPersonalNotes = query({
   args: {
-    campaignId: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
+    viewerRole: viewerRoleValidator,
+    // Ignorado: o jogador é sempre o usuário da sessão.
     playerId: v.optional(v.string()),
-    viewerRole: v.optional(v.union(v.literal("gm"), v.literal("player"))),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const role = await resolveEffectiveRole(ctx, {
-      sessionToken: args.sessionToken,
-      viewerRole: args.viewerRole,
-      campaignId: args.campaignId,
-    });
-    const normId = normalizeCampaignId(args.campaignId);
-    if (!normId) return [];
-
-    const list = await ctx.db
-      .query("personalJournalNotes")
-      .withIndex("by_campaign", (q) => q.eq("campaignId", normId))
-      .collect();
-
-    return list
-      .filter((note) => {
-        if (role === "gm") {
-          return note.sharedWithDm || Boolean(args.playerId && note.playerId === args.playerId);
-        }
-        if (args.playerId) {
-          return note.playerId === args.playerId;
-        }
-        return false;
-      })
-      .map((n) => ({
-        ...n,
-        id: n._id,
-      }));
+    const access = await memberOrNull(ctx, args.sessionToken, args.campaignId);
+    if (!access) return [];
+    const role = effectiveRole(access, args.viewerRole);
+    const notes = await collectByCampaign(ctx, "personalJournalNotes", access.keys);
+    return notes
+      .filter(
+        (n) => n.playerId === access.user.id || (role === "gm" && n.sharedWithDm === true)
+      )
+      .map((n) => ({ ...n, id: n._id, isOwn: n.playerId === access.user.id }));
   },
 });
 
 export const addPersonalNote = mutation({
   args: {
-    campaignId: v.optional(v.string()),
-    playerId: v.string(),
-    playerName: v.string(),
+    sessionToken: v.string(),
+    campaignId: v.string(),
+    playerName: v.optional(v.string()),
     characterName: v.string(),
     title: v.string(),
     content: v.string(),
-    category: v.union(
-      v.literal("theory"),
-      v.literal("secret"),
-      v.literal("backstory"),
-      v.literal("goal")
-    ),
+    category: noteCategoryValidator,
     sharedWithDm: v.boolean(),
+    // Ignorado: o dono é sempre o usuário da sessão.
+    playerId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const { user, canonicalId } = await requireMember(ctx, args.sessionToken, args.campaignId);
     return await ctx.db.insert("personalJournalNotes", {
-      ...args,
-      campaignId: normalizeCampaignId(args.campaignId),
-      updatedAt: new Date().toLocaleTimeString("pt-BR", {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
+      campaignId: canonicalId,
+      playerId: user.id,
+      playerName: args.playerName?.trim() || user.name,
+      characterName: args.characterName,
+      title: args.title,
+      content: args.content,
+      category: args.category,
+      sharedWithDm: args.sharedWithDm,
+      updatedAt: new Date().toISOString(),
     });
   },
 });
 
+async function loadOwnNote(ctx: MutationCtx, sessionToken: string, id: string) {
+  const note = await getOrThrow(ctx, "personalJournalNotes", id);
+  const access = await requireMemberOfRecord(ctx, sessionToken, note.campaignId);
+  if (note.playerId !== access.user.id) {
+    throw new Error("Apenas o autor pode alterar esta nota pessoal.");
+  }
+  return note;
+}
+
 export const updatePersonalNote = mutation({
   args: {
+    sessionToken: v.string(),
     id: v.string(),
     title: v.optional(v.string()),
     content: v.optional(v.string()),
-    category: v.optional(
-      v.union(
-        v.literal("theory"),
-        v.literal("secret"),
-        v.literal("backstory"),
-        v.literal("goal")
-      )
-    ),
+    category: v.optional(noteCategoryValidator),
     sharedWithDm: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const noteId = ctx.db.normalizeId("personalJournalNotes", args.id);
-    if (!noteId) return;
-    const { id: _, ...updates } = args;
-    await ctx.db.patch(noteId, {
-      ...updates,
-      updatedAt: new Date().toLocaleTimeString("pt-BR", {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
-    });
+    const note = await loadOwnNote(ctx, args.sessionToken, args.id);
+    const { id: _i, sessionToken: _t, ...updates } = args;
+    const clean = Object.fromEntries(
+      Object.entries(updates).filter(([, val]) => val !== undefined)
+    );
+    await ctx.db.patch(note._id, { ...clean, updatedAt: new Date().toISOString() });
   },
 });
 
 export const removePersonalNote = mutation({
-  args: { id: v.string() },
+  args: {
+    sessionToken: v.string(),
+    id: v.string(),
+  },
   handler: async (ctx, args) => {
-    const noteId = ctx.db.normalizeId("personalJournalNotes", args.id);
-    if (!noteId) return;
-    await ctx.db.delete(noteId);
+    const note = await loadOwnNote(ctx, args.sessionToken, args.id);
+    await ctx.db.delete(note._id);
   },
 });
 
 // ============================================================================
-// RECURSOS COMPARTILHADOS DO GRUPO & BASE (STRONGHOLD)
+// RECURSOS COMPARTILHADOS DO GRUPO & BASE
 // ============================================================================
-async function getOrCreateCampaignResources(ctx: any, campaignId?: string) {
-  const normId = normalizeCampaignId(campaignId);
-  if (!normId) return null;
-  const all = await ctx.db.query("partyResources").collect();
-  let res = all.find((r: any) => matchesCampaign(r.campaignId, normId));
-  if (!res) {
-    const id = await ctx.db.insert("partyResources", {
-      campaignId: normId,
-      gold: 0,
-      silver: 0,
-      copper: 0,
-      rations: 0,
-      torches: 0,
-      healerKits: 0,
-      items: [],
-      stronghold: {
-        name: "Base da Companhia",
-        type: "Refúgio",
-        locationHandle: "",
-        integrity: 100,
-        maxIntegrity: 100,
-        upkeepPerMonth: "0 PO",
-        description: "Configure o nome, descrição e melhorias da base de operações do grupo.",
-        upgrades: [],
-      },
-    });
-    res = await ctx.db.get(id);
-  }
-  return res;
+
+async function resourcesForMember(ctx: MutationCtx, sessionToken: string, campaignId: string) {
+  const { canonicalId, keys } = await requireMember(ctx, sessionToken, campaignId);
+  return await getOrCreatePartyResources(ctx, canonicalId, keys);
 }
 
 export const getResources = query({
-  args: { campaignId: v.optional(v.string()) },
+  args: { sessionToken: v.string(), campaignId: v.string() },
   handler: async (ctx, args) => {
-    const all = await ctx.db.query("partyResources").collect();
-    return (
-      all.find((r) => matchesCampaign(r.campaignId, args.campaignId)) ?? null
-    );
+    const access = await memberOrNull(ctx, args.sessionToken, args.campaignId);
+    if (!access) return null;
+    return await firstByCampaign(ctx, "partyResources", access.keys);
   },
 });
 
 export const updateCurrency = mutation({
   args: {
-    campaignId: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
     field: v.union(
       v.literal("gold"),
       v.literal("silver"),
@@ -362,84 +383,68 @@ export const updateCurrency = mutation({
     delta: v.number(),
   },
   handler: async (ctx, args) => {
-    const res = await getOrCreateCampaignResources(ctx, args.campaignId);
-    if (!res) return;
-
-    const currentVal = res[args.field];
-    const nextVal = Math.max(0, currentVal + args.delta);
-    await ctx.db.patch(res._id, {
-      [args.field]: nextVal,
-      campaignId: normalizeCampaignId(args.campaignId),
-    });
+    const res = await resourcesForMember(ctx, args.sessionToken, args.campaignId);
+    if (!Number.isFinite(args.delta)) throw new Error("Valor inválido.");
+    const nextVal = Math.max(0, res[args.field] + Math.trunc(args.delta));
+    await ctx.db.patch(res._id, { [args.field]: nextVal } as Partial<Doc<"partyResources">>);
   },
 });
 
 export const addInventoryItem = mutation({
   args: {
-    campaignId: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
     name: v.string(),
     quantity: v.number(),
     holder: v.string(),
-    category: v.union(
-      v.literal("weapon"),
-      v.literal("relic"),
-      v.literal("consumable"),
-      v.literal("document"),
-      v.literal("treasure")
-    ),
+    category: itemCategoryValidator,
     notes: v.string(),
   },
   handler: async (ctx, args) => {
-    const res = await getOrCreateCampaignResources(ctx, args.campaignId);
-    if (!res) return;
-
+    const res = await resourcesForMember(ctx, args.sessionToken, args.campaignId);
     const newItem = {
-      id: `item-${Date.now()}`,
+      id: `item-${Date.now()}-${randomSuffix()}`,
       name: args.name,
-      quantity: args.quantity,
+      quantity: Math.max(0, Math.floor(args.quantity)),
       holder: args.holder,
       category: args.category,
       notes: args.notes,
     };
-
-    await ctx.db.patch(res._id, {
-      campaignId: normalizeCampaignId(args.campaignId),
-      items: [...res.items, newItem],
-    });
+    await ctx.db.patch(res._id, { items: [...res.items, newItem] });
+    return newItem.id;
   },
 });
 
 export const removeInventoryItem = mutation({
   args: {
-    campaignId: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
     itemId: v.string(),
   },
   handler: async (ctx, args) => {
-    const res = await getOrCreateCampaignResources(ctx, args.campaignId);
-    if (!res) return;
-
-    const updated = res.items.filter((i: any) => i.id !== args.itemId);
-    await ctx.db.patch(res._id, { items: updated });
+    const res = await resourcesForMember(ctx, args.sessionToken, args.campaignId);
+    if (!res.items.some((i) => i.id === args.itemId)) throw new Error(ERR_NOT_FOUND);
+    await ctx.db.patch(res._id, { items: res.items.filter((i) => i.id !== args.itemId) });
   },
 });
 
 export const toggleStrongholdUpgrade = mutation({
   args: {
-    campaignId: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
     upgradeId: v.string(),
   },
   handler: async (ctx, args) => {
-    const res = await getOrCreateCampaignResources(ctx, args.campaignId);
-    if (!res) return;
-
-    const updatedUpgrades = res.stronghold.upgrades.map((u: any) =>
-      u.id === args.upgradeId ? { ...u, installed: !u.installed } : u
-    );
-
+    const res = await resourcesForMember(ctx, args.sessionToken, args.campaignId);
+    if (!res.stronghold.upgrades.some((u) => u.id === args.upgradeId)) {
+      throw new Error(ERR_NOT_FOUND);
+    }
     await ctx.db.patch(res._id, {
       stronghold: {
         ...res.stronghold,
-        upgrades: updatedUpgrades,
+        upgrades: res.stronghold.upgrades.map((u) =>
+          u.id === args.upgradeId ? { ...u, installed: !u.installed } : u
+        ),
       },
     });
   },
@@ -447,7 +452,8 @@ export const toggleStrongholdUpgrade = mutation({
 
 export const updateStronghold = mutation({
   args: {
-    campaignId: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
     name: v.optional(v.string()),
     type: v.optional(v.string()),
     locationHandle: v.optional(v.string()),
@@ -457,24 +463,22 @@ export const updateStronghold = mutation({
     description: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const res = await getOrCreateCampaignResources(ctx, args.campaignId);
-    if (!res) return;
-
-    const { campaignId: _, ...updates } = args;
-    const nextMax = updates.maxIntegrity !== undefined ? Math.max(1, updates.maxIntegrity) : res.stronghold.maxIntegrity;
-    const rawIntegrity = updates.integrity !== undefined ? updates.integrity : res.stronghold.integrity;
-    const nextIntegrity = Math.max(0, Math.min(nextMax, rawIntegrity));
+    const res = await resourcesForMember(ctx, args.sessionToken, args.campaignId);
+    const sh = res.stronghold;
+    const nextMax =
+      args.maxIntegrity !== undefined ? Math.max(1, args.maxIntegrity) : sh.maxIntegrity;
+    const rawIntegrity = args.integrity !== undefined ? args.integrity : sh.integrity;
 
     await ctx.db.patch(res._id, {
       stronghold: {
-        ...res.stronghold,
-        ...(updates.name !== undefined ? { name: updates.name } : {}),
-        ...(updates.type !== undefined ? { type: updates.type } : {}),
-        ...(updates.locationHandle !== undefined ? { locationHandle: updates.locationHandle } : {}),
-        ...(updates.upkeepPerMonth !== undefined ? { upkeepPerMonth: updates.upkeepPerMonth } : {}),
-        ...(updates.description !== undefined ? { description: updates.description } : {}),
+        ...sh,
+        ...(args.name !== undefined ? { name: args.name } : {}),
+        ...(args.type !== undefined ? { type: args.type } : {}),
+        ...(args.locationHandle !== undefined ? { locationHandle: args.locationHandle } : {}),
+        ...(args.upkeepPerMonth !== undefined ? { upkeepPerMonth: args.upkeepPerMonth } : {}),
+        ...(args.description !== undefined ? { description: args.description } : {}),
         maxIntegrity: nextMax,
-        integrity: nextIntegrity,
+        integrity: Math.max(0, Math.min(nextMax, rawIntegrity)),
       },
     });
   },
@@ -482,52 +486,52 @@ export const updateStronghold = mutation({
 
 export const addStrongholdUpgrade = mutation({
   args: {
-    campaignId: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
     name: v.string(),
     cost: v.string(),
     benefit: v.string(),
   },
   handler: async (ctx, args) => {
-    const res = await getOrCreateCampaignResources(ctx, args.campaignId);
-    if (!res) return;
-
+    const res = await resourcesForMember(ctx, args.sessionToken, args.campaignId);
     const newUpgrade = {
-      id: `upg-${Date.now()}`,
+      id: `upg-${Date.now()}-${randomSuffix()}`,
       name: args.name,
       installed: false,
       cost: args.cost,
       benefit: args.benefit,
     };
-
     await ctx.db.patch(res._id, {
-      stronghold: {
-        ...res.stronghold,
-        upgrades: [...res.stronghold.upgrades, newUpgrade],
-      },
+      stronghold: { ...res.stronghold, upgrades: [...res.stronghold.upgrades, newUpgrade] },
     });
+    return newUpgrade.id;
   },
 });
 
 export const removeStrongholdUpgrade = mutation({
   args: {
-    campaignId: v.optional(v.string()),
+    sessionToken: v.string(),
+    campaignId: v.string(),
     upgradeId: v.string(),
   },
   handler: async (ctx, args) => {
-    const res = await getOrCreateCampaignResources(ctx, args.campaignId);
-    if (!res) return;
-
+    const res = await resourcesForMember(ctx, args.sessionToken, args.campaignId);
+    if (!res.stronghold.upgrades.some((u) => u.id === args.upgradeId)) {
+      throw new Error(ERR_NOT_FOUND);
+    }
     await ctx.db.patch(res._id, {
       stronghold: {
         ...res.stronghold,
-        upgrades: res.stronghold.upgrades.filter((u: any) => u.id !== args.upgradeId),
+        upgrades: res.stronghold.upgrades.filter((u) => u.id !== args.upgradeId),
       },
     });
   },
 });
 
+/** Substituição completa (restauração de backup). Exclusiva do Mestre. */
 export const replaceResources = mutation({
   args: {
+    sessionToken: v.string(),
     campaignId: v.string(),
     gold: v.number(),
     silver: v.number(),
@@ -541,13 +545,7 @@ export const replaceResources = mutation({
         name: v.string(),
         quantity: v.number(),
         holder: v.string(),
-        category: v.union(
-          v.literal("weapon"),
-          v.literal("relic"),
-          v.literal("consumable"),
-          v.literal("document"),
-          v.literal("treasure")
-        ),
+        category: itemCategoryValidator,
         notes: v.string(),
       })
     ),
@@ -571,14 +569,9 @@ export const replaceResources = mutation({
     }),
   },
   handler: async (ctx, args) => {
-    const normId = normalizeCampaignId(args.campaignId);
-    if (!normId) return;
-    const res = await getOrCreateCampaignResources(ctx, normId);
-    if (!res) return;
-    const { campaignId: _, ...payload } = args;
-    await ctx.db.patch(res._id, {
-      ...payload,
-      campaignId: normId,
-    });
+    const { canonicalId, keys } = await requireDm(ctx, args.sessionToken, args.campaignId);
+    const res = await getOrCreatePartyResources(ctx, canonicalId, keys);
+    const { campaignId: _c, sessionToken: _t, ...payload } = args;
+    await ctx.db.patch(res._id, payload);
   },
 });

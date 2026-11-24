@@ -16,6 +16,7 @@ import {
   Swords,
   Dices,
   Pin,
+  PinOff,
   Volume2,
   VolumeX,
   Plus,
@@ -104,6 +105,35 @@ const SFX_BUTTONS: {
   { id: 'arcane_blast', label: 'Arcano', icon: Wand2 },
   { id: 'monster_roar', label: 'Rugido', icon: Skull },
 ];
+
+const CATEGORY_LABELS: Record<string, string> = {
+  npc: 'NPC',
+  location: 'Local',
+  faction: 'Facção',
+  item: 'Item',
+  creature: 'Criatura',
+  monster: 'Criatura',
+  lore: 'Lore',
+  event: 'Evento',
+  deity: 'Divindade',
+};
+
+/** Cabeçalho padrão dos painéis do cockpit. */
+const PanelHeader: React.FC<{
+  icon: React.FC<{ className?: string }>;
+  title: string;
+  meta?: React.ReactNode;
+  children?: React.ReactNode;
+}> = ({ icon: Icon, title, meta, children }) => (
+  <div className="h-12 px-3 border-b border-line flex items-center justify-between gap-2 shrink-0">
+    <div className="flex items-center gap-2 min-w-0">
+      <Icon className="w-4 h-4 text-fg-muted shrink-0" />
+      <h2 className="text-sm font-semibold text-fg truncate">{title}</h2>
+      {meta && <span className="text-xs text-fg-subtle tabular-nums shrink-0">{meta}</span>}
+    </div>
+    {children && <div className="flex items-center gap-1 shrink-0">{children}</div>}
+  </div>
+);
 
 export const SessionCockpitModule: React.FC = () => {
   const entities = useCampaignStore((s) => s.entities);
@@ -215,444 +245,405 @@ export const SessionCockpitModule: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col justify-between h-[calc(100vh-4.75rem)] gap-3">
-      {/* 3-Column Tabletop Console */}
+    <div className="flex flex-col gap-3 lg:h-[calc(100vh-4.75rem)]">
+      {/* Três colunas */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 flex-1 min-h-0">
-        {/* LEFT COLUMN: Initiative & Dice Tray */}
+        {/* Coluna esquerda: iniciativa e dados */}
         <div className="lg:col-span-4 flex flex-col gap-3 min-h-0">
-          {/* Combat Tracker */}
-          <div className="flex-1 flex flex-col surface-panel rounded-xl overflow-hidden min-h-0">
-            <div className="px-3.5 py-2.5 border-b border-white/[0.06] flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Swords className="w-3.5 h-3.5 text-zinc-400" />
-                <div className="flex items-baseline gap-2">
-                  <h2 className="text-xs font-semibold text-zinc-100">
-                    Iniciativa
-                  </h2>
-                  <span className="text-[11px] font-mono text-zinc-500 tabular-nums">
-                    Rodada {combatRound}
-                  </span>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={rollAllInitiatives}
-                  className="btn-subtle p-1.5 rounded-md"
-                  title="Rolar iniciativa (d20) para todos"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => setShowAddCombatant(!showAddCombatant)}
-                  className="btn-subtle p-1.5 rounded-md"
-                  title="Adicionar combatente"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={nextCombatTurn}
-                  className="btn-solid px-2.5 py-1 rounded-md text-xs inline-flex items-center gap-1"
-                >
-                  <span>Turno</span>
-                  <SkipForward className="w-3 h-3" />
-                </button>
-              </div>
-            </div>
+          {/* Iniciativa */}
+          <section className="card flex-1 flex flex-col overflow-hidden min-h-[320px] lg:min-h-0">
+            <PanelHeader icon={Swords} title="Iniciativa" meta={`Rodada ${combatRound}`}>
+              <button
+                onClick={rollAllInitiatives}
+                className="btn btn-ghost btn-sm btn-icon"
+                title="Rolar iniciativa (d20) para todos"
+              >
+                <RotateCcw className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setShowAddCombatant(!showAddCombatant)}
+                className={`btn btn-ghost btn-sm btn-icon ${
+                  showAddCombatant ? 'bg-surface-2 text-fg' : ''
+                }`}
+                title="Adicionar combatente"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+              <button onClick={nextCombatTurn} className="btn btn-primary btn-sm">
+                <span>Próximo turno</span>
+                <SkipForward className="w-4 h-4" />
+              </button>
+            </PanelHeader>
 
             {showAddCombatant && (
               <form
                 onSubmit={handleAddCombatant}
-                className="p-2.5 bg-[#0e0e11] border-b border-white/[0.06] space-y-2 text-xs"
+                className="p-3 bg-surface-2 border-b border-line space-y-2"
               >
-                <div className="grid grid-cols-3 gap-1.5">
+                <div className="grid grid-cols-3 gap-2">
                   <input
                     type="text"
                     required
                     value={combName}
                     onChange={(e) => setCombName(e.target.value)}
-                    placeholder="Nome..."
-                    className="input-clean col-span-2 px-2 py-1 rounded"
+                    placeholder="Nome"
+                    aria-label="Nome"
+                    className="input h-8 col-span-2"
                   />
                   <select
                     value={combType}
-                    onChange={(e) =>
-                      setCombType(e.target.value as 'pc' | 'npc' | 'monster')
-                    }
-                    className="input-clean px-2 py-1 rounded"
+                    onChange={(e) => setCombType(e.target.value as 'pc' | 'npc' | 'monster')}
+                    aria-label="Tipo"
+                    className="input h-8"
                   >
                     <option value="monster">Monstro</option>
                     <option value="pc">PJ</option>
                     <option value="npc">NPC</option>
                   </select>
                 </div>
-                <div className="grid grid-cols-4 gap-1.5 items-center">
-                  <input
-                    type="number"
-                    value={combInit}
-                    onChange={(e) => setCombInit(Number(e.target.value))}
-                    placeholder="Inic"
-                    title="Iniciativa"
-                    className="input-clean px-2 py-1 rounded font-mono"
-                  />
-                  <input
-                    type="number"
-                    value={combHp}
-                    onChange={(e) => setCombHp(Number(e.target.value))}
-                    placeholder="PV"
-                    title="Pontos de vida"
-                    className="input-clean px-2 py-1 rounded font-mono"
-                  />
-                  <input
-                    type="number"
-                    value={combAc}
-                    onChange={(e) => setCombAc(Number(e.target.value))}
-                    placeholder="CA"
-                    title="Classe de armadura"
-                    className="input-clean px-2 py-1 rounded font-mono"
-                  />
-                  <button
-                    type="submit"
-                    className="btn-solid py-1 rounded text-xs"
-                  >
-                    Entrar
+                <div className="grid grid-cols-4 gap-2 items-end">
+                  <label className="block">
+                    <span className="text-xs text-fg-subtle">Inic.</span>
+                    <input
+                      type="number"
+                      value={combInit}
+                      onChange={(e) => setCombInit(Number(e.target.value))}
+                      title="Iniciativa"
+                      className="input h-8 tabular-nums"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs text-fg-subtle">PV</span>
+                    <input
+                      type="number"
+                      value={combHp}
+                      onChange={(e) => setCombHp(Number(e.target.value))}
+                      title="Pontos de vida"
+                      className="input h-8 tabular-nums"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-xs text-fg-subtle">CA</span>
+                    <input
+                      type="number"
+                      value={combAc}
+                      onChange={(e) => setCombAc(Number(e.target.value))}
+                      title="Classe de armadura"
+                      className="input h-8 tabular-nums"
+                    />
+                  </label>
+                  <button type="submit" className="btn btn-primary btn-sm">
+                    Adicionar
                   </button>
                 </div>
               </form>
             )}
 
-            <div className="flex-1 overflow-y-auto p-2.5 space-y-2">
+            <div className="flex-1 overflow-y-auto">
               {combatants.length === 0 ? (
-                <div className="py-10 px-4 text-center space-y-1.5 text-zinc-500">
-                  <Swords className="w-5 h-5 mx-auto text-zinc-600" />
-                  <p className="text-xs">Sem combatentes ativos.</p>
+                <div className="py-10 px-4 text-center">
+                  <Swords className="w-5 h-5 mx-auto text-fg-subtle mb-2" />
+                  <p className="text-[13px] text-fg-muted">Nenhum combatente.</p>
                 </div>
               ) : (
-                combatants.map((c, idx) => {
-                  const isTurn = idx === activeCombatTurnIndex;
-                  const hpPct = Math.round((c.hp / Math.max(1, c.maxHp)) * 100);
-                  const isDead = c.hp <= 0;
+                <ul className="divide-y divide-line">
+                  {combatants.map((c, idx) => {
+                    const isTurn = idx === activeCombatTurnIndex;
+                    const hpPct = Math.round(((c.hp ?? 0) / Math.max(1, c.maxHp ?? 0)) * 100);
+                    const isDead = (c.hp ?? 0) <= 0;
+                    const barWidth = Math.max(0, Math.min(100, hpPct));
+                    const hpFill =
+                      hpPct > 50 ? 'bg-success' : hpPct > 25 ? 'bg-warning' : 'bg-danger';
 
-                  return (
-                    <div
-                      key={c.id}
-                      className={`p-2.5 rounded-xl border transition-colors space-y-2 ${
-                        isTurn
-                          ? 'bg-white/[0.05] border-white/[0.16] border-l-2 border-l-zinc-100'
-                          : isDead
-                          ? 'bg-[#0e0e11]/50 border-white/[0.04] opacity-50'
-                          : 'bg-[#0e0e11] border-white/[0.06]'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span
-                            className={`w-6 h-6 rounded-md font-mono text-xs font-semibold flex items-center justify-center shrink-0 tabular-nums ${
-                              isTurn
-                                ? 'bg-zinc-100 text-zinc-950'
-                                : 'bg-white/[0.05] text-zinc-300'
-                            }`}
-                          >
-                            {c.initiative}
-                          </span>
-                          <div className="min-w-0">
-                            <div className="text-xs font-medium text-zinc-100 truncate flex items-center gap-1.5">
-                              <span>{c.name}</span>
-                              {isTurn && (
-                                <span className="text-[9px] font-mono px-1.5 py-0.5 bg-white/[0.08] text-zinc-200 rounded">
-                                  Turno
-                                </span>
+                    return (
+                      <li
+                        key={c.id}
+                        aria-current={isTurn ? 'true' : undefined}
+                        className={`px-3 py-2.5 space-y-2 border-l-2 transition-colors ${
+                          isTurn
+                            ? 'bg-accent-soft border-l-accent'
+                            : 'border-l-transparent'
+                        } ${isDead && !isTurn ? 'opacity-50' : ''}`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <span
+                              className={`w-7 h-7 rounded-md font-mono text-[13px] font-semibold flex items-center justify-center shrink-0 tabular-nums border ${
+                                isTurn
+                                  ? 'bg-accent text-accent-fg border-accent'
+                                  : 'bg-surface-2 text-fg border-line'
+                              }`}
+                              title="Iniciativa"
+                            >
+                              {c.initiative}
+                            </span>
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium text-fg truncate">
+                                {c.name}
+                                {isDead && (
+                                  <span className="ml-1.5 text-xs font-normal text-danger">
+                                    Caído
+                                  </span>
+                                )}
+                              </div>
+                              {c.notes && (
+                                <div className="text-xs text-fg-subtle truncate">{c.notes}</div>
                               )}
                             </div>
-                            {c.notes && (
-                              <div className="text-[10px] text-zinc-500 truncate">
-                                {c.notes}
-                              </div>
-                            )}
                           </div>
-                        </div>
 
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/[0.06] text-[11px] font-mono text-zinc-300 tabular-nums">
-                            <Shield className="w-2.5 h-2.5 text-zinc-500" />
-                            {c.armorClass}
-                          </span>
-                          <button
-                            onClick={() => removeCombatant(c.id)}
-                            className="text-zinc-600 hover:text-rose-400 p-0.5"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* HP Bar & Controls */}
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex-1 space-y-1">
-                          <div className="flex items-center justify-between text-[11px] font-mono tabular-nums">
-                            <span className="text-zinc-300">
-                              {c.hp} / {c.maxHp} PV
+                          <div className="flex items-center gap-1 shrink-0">
+                            <span
+                              className="inline-flex items-center gap-1 text-[13px] text-fg-muted tabular-nums"
+                              title="Classe de armadura"
+                            >
+                              <Shield className="w-3.5 h-3.5 text-fg-subtle" />
+                              {c.armorClass}
                             </span>
-                            <span className="text-zinc-500">{hpPct}%</span>
-                          </div>
-                          <div className="w-full h-1 rounded-full bg-white/[0.07] overflow-hidden">
-                            <div
-                              className={`h-full transition-all ${
-                                hpPct > 50
-                                  ? 'bg-emerald-400'
-                                  : hpPct > 25
-                                  ? 'bg-amber-400'
-                                  : 'bg-rose-500'
-                              }`}
-                              style={{ width: `${hpPct}%` }}
-                            />
+                            <button
+                              onClick={() => removeCombatant(c.id)}
+                              className="btn btn-danger-ghost btn-icon h-7 w-7"
+                              title="Remover combatente"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-0.5 font-mono text-[10px] tabular-nums">
-                          {[-5, -1, 1, 5].map((delta) => (
-                            <button
-                              key={delta}
-                              onClick={() => adjustCombatantHp(c.id, delta)}
-                              className="px-1.5 py-0.5 rounded bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.06] text-zinc-300"
-                            >
-                              {delta > 0 ? `+${delta}` : delta}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
+                        {/* PV */}
+                        <div className="flex items-center gap-3">
+                          <div className="flex-1 min-w-0 space-y-1">
+                            <div className="flex items-center justify-between text-xs tabular-nums">
+                              <span className="text-fg">
+                                <span className="font-semibold">{c.hp}</span>
+                                <span className="text-fg-subtle"> / {c.maxHp} PV</span>
+                              </span>
+                              <span className="text-fg-subtle">{hpPct}%</span>
+                            </div>
+                            <div className="w-full h-1.5 rounded-full bg-surface-3 overflow-hidden">
+                              <div
+                                className={`h-full transition-all ${hpFill}`}
+                                style={{ width: `${barWidth}%` }}
+                              />
+                            </div>
+                          </div>
 
-                      {/* Conditions */}
-                      <div className="flex flex-wrap items-center gap-1">
-                        {CONDITIONS_LIST.map((cond) => {
-                          const active = c.conditions.includes(cond);
-                          return (
-                            <button
-                              key={cond}
-                              onClick={() => toggleCombatantCondition(c.id, cond)}
-                              className={`px-1.5 py-0.5 rounded text-[10px] transition-colors border ${
-                                active
-                                  ? 'bg-amber-500/15 text-amber-200 border-amber-500/35 font-medium'
-                                  : 'bg-transparent text-zinc-500 border-white/[0.05] hover:text-zinc-300'
-                              }`}
-                            >
-                              {cond}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })
+                          <div className="flex items-center rounded-md border border-line overflow-hidden shrink-0 bg-surface">
+                            {[-5, -1, 1, 5].map((delta) => (
+                              <button
+                                key={delta}
+                                onClick={() => adjustCombatantHp(c.id, delta)}
+                                className="h-7 w-8 text-xs font-mono tabular-nums text-fg-muted hover:bg-surface-2 hover:text-fg border-r border-line last:border-r-0 transition-colors"
+                                title={delta > 0 ? `Curar ${delta}` : `Dano ${-delta}`}
+                              >
+                                {delta > 0 ? `+${delta}` : delta}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Condições */}
+                        <div className="flex flex-wrap items-center gap-1">
+                          {CONDITIONS_LIST.map((cond) => {
+                            const active = c.conditions.includes(cond);
+                            return (
+                              <button
+                                key={cond}
+                                onClick={() => toggleCombatantCondition(c.id, cond)}
+                                aria-pressed={active}
+                                className={`h-6 px-2 rounded text-xs border transition-colors ${
+                                  active
+                                    ? 'bg-warning-soft text-warning border-transparent font-medium'
+                                    : 'text-fg-subtle border-line hover:text-fg hover:border-line-strong'
+                                }`}
+                              >
+                                {cond}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
               )}
             </div>
-          </div>
+          </section>
 
-          {/* Dice Tray */}
-          <div className="surface-panel rounded-xl p-3 space-y-2.5">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
-                <Dices className="w-3.5 h-3.5 text-zinc-400" />
-                <span>Dados</span>
-              </span>
-              <div className="flex items-center gap-1.5 text-[11px] font-mono">
-                <span className="text-zinc-500">Qtd</span>
+          {/* Dados */}
+          <section className="card overflow-hidden shrink-0">
+            <PanelHeader icon={Dices} title="Dados">
+              <label className="flex items-center gap-1.5 text-xs text-fg-subtle">
+                Qtd.
                 <input
                   type="number"
                   min={1}
                   max={20}
                   value={diceCount}
                   onChange={(e) => setDiceCount(Math.max(1, Number(e.target.value)))}
-                  className="input-clean w-10 px-1.5 py-0.5 rounded text-center tabular-nums"
+                  className="input h-7 w-12 px-1.5 text-center font-mono tabular-nums"
                 />
-                <span className="text-zinc-500">Mod</span>
+              </label>
+              <label className="flex items-center gap-1.5 text-xs text-fg-subtle ml-1">
+                Mod.
                 <input
                   type="number"
                   value={diceMod}
                   onChange={(e) => setDiceMod(Number(e.target.value))}
-                  className="input-clean w-11 px-1.5 py-0.5 rounded text-center tabular-nums"
+                  className="input h-7 w-12 px-1.5 text-center font-mono tabular-nums"
                 />
-              </div>
-            </div>
+              </label>
+            </PanelHeader>
 
-            <div className="grid grid-cols-7 gap-1">
-              {[4, 6, 8, 10, 12, 20, 100].map((sides) => (
-                <button
-                  key={sides}
-                  onClick={() =>
-                    rollDice(
-                      sides,
-                      diceCount,
-                      diceMod,
-                      diceLabel.trim() || `d${sides}`
-                    )
-                  }
-                  className={`py-1.5 rounded-lg font-mono text-xs font-medium transition-colors ${
-                    sides === 20 ? 'btn-solid' : 'btn-subtle'
-                  }`}
-                >
-                  d{sides}
-                </button>
-              ))}
-            </div>
-
-            {diceLogs.length > 0 && (
-              <div className="max-h-24 overflow-y-auto space-y-1 pr-1">
-                {diceLogs.slice(0, 5).map((log) => (
-                  <div
-                    key={log.id}
-                    className={`px-2.5 py-1.5 rounded-lg border text-xs flex items-center justify-between font-mono tabular-nums ${
-                      log.isCrit
-                        ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-200'
-                        : log.isFumble
-                        ? 'bg-rose-500/10 border-rose-500/30 text-rose-200'
-                        : 'bg-[#0e0e11] border-white/[0.05] text-zinc-300'
+            <div className="p-3 space-y-3">
+              <div className="grid grid-cols-7 gap-1">
+                {[4, 6, 8, 10, 12, 20, 100].map((sides) => (
+                  <button
+                    key={sides}
+                    onClick={() =>
+                      rollDice(sides, diceCount, diceMod, diceLabel.trim() || `d${sides}`)
+                    }
+                    className={`btn btn-sm px-0 font-mono ${
+                      sides === 20 ? 'btn-primary' : 'btn-secondary'
                     }`}
                   >
-                    <div className="truncate pr-2">
-                      <span className="text-zinc-500 text-[10px] mr-1.5">
-                        {log.timestamp}
-                      </span>
-                      <span className="text-zinc-200">{log.formula}</span>
-                      <span className="text-zinc-500 text-[10px] ml-1.5">
-                        [{log.rolls.join(', ')}]
-                      </span>
-                    </div>
-                    <span className="text-sm font-semibold text-zinc-100 shrink-0">
-                      {log.total}
-                    </span>
-                  </div>
+                    d{sides}
+                  </button>
                 ))}
               </div>
-            )}
-          </div>
+
+              {diceLogs.length > 0 && (
+                <ul className="max-h-28 overflow-y-auto rounded-md border border-line divide-y divide-line">
+                  {diceLogs.slice(0, 5).map((log) => (
+                    <li
+                      key={log.id}
+                      className="px-2.5 py-1.5 text-xs flex items-center justify-between gap-2"
+                    >
+                      <div className="truncate min-w-0">
+                        <span className="text-fg-subtle tabular-nums mr-2">{log.timestamp}</span>
+                        <span className="font-mono text-fg">{log.formula}</span>
+                        <span className="font-mono text-fg-subtle ml-1.5">
+                          [{log.rolls.join(', ')}]
+                        </span>
+                      </div>
+                      <span className="flex items-center gap-1.5 shrink-0">
+                        {log.isCrit && <span className="badge badge-success">Crítico</span>}
+                        {log.isFumble && <span className="badge badge-danger">Falha</span>}
+                        <span
+                          className={`font-mono text-sm font-semibold tabular-nums ${
+                            log.isCrit ? 'text-success' : log.isFumble ? 'text-danger' : 'text-fg'
+                          }`}
+                        >
+                          {log.total}
+                        </span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </section>
         </div>
 
-        {/* CENTER COLUMN: Session Scratchpad */}
-        <div className="lg:col-span-4 flex flex-col surface-panel rounded-xl overflow-hidden min-h-0">
-          <div className="px-3.5 py-2.5 border-b border-white/[0.06] flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <NotebookPen className="w-3.5 h-3.5 text-zinc-400" />
-              <h2 className="text-xs font-semibold text-zinc-100">
-                Notas da sessão
-              </h2>
-            </div>
+        {/* Coluna central: notas da sessão */}
+        <section className="lg:col-span-4 card flex flex-col overflow-hidden min-h-[320px] lg:min-h-0">
+          <PanelHeader icon={NotebookPen} title="Notas da sessão">
+            <button
+              onClick={() => handleQuickEmergencyGen('npc')}
+              className="btn btn-ghost btn-sm"
+              title="Gerar NPC e fixar"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              NPC
+            </button>
+            <button
+              onClick={() => handleQuickEmergencyGen('tavern')}
+              className="btn btn-ghost btn-sm"
+              title="Gerar local e fixar"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Local
+            </button>
+            <button
+              onClick={() => handleQuickEmergencyGen('loot')}
+              className="btn btn-ghost btn-sm"
+              title="Gerar item e fixar"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Item
+            </button>
+          </PanelHeader>
 
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => handleQuickEmergencyGen('npc')}
-                className="btn-subtle px-2 py-0.5 rounded text-[11px] font-mono"
-                title="Gerar NPC rápido e fixar"
-              >
-                +NPC
-              </button>
-              <button
-                onClick={() => handleQuickEmergencyGen('tavern')}
-                className="btn-subtle px-2 py-0.5 rounded text-[11px] font-mono"
-                title="Gerar local rápido e fixar"
-              >
-                +Local
-              </button>
-              <button
-                onClick={() => handleQuickEmergencyGen('loot')}
-                className="btn-subtle px-2 py-0.5 rounded text-[11px] font-mono"
-                title="Gerar relíquia rápida"
-              >
-                +Item
-              </button>
-            </div>
-          </div>
-
-          <form
-            onSubmit={handleAddNote}
-            className="p-3 border-b border-white/[0.06] bg-[#0e0e11]/60 space-y-2"
-          >
+          <form onSubmit={handleAddNote} className="p-3 border-b border-line space-y-2 shrink-0">
             <MentionTextarea
               value={noteInput}
               onChange={setNoteInput}
               rows={2}
-              placeholder="Registre eventos da mesa... Use @ para personagens e # para locais."
+              placeholder="Registre um evento. Use @ para personagens e # para locais."
             />
             <div className="flex justify-end">
-              <button
-                type="submit"
-                className="btn-solid px-3 py-1.5 rounded-lg text-xs inline-flex items-center gap-1.5"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Registrar nota</span>
+              <button type="submit" className="btn btn-primary btn-sm">
+                Registrar
               </button>
             </div>
           </form>
 
-          <div className="flex-1 overflow-y-auto p-3 space-y-2">
+          <div className="flex-1 overflow-y-auto">
             {scratchpad.length === 0 ? (
-              <div className="py-10 px-4 text-center space-y-1.5 text-zinc-500">
-                <NotebookPen className="w-5 h-5 mx-auto text-zinc-600" />
-                <p className="text-xs">Nenhuma nota registrada nesta sessão.</p>
+              <div className="py-10 px-4 text-center">
+                <NotebookPen className="w-5 h-5 mx-auto text-fg-subtle mb-2" />
+                <p className="text-[13px] text-fg-muted">Nenhuma nota nesta sessão.</p>
               </div>
             ) : (
-              scratchpad.map((line) => (
-                <div
-                  key={line.id}
-                  className="p-3 rounded-xl bg-[#0e0e11] border border-white/[0.06] space-y-2"
-                >
-                  <div className="flex items-center justify-between text-[10px] font-mono text-zinc-500">
-                    <span>{line.timestamp}</span>
-                    {line.convertedEntityHandle ? (
-                      <span className="text-emerald-400">
-                        Salvo como {line.convertedEntityHandle}
-                      </span>
-                    ) : (
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() =>
-                            convertScratchpadLineToEntity(line.id, 'npc')
-                          }
-                          className="btn-subtle px-1.5 py-0.5 rounded inline-flex items-center gap-1 text-[10px]"
-                          title="Transformar em entrada @NPC no códice"
-                        >
-                          <UserPlus className="w-2.5 h-2.5" />
-                          <span>@NPC</span>
-                        </button>
-                        <button
-                          onClick={() =>
-                            convertScratchpadLineToEntity(line.id, 'location')
-                          }
-                          className="btn-subtle px-1.5 py-0.5 rounded inline-flex items-center gap-1 text-[10px]"
-                          title="Transformar em entrada #Local no códice"
-                        >
-                          <MapPin className="w-2.5 h-2.5" />
-                          <span>#Local</span>
-                        </button>
-                        <button
-                          onClick={() => deleteScratchpadLine(line.id)}
-                          className="p-0.5 text-zinc-600 hover:text-rose-400 ml-0.5"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      </div>
-                    )}
-                  </div>
+              <ul className="divide-y divide-line">
+                {scratchpad.map((line) => (
+                  <li key={line.id} className="px-3 py-2.5 space-y-1 group">
+                    <div className="flex items-center justify-between gap-2 text-xs text-fg-subtle min-h-[28px]">
+                      <span className="tabular-nums">{line.timestamp}</span>
+                      {line.convertedEntityHandle ? (
+                        <span className="text-success">Salvo como {line.convertedEntityHandle}</span>
+                      ) : (
+                        <div className="flex items-center gap-0.5">
+                          <button
+                            onClick={() => convertScratchpadLineToEntity(line.id, 'npc')}
+                            className="btn btn-ghost h-7 px-2 text-xs gap-1"
+                            title="Criar entrada de NPC no códice"
+                          >
+                            <UserPlus className="w-3.5 h-3.5" />
+                            <span>NPC</span>
+                          </button>
+                          <button
+                            onClick={() => convertScratchpadLineToEntity(line.id, 'location')}
+                            className="btn btn-ghost h-7 px-2 text-xs gap-1"
+                            title="Criar entrada de local no códice"
+                          >
+                            <MapPin className="w-3.5 h-3.5" />
+                            <span>Local</span>
+                          </button>
+                          <button
+                            onClick={() => deleteScratchpadLine(line.id)}
+                            className="btn btn-danger-ghost btn-icon h-7 w-7"
+                            title="Excluir nota"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
 
-                  <div className="text-xs text-zinc-200 leading-relaxed">
-                    <MentionText text={line.text} />
-                  </div>
-                </div>
-              ))
+                    <div className="text-sm text-fg leading-relaxed">
+                      <MentionText text={line.text} />
+                    </div>
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
-        </div>
+        </section>
 
-        {/* RIGHT COLUMN: Pinned Reference Cards */}
-        <div className="lg:col-span-4 flex flex-col surface-panel rounded-xl overflow-hidden min-h-0">
-          <div className="px-3.5 py-2.5 border-b border-white/[0.06] flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Pin className="w-3.5 h-3.5 text-zinc-400" />
-              <h2 className="text-xs font-semibold text-zinc-100">
-                Referências fixadas ({pinnedEntities.length})
-              </h2>
-            </div>
-
+        {/* Coluna direita: referências fixadas */}
+        <section className="lg:col-span-4 card flex flex-col overflow-hidden min-h-[320px] lg:min-h-0">
+          <PanelHeader icon={Pin} title="Referências" meta={pinnedEntities.length}>
             {unpinnedEntities.length > 0 && (
               <select
                 value={pinSelectId}
@@ -662,9 +653,10 @@ export const SessionCockpitModule: React.FC = () => {
                     setPinSelectId('');
                   }
                 }}
-                className="input-clean px-2 py-1 rounded-md text-[11px]"
+                aria-label="Fixar entrada"
+                className="input h-8 w-auto max-w-[180px] text-[13px]"
               >
-                <option value="">+ Fixar entrada...</option>
+                <option value="">Fixar entrada…</option>
                 {unpinnedEntities.map((u) => (
                   <option key={u.id} value={u.id}>
                     {u.mentionPrefix}
@@ -673,116 +665,105 @@ export const SessionCockpitModule: React.FC = () => {
                 ))}
               </select>
             )}
-          </div>
+          </PanelHeader>
 
-          <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
+          <div className="flex-1 overflow-y-auto p-3 space-y-3">
             {pinnedEntities.length === 0 ? (
-              <div className="py-10 px-4 text-center space-y-1.5 text-zinc-500">
-                <Pin className="w-5 h-5 mx-auto text-zinc-600" />
-                <p className="text-xs">Nenhum cartão fixado.</p>
-                <p className="text-[11px] text-zinc-600">
+              <div className="py-10 px-4 text-center">
+                <Pin className="w-5 h-5 mx-auto text-fg-subtle mb-2" />
+                <p className="text-[13px] text-fg-muted">Nenhuma referência fixada.</p>
+                <p className="text-xs text-fg-subtle mt-0.5">
                   Fixe personagens, locais ou criaturas pelo menu acima.
                 </p>
               </div>
             ) : (
               pinnedEntities.map((ent) => (
-                <div
-                  key={ent.id}
-                  className="p-3.5 rounded-xl bg-[#0e0e11] border border-white/[0.06] space-y-2.5"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[11px] font-mono text-zinc-400">
-                          {ent.mentionPrefix}
-                          {ent.handle}
-                        </span>
-                        <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-white/[0.04] text-zinc-400">
-                          {ent.category}
-                        </span>
+                <div key={ent.id} className="rounded-md border border-line">
+                  <div className="p-3 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <h3 className="text-sm font-semibold text-fg truncate">{ent.name}</h3>
+                          <span className="badge shrink-0">
+                            {CATEGORY_LABELS[ent.category] ?? ent.category}
+                          </span>
+                        </div>
+                        <p className="text-xs text-fg-subtle truncate">
+                          <span className="font-mono">
+                            {ent.mentionPrefix}
+                            {ent.handle}
+                          </span>
+                          {ent.subtitle && <> · {ent.subtitle}</>}
+                        </p>
                       </div>
-                      <h3 className="text-base font-serif font-medium text-zinc-100 truncate mt-0.5">
-                        {ent.name}
-                      </h3>
-                      <p className="text-[11px] text-zinc-500 truncate">
-                        {ent.subtitle}
-                      </p>
+
+                      <button
+                        onClick={() => togglePinEntity(ent.id)}
+                        className="btn btn-ghost btn-icon h-7 w-7 shrink-0"
+                        title="Desafixar"
+                      >
+                        <PinOff className="w-3.5 h-3.5" />
+                      </button>
                     </div>
 
-                    <button
-                      onClick={() => togglePinEntity(ent.id)}
-                      className="btn-subtle p-1.5 rounded-md"
-                      title="Desafixar da cena"
-                    >
-                      <Pin className="w-3 h-3" />
-                    </button>
-                  </div>
+                    {ent.attributes.length > 0 && (
+                      <dl className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs">
+                        {ent.attributes.slice(0, 4).map((a) => (
+                          <div key={a.id} className="flex items-baseline gap-1 min-w-0">
+                            <dt className="text-fg-subtle shrink-0">{a.label}</dt>
+                            <dd className="text-fg truncate tabular-nums">{a.value}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    )}
 
-                  {ent.attributes.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {ent.attributes.slice(0, 4).map((a) => (
-                        <span
-                          key={a.id}
-                          className="px-2 py-0.5 rounded bg-white/[0.03] border border-white/[0.06] text-[10px] font-mono text-zinc-300"
-                        >
-                          <span className="text-zinc-500">{a.label}:</span> {a.value}
-                        </span>
-                      ))}
+                    <div className="text-[13px] text-fg-muted line-clamp-3 leading-relaxed">
+                      <MentionText text={ent.summary} />
                     </div>
-                  )}
-
-                  <div className="text-xs text-zinc-300 line-clamp-3 leading-relaxed">
-                    <MentionText text={ent.summary} />
                   </div>
 
                   {ent.secrets.length > 0 && (
-                    <div className="space-y-1.5 pt-2 border-t border-white/[0.06]">
+                    <ul className="border-t border-line divide-y divide-line bg-surface-2 rounded-b-md">
                       {ent.secrets.map((sec) => (
-                        <div
+                        <li
                           key={sec.id}
-                          className={`p-2.5 rounded-lg border text-[11px] flex items-start justify-between gap-2 ${
-                            sec.isRevealed
-                              ? 'bg-amber-500/[0.05] border-amber-500/25'
-                              : 'bg-[#121216] border-white/[0.06]'
-                          }`}
+                          className="px-3 py-2 text-xs flex items-start justify-between gap-2"
                         >
-                          <div className="space-y-0.5">
-                            <div className="font-medium text-zinc-200 flex items-center gap-1">
+                          <div className="space-y-0.5 min-w-0">
+                            <div className="font-medium text-fg flex items-center gap-1.5">
                               {sec.isRevealed ? (
-                                <Unlock className="w-3 h-3 text-amber-400 shrink-0" />
+                                <Unlock className="w-3.5 h-3.5 text-success shrink-0" />
                               ) : (
-                                <Lock className="w-3 h-3 text-rose-400/80 shrink-0" />
+                                <Lock className="w-3.5 h-3.5 text-fg-subtle shrink-0" />
                               )}
                               <span>{sec.title}</span>
                             </div>
-                            <div className="text-zinc-400 leading-relaxed">
+                            <div className="text-fg-muted leading-relaxed">
                               <MentionText text={sec.content} />
                             </div>
                           </div>
 
                           <button
-                            onClick={() =>
-                              revealEntitySecret(ent.id, sec.id, !sec.isRevealed)
-                            }
-                            className={`px-2 py-0.5 rounded text-[10px] shrink-0 ${
-                              sec.isRevealed ? 'btn-subtle' : 'btn-solid'
+                            onClick={() => revealEntitySecret(ent.id, sec.id, !sec.isRevealed)}
+                            className={`btn btn-sm h-7 shrink-0 ${
+                              sec.isRevealed ? 'btn-ghost' : 'btn-secondary'
                             }`}
                           >
                             {sec.isRevealed ? 'Ocultar' : 'Revelar'}
                           </button>
-                        </div>
+                        </li>
                       ))}
-                    </div>
+                    </ul>
                   )}
                 </div>
               ))
             )}
           </div>
-        </div>
+        </section>
       </div>
 
-      {/* BOTTOM AUDIO MIXER DOCK */}
-      <div className="surface-panel rounded-xl px-3 py-2 flex flex-wrap items-center justify-between gap-3">
+      {/* Mixer de áudio */}
+      <section className="card px-3 py-2 flex flex-wrap items-center gap-3 shrink-0">
         <div className="flex items-center gap-2">
           <button
             onClick={() => {
@@ -790,26 +771,19 @@ export const SessionCockpitModule: React.FC = () => {
               setIsMasterMuted(nextMute);
               soundEngine.setMasterMute(nextMute);
             }}
-            className={`p-1.5 rounded-lg border transition-colors ${
-              isMasterMuted
-                ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
-                : 'btn-subtle'
+            className={`btn btn-sm btn-icon ${
+              isMasterMuted ? 'btn-secondary text-danger' : 'btn-secondary'
             }`}
             title={isMasterMuted ? 'Reativar áudio' : 'Silenciar áudio'}
+            aria-pressed={isMasterMuted}
           >
-            {isMasterMuted ? (
-              <VolumeX className="w-4 h-4" />
-            ) : (
-              <Volume2 className="w-4 h-4" />
-            )}
+            {isMasterMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
           </button>
-          <span className="text-xs font-medium text-zinc-300 hidden sm:inline">
-            Ambiência
-          </span>
+          <span className="text-[13px] font-medium text-fg-muted">Ambiência</span>
         </div>
 
-        {/* Multi-Track Faders */}
-        <div className="flex flex-wrap items-center gap-1.5 flex-1 justify-center">
+        {/* Faixas */}
+        <div className="flex flex-wrap items-center gap-1.5 flex-1">
           {AMBIENCE_TRACKS.map((tr) => {
             const Icon = tr.icon;
             const isPlaying = Boolean(activeTracks[tr.id]);
@@ -818,47 +792,37 @@ export const SessionCockpitModule: React.FC = () => {
             return (
               <div
                 key={tr.id}
-                className={`px-2 py-1 rounded-lg border flex items-center gap-2 transition-colors ${
-                  isPlaying
-                    ? 'bg-white/[0.07] border-white/[0.16]'
-                    : 'bg-[#0e0e11] border-white/[0.06]'
+                className={`h-9 pl-1 pr-2.5 rounded-md border flex items-center gap-2 transition-colors ${
+                  isPlaying ? 'bg-accent-soft border-accent/40' : 'bg-surface border-line'
                 }`}
               >
                 <button
                   onClick={() => handleToggleTrack(tr.id)}
-                  className={`p-1 rounded-md transition-colors ${
-                    isPlaying
-                      ? 'bg-zinc-100 text-zinc-950'
-                      : 'text-zinc-400 hover:text-zinc-200'
+                  className={`h-7 px-2 rounded inline-flex items-center gap-1.5 text-xs font-medium transition-colors ${
+                    isPlaying ? 'text-accent' : 'text-fg-muted hover:text-fg hover:bg-surface-2'
                   }`}
+                  aria-pressed={isPlaying}
+                  title={isPlaying ? `Parar ${tr.label}` : `Tocar ${tr.label}`}
                 >
-                  <Icon className="w-3.5 h-3.5" />
+                  <Icon className="w-4 h-4" />
+                  <span>{tr.label}</span>
                 </button>
-                <div className="min-w-[82px]">
-                  <div className="text-[10px] font-medium text-zinc-200 leading-tight flex items-center gap-1">
-                    <span>{tr.label}</span>
-                    {isPlaying && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                    )}
-                  </div>
-                  <input
-                    type="range"
-                    min={0.05}
-                    max={1}
-                    step={0.05}
-                    value={vol}
-                    onChange={(e) =>
-                      handleVolumeChange(tr.id, parseFloat(e.target.value))
-                    }
-                    className="w-16 h-1 accent-zinc-200 cursor-pointer block mt-1"
-                  />
-                </div>
+                <input
+                  type="range"
+                  min={0.05}
+                  max={1}
+                  step={0.05}
+                  value={vol}
+                  onChange={(e) => handleVolumeChange(tr.id, parseFloat(e.target.value))}
+                  aria-label={`Volume ${tr.label}`}
+                  className="w-16 h-1 accent-[rgb(var(--accent))] cursor-pointer"
+                />
               </div>
             );
           })}
         </div>
 
-        {/* Clean One-Shot SFX Triggers */}
+        {/* Efeitos */}
         <div className="flex flex-wrap items-center gap-1">
           {SFX_BUTTONS.map((sfx) => {
             const Icon = sfx.icon;
@@ -866,15 +830,15 @@ export const SessionCockpitModule: React.FC = () => {
               <button
                 key={sfx.id}
                 onClick={() => soundEngine.playOneShot(sfx.id)}
-                className="btn-subtle px-2 py-1 rounded-lg text-[11px] inline-flex items-center gap-1.5 active:scale-95"
+                className="btn btn-ghost btn-sm"
               >
-                <Icon className="w-3 h-3 text-zinc-400" />
+                <Icon className="w-4 h-4" />
                 <span>{sfx.label}</span>
               </button>
             );
           })}
         </div>
-      </div>
+      </section>
     </div>
   );
 };

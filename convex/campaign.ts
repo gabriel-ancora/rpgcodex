@@ -1,22 +1,146 @@
-import { query, mutation, MutationCtx } from "./_generated/server";
+import { query, mutation, internalMutation, QueryCtx, MutationCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { Doc } from "./_generated/dataModel";
 import { v } from "convex/values";
 import {
-  matchesCampaign,
-  normalizeCampaignId,
-  getSessionUser,
-  assertDmPermission,
+  requireUser,
+  requireDm,
+  requireMember,
+  memberOrNull,
+  canonicalCampaignId,
+  campaignKeys,
+  collectByCampaign,
+  assertUploadOwnedBy,
+  CampaignScopedTable,
+  SessionUser,
 } from "./lib/tenancy";
+import { ensureCampaignDefaults } from "./lib/defaults";
 
 /**
- * Campanhas, Multi-Tenancy, Códigos de Convite & Gestão de Estúdio (Produção)
+ * Campanhas, participação (campaignMembers), códigos de convite e exclusão em lotes.
  */
+
+const INVITE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+const PURGE_BATCH = 100;
+
+function randomFromAlphabet(length: number): string {
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  let out = "";
+  for (let i = 0; i < length; i++) {
+    // 248 = 8 * 31: rejeita bytes >= 248 para evitar viés de módulo.
+    let b = bytes[i];
+    while (b >= 248) {
+      const extra = new Uint8Array(1);
+      crypto.getRandomValues(extra);
+      b = extra[0];
+    }
+    out += INVITE_ALPHABET[b % INVITE_ALPHABET.length];
+  }
+  return out;
+}
+
+async function generateUniqueInviteCode(ctx: MutationCtx): Promise<string> {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const raw = randomFromAlphabet(8);
+    const code = `${raw.slice(0, 4)}-${raw.slice(4)}`;
+    const clash = await ctx.db
+      .query("campaigns")
+      .withIndex("by_invite_code", (q) => q.eq("inviteCode", code))
+      .first();
+    if (!clash) return code;
+  }
+  throw new Error("Não foi possível gerar um código de convite. Tente novamente.");
+}
+
+async function generateUniqueSlug(ctx: MutationCtx): Promise<string> {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const bytes = new Uint8Array(8);
+    crypto.getRandomValues(bytes);
+    const slug = `camp-${Array.from(bytes)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("")}`;
+    const clash = await ctx.db
+      .query("campaigns")
+      .withIndex("by_slug", (q) => q.eq("slugId", slug))
+      .first();
+    if (!clash) return slug;
+  }
+  throw new Error("Não foi possível criar a campanha. Tente novamente.");
+}
+
+function normalizeInviteCode(raw: string): string {
+  return raw.trim().toUpperCase().replace(/\s+/g, "");
+}
+
+async function playerIdsOf(ctx: QueryCtx, camp: Doc<"campaigns">): Promise<Set<string>> {
+  const ids = new Set<string>(camp.memberUserIds || []);
+  const rows = await ctx.db
+    .query("campaignMembers")
+    .withIndex("by_campaign", (q) => q.eq("campaignDocId", camp._id))
+    .collect();
+  for (const r of rows) ids.add(r.userId);
+  if (camp.dmUserId) ids.delete(camp.dmUserId);
+  return ids;
+}
+
+async function toSummary(ctx: QueryCtx, camp: Doc<"campaigns">, user: SessionUser) {
+  const isDm = Boolean(camp.dmUserId) && camp.dmUserId === user.id;
+  const resolvedCover = camp.coverStorageId
+    ? (await ctx.storage.getUrl(camp.coverStorageId)) || camp.coverUrl || ""
+    : camp.coverUrl || "";
+  return {
+    id: canonicalCampaignId(camp),
+    title: camp.name,
+    synopsis: camp.synopsis || camp.description || "",
+    worldContext: camp.worldContext || "",
+    system: camp.system || "D&D 5.5e (2024)",
+    tone: camp.tone || "Fantasia",
+    coverUrl: resolvedCover,
+    coverStorageId: camp.coverStorageId,
+    // O código de convite só é exposto ao Mestre.
+    inviteCode: isDm ? camp.inviteCode || "" : "",
+    dmName: camp.dmName || "Mestre",
+    dmUserId: camp.dmUserId || "",
+    isDm,
+    activePlayersCount: (await playerIdsOf(ctx, camp)).size,
+    sessionsPlayed: camp.sessionsPlayed ?? 0,
+    // ISO 8601; a formatação para exibição é responsabilidade do cliente.
+    updatedAt: camp.updatedAt,
+  };
+}
+
+async function addMembership(
+  ctx: MutationCtx,
+  camp: Doc<"campaigns">,
+  userId: string,
+  role: "dm" | "player"
+) {
+  const existing = await ctx.db
+    .query("campaignMembers")
+    .withIndex("by_campaign_user", (q) => q.eq("campaignDocId", camp._id).eq("userId", userId))
+    .first();
+  if (!existing) {
+    await ctx.db.insert("campaignMembers", {
+      campaignDocId: camp._id,
+      userId,
+      role,
+      joinedAt: new Date().toISOString(),
+    });
+  }
+  const members = camp.memberUserIds || [];
+  if (!members.includes(userId)) {
+    await ctx.db.patch(camp._id, { memberUserIds: [...members, userId] });
+  }
+}
+
 export const getStatus = query({
-  args: { campaignId: v.optional(v.string()) },
+  args: { sessionToken: v.string(), campaignId: v.string() },
   handler: async (ctx, args) => {
-    const normId = normalizeCampaignId(args.campaignId);
-    if (!normId) {
+    const access = await memberOrNull(ctx, args.sessionToken, args.campaignId);
+    if (!access) {
       return {
-        connected: true,
+        connected: false,
         entityCount: 0,
         mapCount: 0,
         frontCount: 0,
@@ -25,33 +149,22 @@ export const getStatus = query({
         sheetCount: 0,
       };
     }
-
-    const entities = (await ctx.db.query("entities").collect()).filter((e) =>
-      matchesCampaign(e.campaignId, normId)
-    );
-    const maps = (await ctx.db.query("campaignMaps").collect()).filter((m) =>
-      matchesCampaign(m.campaignId, normId)
-    );
-    const fronts = (await ctx.db.query("threatFronts").collect()).filter((f) =>
-      matchesCampaign(f.campaignId, normId)
-    );
-    const quests = (await ctx.db.query("quests").collect()).filter((q) =>
-      matchesCampaign(q.campaignId, normId)
-    );
-    const combatants = (await ctx.db.query("combatants").collect()).filter(
-      (c) => matchesCampaign(c.campaignId, normId)
-    );
-    const sheets = (await ctx.db.query("characterSheets").collect()).filter(
-      (s) => matchesCampaign(s.campaignId, normId)
-    );
+    const k = access.keys;
+    const asDm = access.isDm;
+    const entities = await collectByCampaign(ctx, "entities", k);
+    const maps = await collectByCampaign(ctx, "campaignMaps", k);
+    const fronts = await collectByCampaign(ctx, "threatFronts", k);
+    const quests = await collectByCampaign(ctx, "quests", k);
+    const combatants = await collectByCampaign(ctx, "combatants", k);
+    const sheets = await collectByCampaign(ctx, "characterSheets", k);
 
     return {
       connected: true,
-      entityCount: entities.length,
-      mapCount: maps.length,
-      frontCount: fronts.length,
-      questCount: quests.length,
-      combatantCount: combatants.length,
+      entityCount: asDm ? entities.length : entities.filter((e) => e.isPublicToPlayers).length,
+      mapCount: asDm ? maps.length : maps.filter((m) => m.isPublicToPlayers !== false).length,
+      frontCount: asDm ? fronts.length : fronts.filter((f) => !f.isSecret).length,
+      questCount: asDm ? quests.length : quests.filter((q) => q.isPublic).length,
+      combatantCount: asDm ? combatants.length : combatants.filter((c) => !c.isHidden).length,
       sheetCount: sheets.length,
     };
   },
@@ -59,54 +172,46 @@ export const getStatus = query({
 
 export const list = query({
   args: {
-    sessionToken: v.optional(v.string()),
+    sessionToken: v.string(),
   },
   handler: async (ctx, args) => {
-    const user = await getSessionUser(ctx, args.sessionToken);
+    const user = await requireUser(ctx, args.sessionToken).catch(() => null);
     if (!user) return [];
 
-    const all = await ctx.db.query("campaigns").collect();
+    const byId = new Map<string, Doc<"campaigns">>();
+    const asDm = await ctx.db
+      .query("campaigns")
+      .withIndex("by_dm", (q) => q.eq("dmUserId", user.id))
+      .collect();
+    for (const c of asDm) byId.set(c._id, c);
 
-    const visible = all.filter((c) => {
-      if (c.dmUserId === user.id) return true;
-      if (c.memberUserIds?.includes(user.id)) return true;
-      return false;
-    });
+    const memberships = await ctx.db
+      .query("campaignMembers")
+      .withIndex("by_user", (q) => q.eq("userId", user.id))
+      .collect();
+    for (const m of memberships) {
+      if (byId.has(m.campaignDocId)) continue;
+      const c = await ctx.db.get(m.campaignDocId);
+      if (c) byId.set(c._id, c);
+    }
 
-    return await Promise.all(
-      visible.map(async (c) => {
-        const playersOnly = (c.memberUserIds || []).filter(
-          (uid) => uid !== c.dmUserId
-        );
-        const resolvedCover = c.coverStorageId
-          ? (await ctx.storage.getUrl(c.coverStorageId)) || c.coverUrl || ""
-          : c.coverUrl || "";
-        return {
-          id: c.slugId || c._id,
-          title: c.name,
-          synopsis: c.synopsis || c.description || "",
-          worldContext: c.worldContext || "",
-          system: c.system || "D&D 5.5e (2024)",
-          tone: c.tone || "Fantasia",
-          coverUrl: resolvedCover,
-          coverStorageId: c.coverStorageId,
-          inviteCode: c.inviteCode || "",
-          dmName: c.dmName || "Mestre",
-          dmUserId: c.dmUserId || "",
-          isDm: c.dmUserId ? c.dmUserId === user.id : user.role === "dm",
-          activePlayersCount: playersOnly.length,
-          sessionsPlayed: c.sessionsPlayed ?? 0,
-          updatedAt: c.updatedAt,
-        };
-      })
+    // Compatibilidade: participações antigas gravadas apenas em `memberUserIds`.
+    // Pode ser removido depois de executar internal.campaign.backfillMembers.
+    const legacy = await ctx.db.query("campaigns").collect();
+    for (const c of legacy) {
+      if (!byId.has(c._id) && (c.memberUserIds || []).includes(user.id)) byId.set(c._id, c);
+    }
+
+    const summaries = await Promise.all(
+      Array.from(byId.values()).map((c) => toSummary(ctx, c, user))
     );
+    return summaries.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
   },
 });
 
 export const create = mutation({
   args: {
-    sessionToken: v.optional(v.string()),
-    slugId: v.optional(v.string()),
+    sessionToken: v.string(),
     title: v.string(),
     synopsis: v.string(),
     worldContext: v.optional(v.string()),
@@ -114,21 +219,29 @@ export const create = mutation({
     tone: v.string(),
     coverUrl: v.string(),
     coverStorageId: v.optional(v.id("_storage")),
-    inviteCode: v.string(),
-    dmName: v.string(),
+    // Ignorados (mantidos por compatibilidade): slug e código são gerados no servidor,
+    // e o nome do Mestre vem da sessão.
+    slugId: v.optional(v.string()),
+    inviteCode: v.optional(v.string()),
+    dmName: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const user = await getSessionUser(ctx, args.sessionToken);
-    if (!user) {
-      throw new Error("Faça login para criar uma campanha.");
+    const user = await requireUser(ctx, args.sessionToken);
+    const title = args.title.trim();
+    if (title.length < 1 || title.length > 120) {
+      throw new Error("Informe um título de campanha válido (até 120 caracteres).");
+    }
+    if (args.coverStorageId) {
+      await assertUploadOwnedBy(ctx, args.coverStorageId, user.id);
     }
 
     const now = new Date().toISOString();
-    const cleanCode = args.inviteCode.trim().toUpperCase();
+    const slugId = await generateUniqueSlug(ctx);
+    const inviteCode = await generateUniqueInviteCode(ctx);
 
     const insertedId = await ctx.db.insert("campaigns", {
-      slugId: args.slugId,
-      name: args.title.trim(),
+      slugId,
+      name: title,
       description: args.synopsis,
       synopsis: args.synopsis,
       worldContext: args.worldContext || "",
@@ -136,88 +249,33 @@ export const create = mutation({
       tone: args.tone,
       coverUrl: args.coverUrl,
       coverStorageId: args.coverStorageId,
-      inviteCode: cleanCode,
+      inviteCode,
       dmUserId: user.id,
-      dmName: user.name || args.dmName,
+      dmName: user.name,
       memberUserIds: [user.id],
       sessionsPlayed: 0,
       createdAt: now,
-      updatedAt: new Date().toLocaleDateString("pt-BR"),
+      updatedAt: now,
     });
+    const camp = await ctx.db.get(insertedId);
+    if (!camp) throw new Error("Registro não encontrado.");
 
-    const effectiveCampaignId = args.slugId || insertedId;
-    if (!args.slugId) {
-      await ctx.db.patch(insertedId, { slugId: insertedId });
-    }
+    await addMembership(ctx, camp, user.id, "dm");
+    await ensureCampaignDefaults(ctx, slugId, [slugId], title);
 
-    // Inicializa Calendário e Recursos zerados isolados para esta nova campanha
-    await ctx.db.insert("calendars", {
-      campaignId: effectiveCampaignId,
-      calendarName: `Calendário — ${args.title.trim()}`,
-      epochName: "Era Atual",
-      currentYear: 1,
-      currentMonthIndex: 0,
-      currentDay: 1,
-      weekdays: [
-        "Solis",
-        "Lunaris",
-        "Ferrum",
-        "Cineris",
-        "Vespera",
-        "Umbra",
-        "Sacrum",
-      ],
-      months: [
-        { id: "m1", name: "Alvorada", days: 30, season: "Primavera" },
-        { id: "m2", name: "Solstício", days: 30, season: "Verão" },
-        { id: "m3", name: "Colheita", days: 30, season: "Outono" },
-        { id: "m4", name: "Inverno", days: 30, season: "Inverno" },
-      ],
-      moons: [
-        {
-          id: "moon-1",
-          name: "Lua Principal",
-          cycleDays: 28,
-          offset: 0,
-          color: "#e4e4e7",
-          lore: "Ciclo lunar padrão do cenário.",
-        },
-      ],
-      availableEras: ["Era Antiga", "Era Atual"],
-    });
-
-    await ctx.db.insert("partyResources", {
-      campaignId: effectiveCampaignId,
-      gold: 0,
-      silver: 0,
-      copper: 0,
-      rations: 0,
-      torches: 0,
-      healerKits: 0,
-      items: [],
-      stronghold: {
-        name: "Base da Companhia",
-        type: "Refúgio",
-        locationHandle: "",
-        integrity: 100,
-        maxIntegrity: 100,
-        upkeepPerMonth: "0 PO",
-        description: "Configure o nome, descrição e melhorias da base de operações do grupo.",
-        upgrades: [],
-      },
-    });
-
+    const fresh = (await ctx.db.get(insertedId))!;
     return {
-      id: effectiveCampaignId,
-      inviteCode: cleanCode,
-      title: args.title.trim(),
+      id: slugId,
+      inviteCode,
+      title,
+      campaign: await toSummary(ctx, fresh, user),
     };
   },
 });
 
 export const update = mutation({
   args: {
-    sessionToken: v.optional(v.string()),
+    sessionToken: v.string(),
     campaignId: v.string(),
     title: v.optional(v.string()),
     synopsis: v.optional(v.string()),
@@ -230,21 +288,18 @@ export const update = mutation({
     sessionsPlayed: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    await assertDmPermission(ctx, args.sessionToken, args.campaignId);
+    const { camp, user } = await requireDm(ctx, args.sessionToken, args.campaignId);
 
-    const bySlug = await ctx.db
-      .query("campaigns")
-      .withIndex("by_slug", (q) => q.eq("slugId", args.campaignId))
-      .first();
-    const docId =
-      bySlug?._id || ctx.db.normalizeId("campaigns", args.campaignId);
-    if (!docId) return;
-    const existingCamp = await ctx.db.get(docId);
-
-    const patch: Record<string, unknown> = {
-      updatedAt: new Date().toLocaleDateString("pt-BR"),
+    const patch: Partial<Doc<"campaigns">> = {
+      updatedAt: new Date().toISOString(),
     };
-    if (args.title !== undefined) patch.name = args.title.trim();
+    if (args.title !== undefined) {
+      const title = args.title.trim();
+      if (title.length < 1 || title.length > 120) {
+        throw new Error("Informe um título de campanha válido (até 120 caracteres).");
+      }
+      patch.name = title;
+    }
     if (args.synopsis !== undefined) {
       patch.synopsis = args.synopsis;
       patch.description = args.synopsis;
@@ -253,201 +308,244 @@ export const update = mutation({
     if (args.system !== undefined) patch.system = args.system;
     if (args.tone !== undefined) patch.tone = args.tone;
     if (args.clearCoverImage) {
-      if (existingCamp?.coverStorageId) {
-        await ctx.storage.delete(existingCamp.coverStorageId).catch(() => {});
+      if (camp.coverStorageId) {
+        await ctx.storage.delete(camp.coverStorageId).catch(() => {});
       }
       patch.coverUrl = "";
       patch.coverStorageId = undefined;
     } else {
-      if (args.coverStorageId !== undefined) {
-        if (
-          existingCamp?.coverStorageId &&
-          existingCamp.coverStorageId !== args.coverStorageId
-        ) {
-          await ctx.storage.delete(existingCamp.coverStorageId).catch(() => {});
+      if (args.coverStorageId !== undefined && args.coverStorageId !== camp.coverStorageId) {
+        await assertUploadOwnedBy(ctx, args.coverStorageId, user.id);
+        if (camp.coverStorageId) {
+          await ctx.storage.delete(camp.coverStorageId).catch(() => {});
         }
         patch.coverStorageId = args.coverStorageId;
       }
       if (args.coverUrl !== undefined) patch.coverUrl = args.coverUrl;
     }
-    if (args.sessionsPlayed !== undefined)
-      patch.sessionsPlayed = Math.max(0, args.sessionsPlayed);
+    if (args.sessionsPlayed !== undefined) {
+      patch.sessionsPlayed = Math.max(0, Math.floor(args.sessionsPlayed));
+    }
 
-    await ctx.db.patch(docId, patch);
+    await ctx.db.patch(camp._id, patch);
   },
 });
 
 export const joinByInviteCode = mutation({
   args: {
+    sessionToken: v.string(),
     inviteCode: v.string(),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const clean = args.inviteCode.trim().toUpperCase();
-    const user = await getSessionUser(ctx, args.sessionToken);
-    if (!user) {
-      throw new Error("Faça login para ingressar em uma campanha.");
+    const user = await requireUser(ctx, args.sessionToken);
+    const clean = normalizeInviteCode(args.inviteCode);
+    if (clean.length < 4 || clean.length > 32) {
+      return { found: false as const, campaign: null };
     }
 
-    const found = await ctx.db
+    let found = await ctx.db
       .query("campaigns")
       .withIndex("by_invite_code", (q) => q.eq("inviteCode", clean))
       .first();
+    // Aceita o código digitado sem o hífen (XXXXXXXX -> XXXX-XXXX).
+    if (!found && /^[A-Z0-9]{8}$/.test(clean)) {
+      const withHyphen = `${clean.slice(0, 4)}-${clean.slice(4)}`;
+      found = await ctx.db
+        .query("campaigns")
+        .withIndex("by_invite_code", (q) => q.eq("inviteCode", withHyphen))
+        .first();
+    }
 
     if (!found) {
-      return { found: false, campaign: null };
+      return { found: false as const, campaign: null };
     }
 
-    const existingMembers = found.memberUserIds || [];
-    const nextMembers = existingMembers.includes(user.id)
-      ? existingMembers
-      : [...existingMembers, user.id];
-
-    if (!existingMembers.includes(user.id)) {
-      await ctx.db.patch(found._id, {
-        memberUserIds: nextMembers,
-      });
-    }
-
-    const playersOnly = nextMembers.filter((uid) => uid !== found.dmUserId);
-    const resolvedCover = found.coverStorageId
-      ? (await ctx.storage.getUrl(found.coverStorageId)) || found.coverUrl || ""
-      : found.coverUrl || "";
+    const role = found.dmUserId === user.id ? "dm" : "player";
+    await addMembership(ctx, found, user.id, role);
+    const fresh = (await ctx.db.get(found._id))!;
 
     return {
-      found: true,
-      campaign: {
-        id: found.slugId || found._id,
-        title: found.name,
-        synopsis: found.synopsis || found.description || "",
-        worldContext: found.worldContext || "",
-        system: found.system || "D&D 5.5e (2024)",
-        tone: found.tone || "Fantasia",
-        coverUrl: resolvedCover,
-        coverStorageId: found.coverStorageId,
-        inviteCode: found.inviteCode || clean,
-        dmName: found.dmName || "Mestre",
-        dmUserId: found.dmUserId || "",
-        isDm: found.dmUserId === user.id,
-        activePlayersCount: playersOnly.length,
-        sessionsPlayed: found.sessionsPlayed ?? 0,
-        updatedAt: found.updatedAt,
-      },
+      found: true as const,
+      campaign: await toSummary(ctx, fresh, user),
     };
   },
 });
 
-async function clearCampaignDataInternal(
-  ctx: MutationCtx,
-  targetCampId: string
-) {
-  const normId = normalizeCampaignId(targetCampId);
-  if (!normId) return;
+/** Jogador deixa a campanha. O Mestre não pode sair da própria campanha (deve excluí-la). */
+export const leave = mutation({
+  args: { sessionToken: v.string(), campaignId: v.string() },
+  handler: async (ctx, args) => {
+    const { camp, user, isDm } = await requireMember(ctx, args.sessionToken, args.campaignId);
+    if (isDm) {
+      throw new Error("O Mestre não pode sair da própria campanha.");
+    }
+    const rows = await ctx.db
+      .query("campaignMembers")
+      .withIndex("by_campaign_user", (q) => q.eq("campaignDocId", camp._id).eq("userId", user.id))
+      .collect();
+    for (const r of rows) await ctx.db.delete(r._id);
+    const members = camp.memberUserIds || [];
+    if (members.includes(user.id)) {
+      await ctx.db.patch(camp._id, { memberUserIds: members.filter((id) => id !== user.id) });
+    }
+  },
+});
 
-  const entities = (await ctx.db.query("entities").collect()).filter((e) =>
-    matchesCampaign(e.campaignId, normId)
-  );
-  for (const ent of entities) {
+// ============================================================================
+// Exclusão de campanha em lotes
+// ============================================================================
+
+const PURGE_STEPS: CampaignScopedTable[] = [
+  "entities",
+  "campaignMaps",
+  "relationships",
+  "graphPositions",
+  "manualGraphNodes",
+  "calendars",
+  "timelineEvents",
+  "threatFronts",
+  "mysteryScenes",
+  "combatants",
+  "combatState",
+  "diceRolls",
+  "scratchpadNotes",
+  "quests",
+  "journalEntries",
+  "personalJournalNotes",
+  "partyResources",
+  "characterSheets",
+];
+
+async function purgeRow(ctx: MutationCtx, table: CampaignScopedTable, row: { _id: unknown }) {
+  if (table === "entities") {
+    const ent = row as Doc<"entities">;
     const secrets = await ctx.db
       .query("entitySecrets")
       .withIndex("by_entity", (q) => q.eq("entityId", ent._id))
       .collect();
     for (const s of secrets) await ctx.db.delete(s._id);
-
     const attrs = await ctx.db
       .query("entityAttributes")
       .withIndex("by_entity", (q) => q.eq("entityId", ent._id))
       .collect();
     for (const a of attrs) await ctx.db.delete(a._id);
-
     await ctx.db.delete(ent._id);
+    return;
   }
-
-  const maps = (await ctx.db.query("campaignMaps").collect()).filter((m) =>
-    matchesCampaign(m.campaignId, normId)
-  );
-  for (const m of maps) {
-    if (m.storageId) {
-      await ctx.storage.delete(m.storageId);
-    }
+  if (table === "campaignMaps") {
+    const map = row as Doc<"campaignMaps">;
+    if (map.storageId) await ctx.storage.delete(map.storageId).catch(() => {});
     const pins = await ctx.db
       .query("mapPins")
-      .withIndex("by_map", (q) => q.eq("mapId", m._id))
+      .withIndex("by_map", (q) => q.eq("mapId", map._id))
       .collect();
     for (const p of pins) await ctx.db.delete(p._id);
-    await ctx.db.delete(m._id);
+    await ctx.db.delete(map._id);
+    return;
   }
-
-  const scopedTables = [
-    "relationships",
-    "graphPositions",
-    "manualGraphNodes",
-    "calendars",
-    "timelineEvents",
-    "threatFronts",
-    "mysteryScenes",
-    "combatants",
-    "combatState",
-    "diceRolls",
-    "scratchpadNotes",
-    "quests",
-    "journalEntries",
-    "personalJournalNotes",
-    "partyResources",
-    "characterSheets",
-  ] as const;
-
-  for (const table of scopedTables) {
-    const records = await ctx.db.query(table).collect();
-    for (const rec of records) {
-      if (
-        matchesCampaign((rec as { campaignId?: string }).campaignId, normId)
-      ) {
-        await ctx.db.delete(rec._id);
-      }
-    }
+  if (table === "characterSheets") {
+    // Fichas pertencem aos jogadores: apenas desvincula da campanha excluída.
+    const sheet = row as Doc<"characterSheets">;
+    await ctx.db.patch(sheet._id, {
+      campaignId: "",
+      campaignTitle: "",
+      updatedAt: new Date().toISOString(),
+    });
+    return;
   }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await ctx.db.delete(row._id as any);
 }
 
-export const remove = mutation({
-  args: {
-    campaignId: v.string(),
-    sessionToken: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    await assertDmPermission(ctx, args.sessionToken, args.campaignId);
-    await clearCampaignDataInternal(ctx, args.campaignId);
+export const purgeCampaignData = internalMutation({
+  args: { keys: v.array(v.string()), step: v.number() },
+  handler: async (ctx, args): Promise<void> => {
+    const keys = args.keys.filter((k) => k.trim().length > 0);
+    if (keys.length === 0 || args.step >= PURGE_STEPS.length) return;
+    const table = PURGE_STEPS[args.step];
 
-    const bySlug = await ctx.db
-      .query("campaigns")
-      .withIndex("by_slug", (q) => q.eq("slugId", args.campaignId))
-      .first();
-    if (bySlug) {
-      if (bySlug.coverStorageId) {
-        await ctx.storage.delete(bySlug.coverStorageId).catch(() => {});
+    let processed = 0;
+    for (const key of keys) {
+      if (processed >= PURGE_BATCH) break;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rows = await (ctx.db.query(table) as any)
+        .withIndex("by_campaign", (q: any) => q.eq("campaignId", key))
+        .take(PURGE_BATCH - processed);
+      for (const row of rows) {
+        await purgeRow(ctx, table, row);
+        processed++;
       }
-      await ctx.db.delete(bySlug._id);
-      return;
     }
 
-    const docId = ctx.db.normalizeId("campaigns", args.campaignId);
-    if (docId) {
-      const campDoc = await ctx.db.get(docId);
-      if (campDoc?.coverStorageId) {
-        await ctx.storage.delete(campDoc.coverStorageId).catch(() => {});
-      }
-      await ctx.db.delete(docId);
+    const nextStep = processed >= PURGE_BATCH ? args.step : args.step + 1;
+    if (nextStep < PURGE_STEPS.length) {
+      await ctx.scheduler.runAfter(0, internal.campaign.purgeCampaignData, {
+        keys,
+        step: nextStep,
+      });
     }
   },
 });
 
-export const clearAll = mutation({
+export const remove = mutation({
   args: {
+    sessionToken: v.string(),
     campaignId: v.string(),
-    sessionToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    await assertDmPermission(ctx, args.sessionToken, args.campaignId);
-    await clearCampaignDataInternal(ctx, args.campaignId);
+    const { camp } = await requireDm(ctx, args.sessionToken, args.campaignId);
+    const keys = campaignKeys(camp);
+
+    const memberships = await ctx.db
+      .query("campaignMembers")
+      .withIndex("by_campaign", (q) => q.eq("campaignDocId", camp._id))
+      .collect();
+    for (const m of memberships) await ctx.db.delete(m._id);
+
+    if (camp.coverStorageId) {
+      await ctx.storage.delete(camp.coverStorageId).catch(() => {});
+    }
+    await ctx.db.delete(camp._id);
+
+    // Os dados da campanha são removidos em lotes, fora desta transação.
+    await ctx.scheduler.runAfter(0, internal.campaign.purgeCampaignData, { keys, step: 0 });
+  },
+});
+
+/**
+ * Migração: copia `campaigns.memberUserIds` para a tabela `campaignMembers`.
+ * Executar uma vez pelo painel (internal.campaign.backfillMembers); processa em páginas.
+ */
+export const backfillMembers = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, args): Promise<void> => {
+    const page = await ctx.db
+      .query("campaigns")
+      .paginate({ cursor: args.cursor ?? null, numItems: 50 });
+    for (const camp of page.page) {
+      const ids = new Set(camp.memberUserIds || []);
+      if (camp.dmUserId) ids.add(camp.dmUserId);
+      for (const userId of ids) {
+        const existing = await ctx.db
+          .query("campaignMembers")
+          .withIndex("by_campaign_user", (q) =>
+            q.eq("campaignDocId", camp._id).eq("userId", userId)
+          )
+          .first();
+        if (!existing) {
+          await ctx.db.insert("campaignMembers", {
+            campaignDocId: camp._id,
+            userId,
+            role: userId === camp.dmUserId ? "dm" : "player",
+            joinedAt: camp.createdAt,
+          });
+        }
+      }
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.campaign.backfillMembers, {
+        cursor: page.continueCursor,
+      });
+    }
   },
 });

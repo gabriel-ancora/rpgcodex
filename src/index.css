@@ -2,125 +2,266 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ==========================================================================
+   Design tokens
+   Valores em canais RGB para permitir opacidade (`bg-accent/10`).
+   ========================================================================== */
 @layer base {
   :root {
+    color-scheme: light;
+    --canvas: 245 245 243;
+    --surface: 255 255 255;
+    --surface-2: 240 240 237;
+    --surface-3: 230 230 226;
+    --line: 224 224 219;
+    --line-strong: 202 202 195;
+    --fg: 28 28 26;
+    --fg-muted: 84 84 79;
+    --fg-subtle: 128 128 121;
+    --accent: 140 30 34;
+    --accent-hover: 117 22 26;
+    --accent-fg: 255 255 255;
+    --accent-soft: 248 235 234;
+    --success: 21 110 68;
+    --success-soft: 229 243 235;
+    --warning: 154 94 6;
+    --warning-soft: 251 242 220;
+    --danger: 180 32 32;
+    --danger-soft: 251 233 232;
+    --info: 31 82 158;
+    --info-soft: 231 239 250;
+  }
+
+  :root.dark {
     color-scheme: dark;
+    --canvas: 18 18 20;
+    --surface: 25 25 28;
+    --surface-2: 32 32 36;
+    --surface-3: 42 42 47;
+    --line: 46 46 52;
+    --line-strong: 66 66 74;
+    --fg: 234 234 231;
+    --fg-muted: 170 170 164;
+    --fg-subtle: 122 122 117;
+    --accent: 214 86 84;
+    --accent-hover: 228 108 106;
+    --accent-fg: 255 255 255;
+    --accent-soft: 58 28 29;
+    --success: 86 190 134;
+    --success-soft: 22 46 33;
+    --warning: 226 168 64;
+    --warning-soft: 54 41 17;
+    --danger: 238 104 102;
+    --danger-soft: 62 26 26;
+    --info: 116 164 236;
+    --info-soft: 25 38 62;
+  }
+
+  html {
+    font-size: 16px;
   }
 
   body {
-    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-    background-color: #0b0b0d;
-    color: #ededef;
-    letter-spacing: -0.01em;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    @apply bg-canvas text-fg antialiased;
+    font-family: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    font-size: 0.875rem;
+    line-height: 1.5;
   }
 
   h1, h2, h3, h4 {
-    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-    letter-spacing: -0.025em;
+    @apply text-fg;
+    font-weight: 600;
+    letter-spacing: -0.01em;
   }
 
-  /* Harmonize legacy slate-950 backgrounds to warm carbon */
-  .bg-slate-950 {
-    background-color: #0b0b0d !important;
-  }
-
-  input, select, textarea {
+  input, select, textarea, button {
     font-family: inherit;
   }
+
+  ::selection {
+    background: rgb(var(--accent) / 0.18);
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--accent) / 0.55);
+    outline-offset: 2px;
+  }
 }
 
+/* ==========================================================================
+   Componentes base
+   ========================================================================== */
 @layer components {
-  .surface-panel {
-    background-color: #111114;
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  /* Superfícies */
+  .card {
+    @apply bg-surface border border-line rounded-lg;
+  }
+  .card-muted {
+    @apply bg-surface-2 border border-line rounded-lg;
   }
 
-  .surface-card {
-    background-color: #141418;
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    transition: border-color 150ms ease, background-color 150ms ease;
+  /* Botões */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 h-9 px-3.5 rounded-md text-sm font-medium
+      whitespace-nowrap select-none transition-colors duration-100
+      disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-sm {
+    @apply h-8 px-2.5 text-[13px] gap-1.5;
+  }
+  .btn-lg {
+    @apply h-10 px-4;
+  }
+  .btn-icon {
+    @apply h-8 w-8 px-0;
+  }
+  .btn-primary {
+    @apply bg-accent text-accent-fg hover:bg-accent-hover;
+  }
+  .btn-secondary {
+    @apply bg-surface text-fg border border-line hover:bg-surface-2 hover:border-line-strong;
+  }
+  .btn-ghost {
+    @apply text-fg-muted hover:bg-surface-2 hover:text-fg;
+  }
+  .btn-danger {
+    @apply bg-danger text-white hover:opacity-90;
+  }
+  .btn-danger-ghost {
+    @apply text-danger hover:bg-danger-soft;
   }
 
-  .surface-card:hover {
-    border-color: rgba(255, 255, 255, 0.13);
+  /* Formulários */
+  .input {
+    @apply block w-full h-9 px-3 rounded-md border border-line bg-surface text-sm text-fg
+      placeholder:text-fg-subtle transition-colors
+      hover:border-line-strong focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/15
+      disabled:bg-surface-2 disabled:text-fg-subtle;
+  }
+  textarea.input {
+    @apply h-auto py-2 leading-relaxed;
+  }
+  select.input {
+    @apply pr-8;
+  }
+  .label {
+    @apply block text-[13px] font-medium text-fg-muted mb-1.5;
+  }
+  .hint {
+    @apply text-xs text-fg-subtle mt-1;
+  }
+  .checkbox {
+    @apply h-4 w-4 rounded border-line-strong text-accent accent-[rgb(var(--accent))];
   }
 
-  .btn-solid {
-    background-color: #f4f4f5;
-    color: #09090b;
-    font-weight: 600;
-    transition: background-color 150ms ease, transform 100ms ease;
+  /* Tipografia utilitária */
+  .page-title {
+    @apply text-xl font-semibold text-fg;
+  }
+  .section-title {
+    @apply text-[15px] font-semibold text-fg;
+  }
+  .eyebrow {
+    @apply text-xs font-medium text-fg-subtle;
   }
 
-  .btn-solid:hover:not(:disabled) {
-    background-color: #ffffff;
+  /* Badges */
+  .badge {
+    @apply inline-flex items-center gap-1 h-5 px-1.5 rounded text-xs font-medium
+      bg-surface-2 text-fg-muted border border-line whitespace-nowrap;
+  }
+  .badge-accent {
+    @apply bg-accent-soft text-accent border-transparent;
+  }
+  .badge-success {
+    @apply bg-success-soft text-success border-transparent;
+  }
+  .badge-warning {
+    @apply bg-warning-soft text-warning border-transparent;
+  }
+  .badge-danger {
+    @apply bg-danger-soft text-danger border-transparent;
+  }
+  .badge-info {
+    @apply bg-info-soft text-info border-transparent;
   }
 
-  .btn-subtle {
-    background-color: #18181d;
-    color: #d4d4d8;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    font-weight: 500;
-    transition: all 150ms ease;
+  /* Abas */
+  .tabs {
+    @apply flex items-center gap-1 border-b border-line overflow-x-auto;
+  }
+  .tab {
+    @apply inline-flex items-center gap-2 h-10 px-3 -mb-px text-sm font-medium text-fg-muted
+      border-b-2 border-transparent whitespace-nowrap transition-colors hover:text-fg;
+  }
+  .tab-active {
+    @apply text-fg border-accent;
   }
 
-  .btn-subtle:hover:not(:disabled) {
-    background-color: #202027;
-    color: #fafafa;
-    border-color: rgba(255, 255, 255, 0.14);
+  /* Controle segmentado */
+  .segmented {
+    @apply inline-flex items-center p-0.5 rounded-md bg-surface-2 border border-line;
+  }
+  .segmented-item {
+    @apply h-7 px-3 rounded text-[13px] font-medium text-fg-muted transition-colors hover:text-fg;
+  }
+  .segmented-item-active {
+    @apply bg-surface text-fg shadow-subtle;
   }
 
-  .input-clean {
-    background-color: #0e0e11;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    color: #f4f4f5;
-    transition: border-color 150ms ease, box-shadow 150ms ease;
+  /* Tabelas */
+  .table {
+    @apply w-full text-sm;
+  }
+  .table th {
+    @apply text-left text-xs font-medium text-fg-subtle px-3 py-2 border-b border-line;
+  }
+  .table td {
+    @apply px-3 py-2 border-b border-line text-fg;
   }
 
-  .input-clean:focus {
-    outline: none;
-    border-color: rgba(255, 255, 255, 0.24);
-    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.04);
+  /* Modal */
+  .modal-backdrop {
+    @apply fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4;
   }
+  .modal {
+    @apply w-full bg-surface border border-line rounded-xl shadow-elevated flex flex-col overflow-hidden;
+  }
+
+  .kbd {
+    @apply inline-flex items-center h-5 px-1.5 rounded border border-line bg-surface-2 font-mono text-[11px] text-fg-muted;
+  }
+
+  .divider {
+    @apply border-t border-line;
+  }
+
 }
 
-/* Minimal dark scrollbars */
+/* Scrollbars discretas */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 10px;
+  height: 10px;
 }
-
 ::-webkit-scrollbar-track {
   background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgb(var(--fg) / 0.14);
   border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
-
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.24);
+  background: rgb(var(--fg) / 0.26);
+  background-clip: padding-box;
 }
 
-/* Clean matte workspace canvas with subtle dot texture */
-.bg-obsidian-grid {
-  background-color: #0b0b0d;
-  background-image: radial-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px);
-  background-size: 24px 24px;
-}
-
-.bg-session-cockpit {
-  background-color: #0b0b0d;
-}
 
 @keyframes pulse-subtle {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.55; }
 }
-
 .animate-pulse-subtle {
   animation: pulse-subtle 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
