@@ -140,23 +140,17 @@ export const PdfWikiImportModal: React.FC<PdfWikiImportModalProps> = ({
     setProgressText('');
 
     if (!res.ok) {
-      if (res.errorReason === 'no_api_key') {
+      if (
+        res.errorReason === 'no_api_key' ||
+        res.errorReason === 'http_401' ||
+        res.errorReason === 'http_403'
+      ) {
         setNeedsApiKey(true);
-        setErrorMessage(
-          'Nenhuma chave de API do Google Gemini cadastrada. Configure-a em Configurações.'
-        );
-      } else if (res.errorReason === 'file_too_large') {
-        setErrorMessage('O arquivo PDF excede 15 MB.');
-      } else if (res.errorReason === 'http_401' || res.errorReason === 'http_403') {
-        setNeedsApiKey(true);
-        setErrorMessage('A chave do Gemini cadastrada é inválida ou não tem permissão.');
-      } else if (res.errorReason === 'http_429') {
-        setErrorMessage('Limite de uso da API atingido. Aguarde e tente novamente.');
-      } else {
-        setErrorMessage(
-          'Não foi possível extrair entradas deste PDF. Tente novamente ou use um arquivo menor.'
-        );
       }
+      setErrorMessage(
+        res.errorMessage ||
+          'Não foi possível extrair entradas deste PDF no momento. Verifique sua chave Gemini e tente novamente.'
+      );
       return;
     }
 

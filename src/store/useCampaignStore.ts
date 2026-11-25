@@ -346,10 +346,11 @@ interface CampaignState {
   /** `persist: false` atualiza só a tela (use durante o arraste) e `commitGraphNodePosition` grava. */
   updateGraphNodePosition: (entityId: string, x: number, y: number, opts?: { persist?: boolean }) => void;
   commitGraphNodePosition: (entityId: string) => Promise<void>;
+  batchUpdateGraphPositions: (positions: { entityId: string; x: number; y: number }[]) => Ok;
   addManualGraphNode: (node: Omit<ManualGraphNode, 'id'>) => Promise<string | null>;
   deleteManualGraphNode: (id: string) => Ok;
   addRelationship: (edge: Omit<RelationshipEdge, 'id'>) => Promise<string | null>;
-  updateRelationshipLabel: (id: string, label: string, type?: RelationshipEdge['type']) => Ok;
+  updateRelationshipLabel: (id: string, label: string, type?: RelationshipEdge['type'], notes?: string) => Ok;
   deleteRelationship: (id: string) => Ok;
   toggleRevealRelationship: (id: string) => Ok;
 
@@ -1569,6 +1570,48 @@ export const useCampaignStore = create<CampaignState>()(
           return flushPendingWrites(draftKey.graphNode(entityId));
         },
 
+        batchUpdateGraphPositions: async (positions) => {
+          if (positions.length === 0) return true;
+          const { sessionToken, campaignId } = sess();
+          const undo = snap('graphPositions', 'manualGraphNodes');
+          const posMap = new Map(positions.map((p) => [p.entityId, p]));
+          set((state) => {
+            const manualIds = new Set(state.manualGraphNodes.map((n) => n.id));
+            const nextManual = state.manualGraphNodes.map((n) => {
+              const p = posMap.get(n.id);
+              return p ? { ...n, x: p.x, y: p.y } : n;
+            });
+            const existingEntityIds = new Set(state.graphPositions.map((p) => p.entityId));
+            const updatedPositions = state.graphPositions.map((p) => {
+              const next = posMap.get(p.entityId);
+              return next ? { ...p, x: next.x, y: next.y } : p;
+            });
+            for (const item of positions) {
+              if (!manualIds.has(item.entityId) && !existingEntityIds.has(item.entityId)) {
+                updatedPositions.push({ entityId: item.entityId, x: item.x, y: item.y });
+              }
+            }
+            return {
+              manualGraphNodes: nextManual,
+              graphPositions: updatedPositions,
+            };
+          });
+          return mutate('organizar o grafo', undo, async () => {
+            const resolved = await Promise.all(
+              positions.map(async (p) => ({
+                entityId: await resolveId(p.entityId),
+                x: Math.round(p.x),
+                y: Math.round(p.y),
+              }))
+            );
+            await convexClient.mutation(api.relationships.batchUpdatePositions, {
+              sessionToken,
+              campaignId,
+              positions: resolved,
+            });
+          });
+        },
+
         addManualGraphNode: async (node) => {
           const { sessionToken, campaignId } = sess();
           const temp = tempId('gnode');
@@ -1630,17 +1673,30 @@ export const useCampaignStore = create<CampaignState>()(
           );
         },
 
-        updateRelationshipLabel: async (id, label, type) => {
+        updateRelationshipLabel: async (id, label, type, notes) => {
           const { sessionToken } = sess();
           const undo = snap('relationships');
           set((state) => ({
             relationships: state.relationships.map((r) =>
-              r.id === id ? { ...r, label, ...(type ? { type } : {}) } : r
+              r.id === id
+                ? {
+                    ...r,
+                    label,
+                    ...(type ? { type } : {}),
+                    ...(notes !== undefined ? { notes } : {}),
+                  }
+                : r
             ),
           }));
           return mutate('atualizar a conexão', undo, async () => {
             const relId = await resolveId(id);
-            await convexClient.mutation(api.relationships.update, { sessionToken, id: relId, label, type });
+            await convexClient.mutation(api.relationships.update, {
+              sessionToken,
+              id: relId,
+              label,
+              type,
+              notes,
+            });
           });
         },
 

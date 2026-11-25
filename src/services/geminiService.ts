@@ -1,4 +1,14 @@
-import { Entity, EntityCategory, ThreatFront, GeneratedEmergencyItem } from '../types/campaign';
+import {
+  Entity,
+  EntityCategory,
+  ThreatFront,
+  GeneratedEmergencyItem,
+  RelationshipEdge,
+  RelationType,
+  Quest,
+  SessionJournalEntry,
+  ManualGraphNode,
+} from '../types/campaign';
 import { convexClient } from '../convexClient';
 import { api } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
@@ -524,5 +534,287 @@ export async function extractWikiEntitiesFromPdf(params: {
     return pdfFailure('network_or_parse_error');
   } catch (err) {
     return pdfFailure('network_or_parse_error', convexErrorMessage(err));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Arquiteto IA do Grafo de Relações
+// ---------------------------------------------------------------------------
+
+export interface AiSuggestedGraphNode {
+  tempKey: string;
+  name: string;
+  subtitle: string;
+  category: EntityCategory;
+  summary: string;
+  secret: string;
+}
+
+export interface AiSuggestedRelationship {
+  id: string;
+  sourceId: string;
+  targetId: string;
+  label: string;
+  type: RelationType;
+  isSecret: boolean;
+  rationale: string;
+}
+
+export interface GraphAiAnalysisResult {
+  ok: boolean;
+  usedLiveGemini: boolean;
+  modelUsed?: string;
+  summary: string;
+  relationships: AiSuggestedRelationship[];
+  suggestedNodes: AiSuggestedGraphNode[];
+  errorReason?: string;
+  errorMessage?: string;
+}
+
+const VALID_REL_TYPES: RelationType[] = [
+  'hostile',
+  'allied',
+  'secret',
+  'neutral',
+  'patron',
+  'blood',
+];
+
+export async function analyzeCampaignGraphWithAI(params: {
+  mode: 'extract' | 'intrigue';
+  entities: Entity[];
+  manualNodes: ManualGraphNode[];
+  existingRelationships: RelationshipEdge[];
+  fronts: ThreatFront[];
+  quests: Quest[];
+  journal: SessionJournalEntry[];
+  campaignName: string;
+  campaignTone: string;
+  worldContext?: string;
+  focusNodeId?: string;
+  customInstruction?: string;
+  apiKey?: string;
+}): Promise<GraphAiAnalysisResult> {
+  const cleanKey = sanitizeGeminiKey(params.apiKey);
+  const { sessionToken, campaignId } = currentAuth();
+
+  const availability = await checkAiKeyAvailable(cleanKey);
+  if (!availability.ok) {
+    return {
+      ok: false,
+      usedLiveGemini: false,
+      summary: '',
+      relationships: [],
+      suggestedNodes: [],
+      errorReason: availability.reason,
+      errorMessage: availability.message,
+    };
+  }
+
+  const allNodesCatalog = [
+    ...params.entities.slice(0, 65).map((e) => {
+      const secretsBrief = e.secrets
+        .slice(0, 2)
+        .map((s) => `[Segredo: ${s.title}] ${s.content.slice(0, 160)}`)
+        .join(' | ');
+      return `• ID="${e.id}" | ${e.mentionPrefix}${e.handle} — ${e.name} (${e.category}, ${e.subtitle})
+  Resumo/Lore: ${(e.publicContent || e.summary || '').slice(0, 280)}${
+        secretsBrief ? `\n  Segredos: ${secretsBrief}` : ''
+      }`;
+    }),
+    ...params.manualNodes.slice(0, 25).map(
+      (n) => `• ID="${n.id}" | ${n.label} — ${n.subtitle || 'Nó do grafo'} (${n.category})`
+    ),
+  ].join('\n');
+
+  const existingPairs = params.existingRelationships
+    .slice(0, 120)
+    .map((r) => `${r.sourceId} -> ${r.targetId} ("${r.label}", ${r.type})`)
+    .join('\n');
+
+  const frontsText = params.fronts
+    .slice(0, 8)
+    .map((f) => `• ${f.name} (${f.associatedEntityHandle}): ${f.description.slice(0, 140)}`)
+    .join('\n');
+
+  const questsText = params.quests
+    .slice(0, 8)
+    .map((q) => `• ${q.title} (contratante: ${q.giverHandle}, local: ${q.locationHandle}): ${q.description.slice(0, 140)}`)
+    .join('\n');
+
+  const focusEntity =
+    params.entities.find((e) => e.id === params.focusNodeId) ||
+    params.manualNodes.find((n) => n.id === params.focusNodeId);
+  const focusLine = focusEntity
+    ? `Nó em foco prioritário: ID="${focusEntity.id}" (${
+        'name' in focusEntity ? focusEntity.name : focusEntity.label
+      }).`
+    : '';
+
+  const modeInstructions =
+    params.mode === 'extract'
+      ? `MODO: EXTRAÇÃO FIEL DO CÓDICE.
+Identifique todas as relações implícitas ou explícitas descritas nos textos, menções (@/#), facções, segredos, frentes e missões que AINDA NÃO estão na lista de vínculos já existentes.
+- Não invente novos nós neste modo (retorne suggestedNodes vazio: []).
+- Se o vínculo vier de um segredo do Mestre ou conspiração, marque isSecret: true.`
+      : `MODO: ARQUITETO DE INTRIGAS E CONEXÕES DRAMÁTICAS.
+Crie novas conexões dramáticas de alto impacto para mesa de RPG (alianças frágeis, chantagens, dívidas de sangue, infiltrados, patronos ocultos, disputas territoriais) conectando especialmente nós isolados ou facções rivais.
+- Você pode sugerir de 0 a 3 novos elementos-ponte em suggestedNodes (usando tempKey ex: "new_1", "new_2" e referenciando esse tempKey em sourceId ou targetId de relationships) caso façam a teia ficar muito mais rica.`;
+
+  const prompt = [
+    'Você é um Designer Narrativo sênior especialista em Grafos de Intrigas e Facções para RPG de mesa.',
+    `Campanha: ${params.campaignName || 'Campanha Atual'} | Tom: ${params.campaignTone || 'Fantasia'}`,
+    params.worldContext ? `Contexto do Mundo:\n${params.worldContext.slice(0, 1200)}` : '',
+    modeInstructions,
+    focusLine,
+    params.customInstruction
+      ? `Diretriz específica do Mestre: ${params.customInstruction.slice(0, 1000)}`
+      : '',
+    `=== CATÁLOGO DE NÓS DISPONÍVEIS (USE EXATAMENTE OS IDs ABAIXO) ===\n${allNodesCatalog}`,
+    existingPairs
+      ? `=== VÍNCULOS JÁ EXISTENTES (NÃO DUPLIQUE ESTES PARES) ===\n${existingPairs}`
+      : '',
+    frontsText ? `=== FRENTES DE AMEAÇA ===\n${frontsText}` : '',
+    questsText ? `=== MISSÕES ===\n${questsText}` : '',
+    'REGRAS OBRIGATÓRIAS:',
+    '1. Use EXCLUSIVAMENTE os IDs listados no catálogo acima (ou um tempKey declarado em suggestedNodes). Nunca use nomes no lugar de sourceId/targetId.',
+    '2. "label" deve ter de 2 a 5 palavras em Português do Brasil (ex: "Chantageia em segredo", "Vassalo leal de", "Disputa o porto com").',
+    '3. Gere entre 4 e 14 vínculos altamente relevantes e sem auto-laços (sourceId !== targetId).',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  try {
+    const res = await convexClient.action(api.ai.analyzeRelationshipGraph, {
+      sessionToken,
+      campaignId,
+      prompt,
+      userApiKey: cleanKey || undefined,
+    });
+
+    if (!res.ok || !res.parsed) {
+      const reason = !res.ok ? res.reason : 'network_or_parse_error';
+      const msg = !res.ok ? res.message : undefined;
+      return {
+        ok: false,
+        usedLiveGemini: false,
+        summary: '',
+        relationships: [],
+        suggestedNodes: [],
+        errorReason: reason,
+        errorMessage: aiFailureMessage(reason, msg),
+      };
+    }
+
+    if (res.usedServerKey) serverKeyKnown.set(campaignId, true);
+
+    const rawNodes = Array.isArray(res.parsed.suggestedNodes)
+      ? res.parsed.suggestedNodes
+      : [];
+    const suggestedNodes: AiSuggestedGraphNode[] = rawNodes
+      .filter((n): n is Record<string, unknown> => Boolean(n && typeof n === 'object'))
+      .map((n, i) => {
+        const rawCat = typeof n.category === 'string' ? n.category.toLowerCase() : 'npc';
+        const category: EntityCategory = VALID_CATEGORIES.includes(rawCat as EntityCategory)
+          ? (rawCat as EntityCategory)
+          : 'npc';
+        return {
+          tempKey: typeof n.tempKey === 'string' && n.tempKey ? n.tempKey : `new_${i + 1}`,
+          name: typeof n.name === 'string' ? n.name.trim().slice(0, 60) : `Elemento ${i + 1}`,
+          subtitle:
+            typeof n.subtitle === 'string' ? n.subtitle.trim().slice(0, 70) : 'Sugerido pela IA',
+          category,
+          summary: typeof n.summary === 'string' ? n.summary.trim() : '',
+          secret: typeof n.secret === 'string' ? n.secret.trim() : '',
+        };
+      })
+      .filter((n) => Boolean(n.name))
+      .slice(0, 4);
+
+    const validIds = new Set<string>([
+      ...params.entities.map((e) => e.id),
+      ...params.manualNodes.map((m) => m.id),
+      ...suggestedNodes.map((n) => n.tempKey),
+    ]);
+
+    // Also build a fallback lookup by handle/name in case the model put a handle instead of ID
+    const byHandleOrName = new Map<string, string>();
+    for (const e of params.entities) {
+      byHandleOrName.set(e.handle.toLowerCase(), e.id);
+      byHandleOrName.set(`${e.mentionPrefix}${e.handle}`.toLowerCase(), e.id);
+      byHandleOrName.set(e.name.toLowerCase(), e.id);
+    }
+    for (const m of params.manualNodes) {
+      byHandleOrName.set(m.label.toLowerCase(), m.id);
+    }
+
+    const resolveNodeRef = (ref: string): string | null => {
+      const trimmed = ref.trim();
+      if (validIds.has(trimmed)) return trimmed;
+      return byHandleOrName.get(trimmed.toLowerCase()) || null;
+    };
+
+    const existingKeySet = new Set(
+      params.existingRelationships.map((r) => `${r.sourceId}::${r.targetId}`)
+    );
+    const seenBatch = new Set<string>();
+
+    const rawRels = Array.isArray(res.parsed.relationships) ? res.parsed.relationships : [];
+    const relationships: AiSuggestedRelationship[] = [];
+
+    rawRels.forEach((item, idx) => {
+      if (!item || typeof item !== 'object') return;
+      const o = item as Record<string, unknown>;
+      const src = typeof o.sourceId === 'string' ? resolveNodeRef(o.sourceId) : null;
+      const tgt = typeof o.targetId === 'string' ? resolveNodeRef(o.targetId) : null;
+      if (!src || !tgt || src === tgt) return;
+
+      const pairKey = `${src}::${tgt}`;
+      if (existingKeySet.has(pairKey) || seenBatch.has(pairKey)) return;
+      seenBatch.add(pairKey);
+
+      const rawType = typeof o.type === 'string' ? o.type.toLowerCase() : 'neutral';
+      const relType: RelationType = VALID_REL_TYPES.includes(rawType as RelationType)
+        ? (rawType as RelationType)
+        : 'neutral';
+
+      const label =
+        typeof o.label === 'string' && o.label.trim()
+          ? o.label.trim().slice(0, 48)
+          : 'Vínculo narrativo';
+
+      relationships.push({
+        id: `ai-rel-${Date.now()}-${idx}`,
+        sourceId: src,
+        targetId: tgt,
+        label,
+        type: relType,
+        isSecret: Boolean(o.isSecret) || relType === 'secret',
+        rationale:
+          typeof o.rationale === 'string' ? o.rationale.trim() : 'Inferido do contexto da campanha.',
+      });
+    });
+
+    return {
+      ok: true,
+      usedLiveGemini: true,
+      modelUsed: res.modelUsed,
+      summary:
+        typeof res.parsed.summary === 'string' && res.parsed.summary.trim()
+          ? res.parsed.summary.trim()
+          : `${relationships.length} vínculo(s) identificado(s) pela IA.`,
+      relationships,
+      suggestedNodes,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      usedLiveGemini: false,
+      summary: '',
+      relationships: [],
+      suggestedNodes: [],
+      errorReason: 'network_or_parse_error',
+      errorMessage: convexErrorMessage(err),
+    };
   }
 }

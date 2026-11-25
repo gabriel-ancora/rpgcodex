@@ -76,8 +76,8 @@ async function claimUpload(
         r.purpose === purpose &&
         (campaignId === undefined || r.campaignId === campaignId) &&
         now - r.createdAt <= PENDING_TTL_MS &&
-        // O arquivo precisa ter sido criado depois que a URL foi emitida.
-        r.createdAt <= meta._creationTime
+        // Tolerância de 60s para pequenas diferenças de relógio entre o worker e o storage.
+        r.createdAt - 60_000 <= meta._creationTime
     )
     .sort((a, b) => a.createdAt - b.createdAt);
 

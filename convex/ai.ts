@@ -24,8 +24,9 @@ const CANDIDATE_MODELS = [
   "gemini-2.0-flash",
 ];
 
-// Status em que tentar outro modelo não resolve: interrompe imediatamente.
-const NON_RETRYABLE = new Set([400, 401, 403, 429]);
+// Status de chave/cota em que tentar outro modelo não resolve: interrompe imediatamente.
+// (400 não entra aqui pois um modelo pode recusar PDF ou maxOutputTokens enquanto outro aceita.)
+const NON_RETRYABLE = new Set([401, 403, 429]);
 
 type FailReason =
   | "no_api_key"
@@ -175,44 +176,79 @@ function extractJsonObject(rawText: string): Record<string, unknown> | null {
   return null;
 }
 
+interface DiscoveredModel {
+  name: string;
+  outputTokenLimit: number;
+}
+
 async function discoverModels(
   apiKey: string
-): Promise<{ ok: boolean; status: number; models: string[] }> {
+): Promise<{ ok: boolean; status: number; models: DiscoveredModel[] }> {
   const res = await fetch(`${GEMINI_BASE}/models`, { headers: geminiHeaders(apiKey) });
   if (!res.ok) return { ok: false, status: res.status, models: [] };
 
   const data = (await res.json()) as {
-    models?: { name: string; supportedGenerationMethods?: string[] }[];
+    models?: {
+      name: string;
+      supportedGenerationMethods?: string[];
+      outputTokenLimit?: number;
+    }[];
   };
+  const limitByName = new Map<string, number>();
   const compatible = (data.models || [])
     .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
-    .map((m) => m.name.replace(/^models\//, ""))
+    .map((m) => {
+      const cleanName = m.name.replace(/^models\//, "");
+      limitByName.set(cleanName, m.outputTokenLimit || 8192);
+      return cleanName;
+    })
     .filter((name) => {
       const n = name.toLowerCase();
-      return n.includes("gemini") && !n.includes("tts") && !n.includes("image") && !n.includes("vision");
+      return (
+        n.includes("gemini") &&
+        !n.includes("tts") &&
+        !n.includes("image") &&
+        !n.includes("vision") &&
+        !n.includes("embedding")
+      );
     });
 
-  const ordered: string[] = CANDIDATE_MODELS.filter((m) => compatible.includes(m));
+  const orderedNames: string[] = CANDIDATE_MODELS.filter((m) => compatible.includes(m));
   for (const m of compatible) {
-    if (!ordered.includes(m) && m.toLowerCase().includes("flash")) ordered.push(m);
+    if (!orderedNames.includes(m) && m.toLowerCase().includes("flash")) orderedNames.push(m);
   }
   for (const m of compatible) {
-    if (!ordered.includes(m)) ordered.push(m);
+    if (!orderedNames.includes(m)) orderedNames.push(m);
   }
-  return { ok: true, status: 200, models: ordered.length > 0 ? ordered : CANDIDATE_MODELS };
+  const finalNames = orderedNames.length > 0 ? orderedNames : CANDIDATE_MODELS;
+  return {
+    ok: true,
+    status: 200,
+    models: finalNames.map((name) => ({
+      name,
+      outputTokenLimit: limitByName.get(name) || 8192,
+    })),
+  };
 }
 
-type GeminiPart = { text: string } | { inlineData: { mimeType: string; data: string } };
+type GeminiPart =
+  | { text: string }
+  | { inline_data: { mime_type: string; data: string } };
 
 async function callGeminiOnce(opts: {
   apiKey: string;
   model: string;
+  modelMaxTokens?: number;
   parts: GeminiPart[];
   schema: Record<string, unknown>;
   temperature: number;
   maxOutputTokens: number;
   accept: (obj: Record<string, unknown>) => boolean;
-}): Promise<{ status: number; parsed: Record<string, unknown> | null }> {
+}): Promise<{ status: number; parsed: Record<string, unknown> | null; detail?: string }> {
+  const safeMaxTokens = Math.min(
+    opts.maxOutputTokens,
+    Math.max(2048, opts.modelMaxTokens || 8192)
+  );
   const res = await fetch(
     `${GEMINI_BASE}/models/${encodeURIComponent(opts.model)}:generateContent`,
     {
@@ -222,14 +258,23 @@ async function callGeminiOnce(opts: {
         contents: [{ parts: opts.parts }],
         generationConfig: {
           temperature: opts.temperature,
-          maxOutputTokens: opts.maxOutputTokens,
+          maxOutputTokens: safeMaxTokens,
           responseMimeType: "application/json",
           responseSchema: opts.schema,
         },
       }),
     }
   );
-  if (!res.ok) return { status: res.status, parsed: null };
+  if (!res.ok) {
+    let detail: string | undefined;
+    try {
+      const errBody = (await res.json()) as { error?: { message?: string } };
+      detail = errBody?.error?.message;
+    } catch {
+      // ignore
+    }
+    return { status: res.status, parsed: null, detail };
+  }
 
   const data = (await res.json()) as {
     candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[];
@@ -265,16 +310,28 @@ async function generateWithFallback(opts: {
     if (!discovered.ok && NON_RETRYABLE.has(discovered.status)) {
       return failure(`http_${discovered.status}`, messageForStatus(discovered.status));
     }
-    const models = discovered.ok ? discovered.models.slice(0, 4) : CANDIDATE_MODELS;
+    const models: DiscoveredModel[] = discovered.ok
+      ? discovered.models.slice(0, 4)
+      : CANDIDATE_MODELS.map((name) => ({ name, outputTokenLimit: 8192 }));
 
     let lastStatus = discovered.ok ? 500 : discovered.status;
-    for (const model of models) {
-      const attempt = await callGeminiOnce({ ...opts, model });
-      if (attempt.parsed) return { ok: true, parsed: attempt.parsed, modelUsed: model };
+    let lastDetail: string | undefined;
+    for (const m of models) {
+      const attempt = await callGeminiOnce({
+        ...opts,
+        model: m.name,
+        modelMaxTokens: m.outputTokenLimit,
+      });
+      if (attempt.parsed) return { ok: true, parsed: attempt.parsed, modelUsed: m.name };
       lastStatus = attempt.status;
+      if (attempt.detail) lastDetail = attempt.detail;
       if (NON_RETRYABLE.has(attempt.status)) break;
     }
-    return failure(`http_${lastStatus}`, messageForStatus(lastStatus));
+    const baseMsg = messageForStatus(lastStatus);
+    return failure(
+      `http_${lastStatus}`,
+      lastDetail ? `${baseMsg} (${lastDetail.slice(0, 180)})` : baseMsg
+    );
   } catch {
     return failure("network_or_parse_error", "Erro de rede ao conectar à API Gemini.");
   }
@@ -387,7 +444,7 @@ export const validateKey = action({
       if (!discovery.ok) {
         return { valid: false, message: messageForStatus(discovery.status), ...serverInfo };
       }
-      const modelName = discovery.models[0] || "gemini-2.5-flash";
+      const modelName = discovery.models[0]?.name || "gemini-2.5-flash";
       return {
         valid: true,
         message: `Chave Google Gemini conectada (modelo ativo: ${modelName}).`,
@@ -564,7 +621,7 @@ export const extractWikiFromPdf = action({
         "- Responda sempre em Português do Brasil (traduzindo termos narrativos se o PDF estiver em outro idioma, mantendo nomes próprios quando fizer sentido).",
         "- Classifique cada entrada em uma das categorias exatas: npc (personagens), location (lugares), item (itens/relíquias/equipamentos), lore (informações históricas, mitos, eventos, pistas), faction (facções/organizações), monster (monstros/criaturas/chefes).",
         "- Separe informações secretas, armadilhas, motivações ocultas ou plot twists no campo `secrets` (para Névoa de Guerra do Mestre), e deixe em `publicContent` a descrição principal.",
-        "- Extraia no máximo 30 entidades mais relevantes para manter a resposta objetiva e bem estruturada.",
+        "- Extraia no máximo 20 entidades mais relevantes de forma objetiva e concisa para não truncar o JSON.",
         "- Retorne APENAS JSON válido seguindo o schema solicitado.",
       ]
         .filter(Boolean)
@@ -572,10 +629,13 @@ export const extractWikiFromPdf = action({
 
       const result = await generateWithFallback({
         apiKey: resolved.key,
-        parts: [{ inlineData: { mimeType: "application/pdf", data: pdfBase64 } }, { text: prompt }],
+        parts: [
+          { inline_data: { mime_type: "application/pdf", data: pdfBase64 } },
+          { text: prompt },
+        ],
         schema: WIKI_EXTRACTION_SCHEMA,
-        temperature: 0.4,
-        maxOutputTokens: 32768,
+        temperature: 0.35,
+        maxOutputTokens: 16384,
         accept: (obj) => Array.isArray(obj.entities),
       });
       if (!result.ok) return result;
@@ -590,5 +650,133 @@ export const extractWikiFromPdf = action({
     } finally {
       await release();
     }
+  },
+});
+
+// ============================================================================
+// Análise e geração inteligente do Grafo de Relações
+// ============================================================================
+
+const GRAPH_ANALYSIS_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    summary: {
+      type: "STRING",
+      description:
+        "Síntese curta (1 a 2 frases) sobre a teia política/narrativa identificada ou criada.",
+    },
+    relationships: {
+      type: "ARRAY",
+      description: "Lista de conexões sugeridas entre nós existentes (ou recém-sugeridos).",
+      items: {
+        type: "OBJECT",
+        properties: {
+          sourceId: {
+            type: "STRING",
+            description:
+              "ID exato do nó de origem fornecido no catálogo (ou tempKey de um nó sugerido).",
+          },
+          targetId: {
+            type: "STRING",
+            description:
+              "ID exato do nó de destino fornecido no catálogo (ou tempKey de um nó sugerido).",
+          },
+          label: {
+            type: "STRING",
+            description:
+              "Rótulo curto e expressivo da relação em até 4 palavras (ex: 'Financia em segredo', 'Rival de sangue', 'Infiltrado em').",
+          },
+          type: {
+            type: "STRING",
+            enum: ["hostile", "allied", "secret", "neutral", "patron", "blood"],
+            description:
+              "Natureza do vínculo: hostile (rivalidade/ódio), allied (aliança/lealdade), secret (conspiração/infiltração), patron (domínio/dívida/hierarquia), blood (família/linhagem), neutral (comercial/contato).",
+          },
+          isSecret: {
+            type: "BOOLEAN",
+            description:
+              "true se a relação for uma conspiração, traição ou segredo do Mestre que os jogadores ainda não sabem.",
+          },
+          rationale: {
+            type: "STRING",
+            description:
+              "Justificativa concisa de 1 frase explicando o motivo narrativo ou gancho de mesa deste vínculo.",
+          },
+        },
+        required: ["sourceId", "targetId", "label", "type", "isSecret", "rationale"],
+      },
+    },
+    suggestedNodes: {
+      type: "ARRAY",
+      description:
+        "Opcional: até 3 novos nós (NPCs, facções ou locais-chave) apenas se o modo pedir intrigas novas para conectar grupos isolados.",
+      items: {
+        type: "OBJECT",
+        properties: {
+          tempKey: {
+            type: "STRING",
+            description: "Chave temporária curta usada em sourceId/targetId (ex: 'new_1').",
+          },
+          name: {
+            type: "STRING",
+            description: "Nome próprio curto do personagem, facção ou local.",
+          },
+          subtitle: {
+            type: "STRING",
+            description: "Papel ou arquétipo curto (máx. 60 caracteres).",
+          },
+          category: {
+            type: "STRING",
+            enum: ["npc", "faction", "location", "monster", "item", "lore"],
+          },
+          summary: {
+            type: "STRING",
+            description: "Resumo de 1 a 2 frases para o Códice.",
+          },
+          secret: {
+            type: "STRING",
+            description: "Segredo oculto do Mestre envolvendo este elemento.",
+          },
+        },
+        required: ["tempKey", "name", "subtitle", "category", "summary", "secret"],
+      },
+    },
+  },
+  required: ["summary", "relationships", "suggestedNodes"],
+};
+
+export const analyzeRelationshipGraph = action({
+  args: {
+    sessionToken: v.string(),
+    campaignId: v.string(),
+    prompt: v.string(),
+    userApiKey: v.optional(v.string()),
+  },
+  handler: async (
+    ctx,
+    args
+  ): Promise<AiSuccess<{ usedServerKey: boolean }> | AiFailure> => {
+    const auth = await ctx.runMutation(internal.ai.authorizeAiCall, {
+      sessionToken: args.sessionToken,
+      campaignId: args.campaignId,
+      requireDmRole: true,
+    });
+    if (!auth.allowed) return failure("rate_limited", RATE_LIMIT_MESSAGE);
+
+    const resolved = resolveApiKey(args.userApiKey, true);
+    if (!resolved) {
+      return failure("no_api_key", "Nenhuma chave da API Gemini configurada.");
+    }
+
+    const result = await generateWithFallback({
+      apiKey: resolved.key,
+      parts: [{ text: args.prompt.slice(0, MAX_PROMPT_CHARS) }],
+      schema: GRAPH_ANALYSIS_SCHEMA,
+      temperature: 0.65,
+      maxOutputTokens: 8192,
+      accept: (obj) => Array.isArray(obj.relationships),
+    });
+    if (!result.ok) return result;
+    return { ...result, usedServerKey: resolved.usedServerKey };
   },
 });

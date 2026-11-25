@@ -105,6 +105,7 @@ export const update = mutation({
     id: v.string(),
     label: v.string(),
     type: v.optional(relTypeValidator),
+    notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const rel = await getOrThrow(ctx, "relationships", args.id);
@@ -112,6 +113,7 @@ export const update = mutation({
     await ctx.db.patch(rel._id, {
       label: args.label,
       ...(args.type ? { type: args.type } : {}),
+      ...(args.notes !== undefined ? { notes: args.notes } : {}),
     });
   },
 });
@@ -181,6 +183,62 @@ export const updatePosition = mutation({
         x: args.x,
         y: args.y,
       });
+    }
+  },
+});
+
+export const batchUpdatePositions = mutation({
+  args: {
+    sessionToken: v.string(),
+    campaignId: v.string(),
+    positions: v.array(
+      v.object({
+        entityId: v.string(),
+        x: v.number(),
+        y: v.number(),
+      })
+    ),
+  },
+  handler: async (ctx, args) => {
+    const { canonicalId, keys } = await requireDm(ctx, args.sessionToken, args.campaignId);
+    const existingAll = await collectByCampaign(ctx, "graphPositions", keys);
+    const byEntity = new Map(existingAll.map((p) => [p.entityId, p]));
+
+    for (const item of args.positions) {
+      const manualId = ctx.db.normalizeId("manualGraphNodes", item.entityId);
+      if (manualId) {
+        const node = await ctx.db.get(manualId);
+        if (node && keys.includes(node.campaignId)) {
+          await ctx.db.patch(manualId, { x: item.x, y: item.y });
+        }
+        continue;
+      }
+
+      const entId = ctx.db.normalizeId("entities", item.entityId);
+      const ent = entId ? await ctx.db.get(entId) : null;
+      if (!ent || !ent.campaignId || !keys.includes(ent.campaignId)) continue;
+
+      const existing =
+        byEntity.get(item.entityId) ??
+        (await ctx.db
+          .query("graphPositions")
+          .withIndex("by_entity", (q) => q.eq("entityId", item.entityId))
+          .first());
+
+      if (existing) {
+        await ctx.db.patch(existing._id, {
+          x: item.x,
+          y: item.y,
+          campaignId: canonicalId,
+        });
+      } else {
+        await ctx.db.insert("graphPositions", {
+          campaignId: canonicalId,
+          entityId: item.entityId,
+          x: item.x,
+          y: item.y,
+        });
+      }
     }
   },
 });
