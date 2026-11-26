@@ -120,9 +120,17 @@ export function sheetContentPayload(
 
 /** Extrai a mensagem legível de um erro do Convex. */
 export function convexErrorMessage(err: unknown): string {
+  if (
+    err &&
+    typeof err === 'object' &&
+    'data' in err &&
+    typeof (err as { data?: unknown }).data === 'string'
+  ) {
+    return (err as { data: string }).data;
+  }
   const raw = err instanceof Error ? err.message : String(err);
   // Erros de servidor chegam como "[CONVEX M(...)] [Request ID: …] Server Error\nUncaught Error: <mensagem>"
-  const m = raw.match(/Uncaught Error:\s*([^\n]+)/);
+  const m = raw.match(/Uncaught (?:Convex)?Error:\s*([^\n]+)/);
   if (m) return m[1].trim();
   if (/ArgumentValidationError|Validator/i.test(raw)) {
     return 'Os dados da ficha não passaram na validação do servidor.';

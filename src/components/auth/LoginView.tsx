@@ -43,9 +43,22 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const [isLoading, setIsLoading] = useState(false);
 
   const cleanConvexError = (err: unknown): string => {
+    if (
+      err &&
+      typeof err === 'object' &&
+      'data' in err &&
+      typeof (err as { data?: unknown }).data === 'string'
+    ) {
+      return (err as { data: string }).data;
+    }
     const raw = err instanceof Error ? err.message : String(err);
-    const uncaughtMatch = raw.match(/Uncaught Error:\s*([^\n]+)/i);
+    const uncaughtMatch = raw.match(/Uncaught (?:Convex)?Error:\s*([^\n]+)/i);
     if (uncaughtMatch?.[1]) return uncaughtMatch[1].trim();
+    if (/Server Error/i.test(raw)) {
+      return mode === 'login'
+        ? 'E-mail ou senha incorretos (se ainda não criou conta neste ambiente, use a aba Criar conta).'
+        : 'Não foi possível concluir o cadastro com esses dados.';
+    }
     return raw.replace(/^\[CONVEX[^\]]*\]\s*/i, '').trim() || 'Erro ao autenticar.';
   };
 

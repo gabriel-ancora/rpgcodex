@@ -1,7 +1,7 @@
 import { query, mutation, action, internalQuery, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { getSessionUser } from "./lib/tenancy";
 import {
   PBKDF2_ITERATIONS,
@@ -113,7 +113,7 @@ export const completeLogin = internalMutation({
   },
   handler: async (ctx, args): Promise<AuthResult> => {
     const user = await ctx.db.get(args.userId);
-    if (!user) throw new Error(ERR_LOGIN);
+    if (!user) throw new ConvexError(ERR_LOGIN);
 
     if (args.upgrade) {
       await ctx.db.patch(user._id, {
@@ -164,7 +164,7 @@ export const createUserWithSession = internalMutation({
       .query("users")
       .withIndex("by_email", (q) => q.eq("email", args.email))
       .first();
-    if (existing) throw new Error(ERR_REGISTER);
+    if (existing) throw new ConvexError(ERR_REGISTER);
 
     const userId = await ctx.db.insert("users", {
       name: args.name,
@@ -204,16 +204,16 @@ export const register = action({
     const name = args.name.trim();
 
     if (!email.includes("@") || email.length > 254) {
-      throw new Error("Informe um endereço de e-mail válido.");
+      throw new ConvexError("Informe um endereço de e-mail válido.");
     }
     if (args.password.length < 6) {
-      throw new Error("A senha deve ter pelo menos 6 caracteres.");
+      throw new ConvexError("A senha deve ter pelo menos 6 caracteres.");
     }
     if (args.password.length > 256) {
-      throw new Error("A senha excede o tamanho máximo permitido.");
+      throw new ConvexError("A senha excede o tamanho máximo permitido.");
     }
     if (name.length < 2 || name.length > 80) {
-      throw new Error("Informe seu nome de exibição (2 a 80 caracteres).");
+      throw new ConvexError("Informe seu nome de exibição (2 a 80 caracteres).");
     }
 
     const salt = generateRandomHex(16);
@@ -236,12 +236,12 @@ export const login = action({
   handler: async (ctx, args): Promise<AuthResult> => {
     const email = normalizeEmail(args.email);
     if (!email || args.password.length === 0 || args.password.length > 256) {
-      throw new Error(ERR_LOGIN);
+      throw new ConvexError(ERR_LOGIN);
     }
 
     const state = await ctx.runQuery(internal.auth.getLoginState, { email });
     if (state.lockedUntil && state.lockedUntil > Date.now()) {
-      throw new Error(ERR_LOCKED);
+      throw new ConvexError(ERR_LOCKED);
     }
 
     let valid = false;
@@ -265,7 +265,7 @@ export const login = action({
 
     if (!valid || !state.user) {
       await ctx.runMutation(internal.auth.recordLoginFailure, { email });
-      throw new Error(ERR_LOGIN);
+      throw new ConvexError(ERR_LOGIN);
     }
 
     let upgrade: { passwordHash: string; salt: string; iterations: number } | undefined;
