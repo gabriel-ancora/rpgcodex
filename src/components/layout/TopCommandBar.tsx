@@ -72,6 +72,7 @@ export const TopCommandBar: React.FC<TopCommandBarProps> = ({
       if (plotSubTab === 'flowchart') return 'Cenas e pistas';
       return 'Oráculo';
     }
+    if (portalSubTab === 'party') return 'Fichas do grupo';
     if (portalSubTab === 'secrets') return 'Segredos';
     if (portalSubTab === 'quests') return 'Missões';
     return 'Diário e espólio';

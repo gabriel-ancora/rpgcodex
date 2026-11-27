@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { useCampaignStore, isTempId } from '../../store/useCampaignStore';
 import { CharacterSheetModal } from '../characters/CharacterSheetModal';
+import { firstPendingStepForSheet } from '../../rules/levelUp';
+import type { BuildStep } from '../../rules/engine';
 import { useConfirm } from '../common/Modal';
-import { Plus, Trash2, ArrowRight, Users, LogOut, Loader2 } from 'lucide-react';
+import { Plus, Trash2, ArrowRight, Users, LogOut, Loader2, Sparkles } from 'lucide-react';
 
 /**
  * Seção "Jogando" da página de campanhas: campanhas em que o usuário é jogador
@@ -28,7 +30,11 @@ export const PlayerDashboardView: React.FC = () => {
 
   const [inviteCode, setInviteCode] = useState('');
   const [isJoining, setIsJoining] = useState(false);
-  const [modal, setModal] = useState<{ id: string | null; campaignId?: string } | null>(null);
+  const [modal, setModal] = useState<{
+    id: string | null;
+    campaignId?: string;
+    initialEditStep?: BuildStep;
+  } | null>(null);
 
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -279,6 +285,38 @@ export const PlayerDashboardView: React.FC = () => {
                     )}
                   </div>
 
+                  {sheet.pendingLevelUp && (
+                    <div className="rounded-md bg-warning-soft/50 border border-warning/40 px-3 py-2 text-xs space-y-1.5">
+                      <div className="font-semibold text-fg flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-warning shrink-0" />
+                        <span>Subiu para o Nível {sheet.pendingLevelUp.toLevel}!</span>
+                      </div>
+                      <p className="text-fg-muted">
+                        {sheet.pendingLevelUp.pendingChoices.length > 0
+                          ? `${sheet.pendingLevelUp.pendingChoices.length} escolha(s) pendente(s) para concluir.`
+                          : `${sheet.pendingLevelUp.gains.length} ganho(s) novo(s) aguardando confirmação.`}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveCharacterId(sheet.id);
+                          setModal({
+                            id: sheet.id,
+                            initialEditStep:
+                              sheet.pendingLevelUp!.pendingChoices.length > 0
+                                ? firstPendingStepForSheet(sheet)
+                                : undefined,
+                          });
+                        }}
+                        className="btn btn-primary btn-sm w-full"
+                      >
+                        {sheet.pendingLevelUp.pendingChoices.length > 0
+                          ? `Selecionar escolhas do Nv. ${sheet.pendingLevelUp.toLevel}`
+                          : `Revisar Nv. ${sheet.pendingLevelUp.toLevel}`}
+                      </button>
+                    </div>
+                  )}
+
                   <div className="flex items-center gap-2 pt-3 border-t border-line mt-auto">
                     <button
                       type="button"
@@ -306,6 +344,7 @@ export const PlayerDashboardView: React.FC = () => {
       {modal && (
         <CharacterSheetModal
           sheetId={modal.id}
+          initialEditStep={modal.initialEditStep}
           defaultCampaignId={modal.campaignId}
           isOpen
           onClose={() => setModal(null)}

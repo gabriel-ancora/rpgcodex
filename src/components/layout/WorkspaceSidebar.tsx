@@ -65,13 +65,15 @@ export const WorkspaceSidebar: React.FC<WorkspaceSidebarProps> = ({
   const quests = useCampaignStore((s) => s.quests);
   const characterSheets = useCampaignStore((s) => s.characterSheets);
 
-  const setIsDmPartyDrawerOpen = useCampaignStore((s) => s.setIsDmPartyDrawerOpen);
   const setIsSettingsModalOpen = useCampaignStore((s) => s.setIsSettingsModalOpen);
 
   const [collapsed, setCollapsed] = useState(false);
   const [campaignMenuOpen, setCampaignMenuOpen] = useState(false);
 
   const activeCamp = campaigns.find((c) => c.id === activeCampaignId);
+  const campaignSheetsCount = characterSheets.filter(
+    (s) => s.campaignId === activeCampaignId
+  ).length;
   const campaignName = activeCamp?.title || '';
   const isPlayerInActiveCamp = activeCamp?.isDm === false;
   const showDmStudio = Boolean(activeCamp && activeCamp.isDm !== false);
@@ -361,7 +363,7 @@ export const WorkspaceSidebar: React.FC<WorkspaceSidebarProps> = ({
                 active: currentRoute === '/campaign/player-view',
                 onClick: () => {
                   setCurrentRoute('/campaign/player-view');
-                  setViewRole('player');
+                  setViewRole('gm');
                   onCloseMobile();
                 },
               })}
@@ -425,6 +427,13 @@ export const WorkspaceSidebar: React.FC<WorkspaceSidebarProps> = ({
               <div className="space-y-0.5">
                 {groupLabel('Grupo')}
                 {navItem({
+                  label: 'Fichas do grupo',
+                  icon: Users,
+                  active: inStudio('portal') && portalSubTab === 'party',
+                  onClick: () => openPortalTab('party'),
+                  count: campaignSheetsCount,
+                })}
+                {navItem({
                   label: 'Segredos',
                   icon: Lock,
                   active: inStudio('portal') && portalSubTab === 'secrets',
@@ -450,17 +459,6 @@ export const WorkspaceSidebar: React.FC<WorkspaceSidebarProps> = ({
 
         {/* Utilidades e usuário */}
         <div className={`border-t border-line py-2 space-y-0.5 shrink-0 ${isNarrow ? 'px-2' : 'px-3'}`}>
-          {showDmStudio &&
-            navItem({
-              label: 'Fichas do grupo',
-              icon: Users,
-              active: false,
-              onClick: () => {
-                setIsDmPartyDrawerOpen(true);
-                onCloseMobile();
-              },
-              count: characterSheets.length,
-            })}
           {navItem({
             label: 'Configurações',
             icon: Settings,

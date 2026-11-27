@@ -214,6 +214,11 @@ export interface CalendarMoon {
   lore: string;
 }
 
+export interface CalendarCustomTag {
+  name: string;
+  color: string;
+}
+
 export interface CalendarConfig {
   calendarName: string;
   epochName: string; // ex: "EC (Era das Cinzas)"
@@ -224,9 +229,21 @@ export interface CalendarConfig {
   months: CalendarMonth[];
   moons: CalendarMoon[];
   availableEras?: string[];
+  customSeasons?: string[];
+  customTags?: CalendarCustomTag[];
 }
 
-export type TimelineVisualTag = 'Batalha' | 'Política' | 'Mágica' | 'Marco do Grupo' | 'Cataclismo';
+export type TimelineVisualTag = string;
+export type TimelineEventCategory =
+  | 'historical'
+  | 'session'
+  | 'cataclysm'
+  | 'intrigue'
+  | 'personal'
+  | 'prophecy'
+  | 'festival'
+  | 'custom';
+export type TimelineImportance = 'minor' | 'normal' | 'major' | 'epochal';
 
 export interface TimelineEvent {
   id: string;
@@ -235,12 +252,19 @@ export interface TimelineEvent {
   monthIndex: number;
   day: number;
   epoch: string;
-  category: 'historical' | 'session' | 'cataclysm' | 'intrigue';
+  endYear?: number;
+  endMonthIndex?: number;
+  endDay?: number;
+  category: TimelineEventCategory | string;
   visualTag?: TimelineVisualTag;
+  color?: string;
+  importance?: TimelineImportance;
+  locationHandle?: string;
   linkedWikiHandles?: string[];
   sortOrder?: number;
   sessionNumber?: number;
   description: string;
+  gmSecretNote?: string;
   isSecret: boolean;
   isRevealed: boolean;
 }
@@ -250,7 +274,11 @@ export interface ThreatPortent {
   step: number;
   text: string;
   triggered: boolean;
+  isSecret?: boolean;
 }
+
+export type ThreatFrontKind = 'threat' | 'faction' | 'project' | 'ritual' | 'race' | 'custom';
+export type ClockVisualStyle = 'pie' | 'ring' | 'bars';
 
 export interface ThreatFront {
   id: string;
@@ -258,12 +286,19 @@ export interface ThreatFront {
   subtitle: string;
   associatedEntityHandle: string; // ex: "@CultoCinzento"
   description: string;
-  clockSegments: 4 | 6 | 8 | 12;
+  kind?: ThreatFrontKind | string;
+  clockStyle?: ClockVisualStyle | string;
+  color?: string;
+  scale?: string;
+  autoAdvance?: boolean;
+  gmSecretNote?: string;
+  tags?: string[];
+  clockSegments: number;
   clockFilled: number;
   impendingDoom: string;
   ignoreConsequence: string;
   grimPortents: ThreatPortent[];
-  status: 'active' | 'triggered' | 'resolved';
+  status: 'active' | 'paused' | 'triggered' | 'resolved';
   isSecret: boolean;
 }
 
@@ -293,7 +328,7 @@ export interface Combatant {
   name: string;
   type: 'pc' | 'npc' | 'monster';
   initiative: number;
-  // Ausentes na visão do jogador para NPCs/monstros (o servidor envia apenas healthState).
+  // Ausentes na visão do jogador para NPCs/monstros (nenhum PV/vida é exposto aos jogadores).
   hp?: number;
   maxHp?: number;
   armorClass?: number;
@@ -307,6 +342,8 @@ export interface Combatant {
 export interface DiceRollLog {
   id: string;
   rollerName?: string;
+  rollerUserId?: string;
+  isDmRoll?: boolean;
   formula: string;
   rolls: number[];
   modifier: number;
@@ -538,6 +575,23 @@ export interface CharacterCurrency {
   cp: number;
 }
 
+export interface LevelUpGainItem {
+  category: string;
+  title: string;
+  description: string;
+  level: number;
+}
+
+export interface PendingLevelUp {
+  fromLevel: number;
+  toLevel: number;
+  unlockedAt: string;
+  unlockedBy: string;
+  gains: LevelUpGainItem[];
+  pendingChoices: { step: string; text: string }[];
+  acknowledgedByPlayer?: boolean;
+}
+
 export interface CharacterSheet {
   id: string;
   playerId: string;
@@ -600,6 +654,8 @@ export interface CharacterSheet {
   initiativeBonus?: number;
   /** escolhas do criador de personagem (ver src/rules/build.ts) */
   build?: unknown;
+  /** Pendência de subida de nível visível para Mestre e Jogador até o jogador concluir/confirmar */
+  pendingLevelUp?: PendingLevelUp | null;
   updatedAt: string;
 }
 

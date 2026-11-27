@@ -10,17 +10,19 @@ import {
   ERR_NOT_FOUND,
 } from "./lib/tenancy";
 
-const clockSegmentsValidator = v.union(v.literal(4), v.literal(6), v.literal(8), v.literal(12));
+const clockSegmentsValidator = v.number();
 
 const portentValidator = v.object({
   id: v.string(),
   step: v.number(),
   text: v.string(),
   triggered: v.boolean(),
+  isSecret: v.optional(v.boolean()),
 });
 
 const frontStatusValidator = v.union(
   v.literal("active"),
+  v.literal("paused"),
   v.literal("triggered"),
   v.literal("resolved")
 );
@@ -60,7 +62,15 @@ export const listFronts = query({
     const fronts = await collectByCampaign(ctx, "threatFronts", access.keys);
     return fronts
       .filter((f) => role === "gm" || !f.isSecret)
-      .map((f) => ({ ...f, id: f._id }));
+      .map((f) => ({
+        ...f,
+        id: f._id,
+        gmSecretNote: role === "player" ? undefined : f.gmSecretNote,
+        grimPortents:
+          role === "player"
+            ? f.grimPortents.filter((gp) => !gp.isSecret || gp.triggered)
+            : f.grimPortents,
+      }));
   },
 });
 
@@ -72,6 +82,13 @@ export const createFront = mutation({
     subtitle: v.string(),
     associatedEntityHandle: v.string(),
     description: v.string(),
+    kind: v.optional(v.string()),
+    clockStyle: v.optional(v.string()),
+    color: v.optional(v.string()),
+    scale: v.optional(v.string()),
+    autoAdvance: v.optional(v.boolean()),
+    gmSecretNote: v.optional(v.string()),
+    tags: v.optional(v.array(v.string())),
     clockSegments: clockSegmentsValidator,
     clockFilled: v.number(),
     impendingDoom: v.string(),
@@ -84,9 +101,11 @@ export const createFront = mutation({
   handler: async (ctx, args) => {
     const { canonicalId } = await requireDm(ctx, args.sessionToken, args.campaignId);
     const { sessionToken: _t, campaignId: _c, isSecret, ...data } = args;
+    const segments = Math.max(2, Math.min(24, Math.floor(data.clockSegments)));
     return await ctx.db.insert("threatFronts", {
       ...data,
-      clockFilled: Math.max(0, Math.min(data.clockSegments, Math.floor(data.clockFilled))),
+      clockSegments: segments,
+      clockFilled: Math.max(0, Math.min(segments, Math.floor(data.clockFilled))),
       isSecret: isSecret ?? true,
       campaignId: canonicalId,
     });
@@ -110,8 +129,16 @@ export const updateFrontClock = mutation({
     const clamped = Math.max(0, Math.min(front.clockSegments, Math.floor(args.clockFilled)));
     await ctx.db.patch(front._id, {
       clockFilled: clamped,
-      status: clamped >= front.clockSegments ? "triggered" : "active",
-      grimPortents: front.grimPortents.map((gp, idx) => ({ ...gp, triggered: idx < clamped })),
+      status:
+        clamped >= front.clockSegments
+          ? "triggered"
+          : front.status === "triggered"
+          ? "active"
+          : front.status,
+      grimPortents: front.grimPortents.map((gp) => ({
+        ...gp,
+        triggered: gp.step <= clamped,
+      })),
     });
   },
 });
@@ -125,12 +152,15 @@ export const advanceAllFronts = mutation({
     const { keys } = await requireDm(ctx, args.sessionToken, args.campaignId);
     const fronts = await collectByCampaign(ctx, "threatFronts", keys);
     for (const f of fronts) {
-      if (f.status !== "active") continue;
+      if (f.status !== "active" || f.autoAdvance === false) continue;
       const nextFilled = Math.min(f.clockSegments, f.clockFilled + 1);
       await ctx.db.patch(f._id, {
         clockFilled: nextFilled,
         status: nextFilled >= f.clockSegments ? "triggered" : "active",
-        grimPortents: f.grimPortents.map((gp, idx) => ({ ...gp, triggered: idx < nextFilled })),
+        grimPortents: f.grimPortents.map((gp) => ({
+          ...gp,
+          triggered: gp.step <= nextFilled,
+        })),
       });
     }
   },
@@ -163,6 +193,13 @@ export const updateFront = mutation({
     subtitle: v.optional(v.string()),
     associatedEntityHandle: v.optional(v.string()),
     description: v.optional(v.string()),
+    kind: v.optional(v.string()),
+    clockStyle: v.optional(v.string()),
+    color: v.optional(v.string()),
+    scale: v.optional(v.string()),
+    autoAdvance: v.optional(v.boolean()),
+    gmSecretNote: v.optional(v.string()),
+    tags: v.optional(v.array(v.string())),
     clockSegments: v.optional(clockSegmentsValidator),
     clockFilled: v.optional(v.number()),
     impendingDoom: v.optional(v.string()),
@@ -177,7 +214,9 @@ export const updateFront = mutation({
     const clean: Record<string, unknown> = Object.fromEntries(
       Object.entries(updates).filter(([, val]) => val !== undefined)
     );
-    const segments = args.clockSegments ?? front.clockSegments;
+    const rawSegments = args.clockSegments ?? front.clockSegments;
+    const segments = Math.max(2, Math.min(24, Math.floor(rawSegments)));
+    if (args.clockSegments !== undefined) clean.clockSegments = segments;
     const filled = args.clockFilled ?? front.clockFilled;
     clean.clockFilled = Math.max(0, Math.min(segments, Math.floor(filled)));
     await ctx.db.patch(front._id, clean);

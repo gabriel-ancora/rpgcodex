@@ -135,6 +135,31 @@ export const updateQuestStatus = mutation({
   },
 });
 
+export const updateQuest = mutation({
+  args: {
+    sessionToken: v.string(),
+    questId: v.string(),
+    title: v.optional(v.string()),
+    subtitle: v.optional(v.string()),
+    giverHandle: v.optional(v.string()),
+    locationHandle: v.optional(v.string()),
+    status: v.optional(questStatusValidator),
+    isPublic: v.optional(v.boolean()),
+    description: v.optional(v.string()),
+    gmSecretNote: v.optional(v.string()),
+    reward: v.optional(v.string()),
+    objectives: v.optional(v.array(objectiveValidator)),
+  },
+  handler: async (ctx, args) => {
+    const quest = await loadQuestForDm(ctx, args.sessionToken, args.questId);
+    const { sessionToken: _t, questId: _q, ...updates } = args;
+    const clean = Object.fromEntries(
+      Object.entries(updates).filter(([, val]) => val !== undefined)
+    );
+    await ctx.db.patch(quest._id, clean);
+  },
+});
+
 export const toggleObjective = mutation({
   args: {
     sessionToken: v.string(),

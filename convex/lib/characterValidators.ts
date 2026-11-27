@@ -94,6 +94,31 @@ export const statMethodValidator = v.union(
   v.literal("manual")
 );
 
+export const pendingLevelUpValidator = v.union(
+  v.null(),
+  v.object({
+    fromLevel: v.number(),
+    toLevel: v.number(),
+    unlockedAt: v.string(),
+    unlockedBy: v.string(),
+    gains: v.array(
+      v.object({
+        category: v.string(),
+        title: v.string(),
+        description: v.string(),
+        level: v.number(),
+      })
+    ),
+    pendingChoices: v.array(
+      v.object({
+        step: v.string(),
+        text: v.string(),
+      })
+    ),
+    acknowledgedByPlayer: v.optional(v.boolean()),
+  })
+);
+
 /** Campos editáveis da ficha (tudo exceto ids de vínculo e updatedAt). */
 export const sheetContentFields = {
   name: v.string(),
@@ -137,4 +162,6 @@ export const sheetContentFields = {
   initiativeBonus: v.optional(v.number()),
   /** Escolhas feitas no criador (espécie, antecedente, magias…), para reedição. */
   build: v.optional(v.any()),
+  /** Estado de subida de nível pendente até o jogador selecionar/confirmar. */
+  pendingLevelUp: v.optional(pendingLevelUpValidator),
 };

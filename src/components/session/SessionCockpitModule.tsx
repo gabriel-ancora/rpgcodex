@@ -1,11 +1,7 @@
 import React, { useState } from 'react';
 import { useCampaignStore } from '../../store/useCampaignStore';
 import { MentionText, MentionTextarea } from '../common/MentionText';
-import {
-  soundEngine,
-  AmbienceTrackId,
-  OneShotSfxId,
-} from '../../utils/audioEngine';
+import { formatTime } from '../../utils/format';
 import {
   generateEmergencyNPC,
   generateEmergencyTavern,
@@ -17,8 +13,6 @@ import {
   Dices,
   Pin,
   PinOff,
-  Volume2,
-  VolumeX,
   Plus,
   Trash2,
   SkipForward,
@@ -28,16 +22,9 @@ import {
   MapPin,
   Lock,
   Unlock,
-  Flame,
-  CloudRain,
-  Wind,
-  Music,
-  Beer,
+  Eye,
+  EyeOff,
   RotateCcw,
-  CloudLightning,
-  Bell,
-  Wand2,
-  Skull,
 } from 'lucide-react';
 
 const CONDITIONS_LIST = [
@@ -48,62 +35,6 @@ const CONDITIONS_LIST = [
   'Sangrando',
   'Atordoado',
   'Invisível',
-];
-
-const AMBIENCE_TRACKS: {
-  id: AmbienceTrackId;
-  label: string;
-  icon: React.FC<{ className?: string }>;
-  defaultVol: number;
-}[] = [
-  {
-    id: 'combat_pulse',
-    label: 'Combate',
-    icon: Swords,
-    defaultVol: 0.55,
-  },
-  {
-    id: 'heavy_rain',
-    label: 'Tempestade',
-    icon: CloudRain,
-    defaultVol: 0.5,
-  },
-  {
-    id: 'campfire',
-    label: 'Lareira',
-    icon: Flame,
-    defaultVol: 0.6,
-  },
-  {
-    id: 'dungeon_wind',
-    label: 'Catacumbas',
-    icon: Wind,
-    defaultVol: 0.45,
-  },
-  {
-    id: 'tavern_murmur',
-    label: 'Taverna',
-    icon: Beer,
-    defaultVol: 0.4,
-  },
-  {
-    id: 'ritual_drone',
-    label: 'Ritual',
-    icon: Music,
-    defaultVol: 0.45,
-  },
-];
-
-const SFX_BUTTONS: {
-  id: OneShotSfxId;
-  label: string;
-  icon: React.FC<{ className?: string }>;
-}[] = [
-  { id: 'thunder', label: 'Trovão', icon: CloudLightning },
-  { id: 'sword_clash', label: 'Lâminas', icon: Swords },
-  { id: 'funeral_bell', label: 'Sino', icon: Bell },
-  { id: 'arcane_blast', label: 'Arcano', icon: Wand2 },
-  { id: 'monster_roar', label: 'Rugido', icon: Skull },
 ];
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -156,8 +87,12 @@ export const SessionCockpitModule: React.FC = () => {
   const nextCombatTurn = useCampaignStore((s) => s.nextCombatTurn);
   const rollAllInitiatives = useCampaignStore((s) => s.rollAllInitiatives);
   const addCombatant = useCampaignStore((s) => s.addCombatant);
+  const setCombatantHidden = useCampaignStore((s) => s.setCombatantHidden);
   const removeCombatant = useCampaignStore((s) => s.removeCombatant);
+  const clearCombatants = useCampaignStore((s) => s.clearCombatants);
   const rollDice = useCampaignStore((s) => s.rollDice);
+  const deleteDiceLog = useCampaignStore((s) => s.deleteDiceLog);
+  const clearDiceLogs = useCampaignStore((s) => s.clearDiceLogs);
   const togglePinEntity = useCampaignStore((s) => s.togglePinEntity);
   const revealEntitySecret = useCampaignStore((s) => s.revealEntitySecret);
   const saveGeneratedItemToDatabase = useCampaignStore(
@@ -178,17 +113,6 @@ export const SessionCockpitModule: React.FC = () => {
   const [combType, setCombType] = useState<'pc' | 'npc' | 'monster'>('monster');
 
   const [pinSelectId, setPinSelectId] = useState('');
-
-  const [activeTracks, setActiveTracks] = useState<Record<string, boolean>>({});
-  const [trackVolumes, setTrackVolumes] = useState<Record<string, number>>({
-    combat_pulse: 0.55,
-    heavy_rain: 0.5,
-    campfire: 0.6,
-    dungeon_wind: 0.45,
-    tavern_murmur: 0.4,
-    ritual_drone: 0.45,
-  });
-  const [isMasterMuted, setIsMasterMuted] = useState(false);
 
   const pinnedEntities = entities.filter((e) => e.pinnedInSession);
   const unpinnedEntities = entities.filter((e) => !e.pinnedInSession);
@@ -217,17 +141,6 @@ export const SessionCockpitModule: React.FC = () => {
     setShowAddCombatant(false);
   };
 
-  const handleToggleTrack = (id: AmbienceTrackId) => {
-    const vol = trackVolumes[id] ?? 0.5;
-    const nowPlaying = soundEngine.toggleTrack(id, vol);
-    setActiveTracks((prev) => ({ ...prev, [id]: nowPlaying }));
-  };
-
-  const handleVolumeChange = (id: AmbienceTrackId, val: number) => {
-    setTrackVolumes((prev) => ({ ...prev, [id]: val }));
-    soundEngine.setTrackVolume(id, val);
-  };
-
   const handleQuickEmergencyGen = (type: 'npc' | 'tavern' | 'rumor' | 'loot') => {
     const ctx = { entities, fronts };
     const item =
@@ -253,6 +166,15 @@ export const SessionCockpitModule: React.FC = () => {
           {/* Iniciativa */}
           <section className="card flex-1 flex flex-col overflow-hidden min-h-[320px] lg:min-h-0">
             <PanelHeader icon={Swords} title="Iniciativa" meta={`Rodada ${combatRound}`}>
+              {combatants.length > 0 && (
+                <button
+                  onClick={() => void clearCombatants()}
+                  className="btn btn-danger-ghost btn-sm btn-icon"
+                  title="Limpar combate"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
               <button
                 onClick={rollAllInitiatives}
                 className="btn btn-ghost btn-sm btn-icon"
@@ -378,10 +300,13 @@ export const SessionCockpitModule: React.FC = () => {
                               {c.initiative}
                             </span>
                             <div className="min-w-0">
-                              <div className="text-sm font-medium text-fg truncate">
-                                {c.name}
+                              <div className="text-sm font-medium text-fg truncate flex items-center gap-1.5">
+                                <span className="truncate">{c.name}</span>
+                                {c.isHidden && (
+                                  <span className="badge badge-warning shrink-0">Oculto</span>
+                                )}
                                 {isDead && (
-                                  <span className="ml-1.5 text-xs font-normal text-danger">
+                                  <span className="text-xs font-normal text-danger shrink-0">
                                     Caído
                                   </span>
                                 )}
@@ -400,6 +325,21 @@ export const SessionCockpitModule: React.FC = () => {
                               <Shield className="w-3.5 h-3.5 text-fg-subtle" />
                               {c.armorClass}
                             </span>
+                            <button
+                              onClick={() => void setCombatantHidden(c.id, !c.isHidden)}
+                              className="btn btn-ghost btn-icon h-7 w-7"
+                              title={
+                                c.isHidden
+                                  ? 'Revelar combatente na tela dos jogadores'
+                                  : 'Ocultar combatente da tela dos jogadores'
+                              }
+                            >
+                              {c.isHidden ? (
+                                <EyeOff className="w-3.5 h-3.5 text-warning" />
+                              ) : (
+                                <Eye className="w-3.5 h-3.5" />
+                              )}
+                            </button>
                             <button
                               onClick={() => removeCombatant(c.id)}
                               className="btn btn-danger-ghost btn-icon h-7 w-7"
@@ -472,8 +412,8 @@ export const SessionCockpitModule: React.FC = () => {
 
           {/* Dados */}
           <section className="card overflow-hidden shrink-0">
-            <PanelHeader icon={Dices} title="Dados">
-              <label className="flex items-center gap-1.5 text-xs text-fg-subtle">
+            <PanelHeader icon={Dices} title="Dados (oculto p/ jogadores)">
+              <label className="flex items-center gap-1 text-xs text-fg-subtle">
                 Qtd.
                 <input
                   type="number"
@@ -481,21 +421,31 @@ export const SessionCockpitModule: React.FC = () => {
                   max={20}
                   value={diceCount}
                   onChange={(e) => setDiceCount(Math.max(1, Number(e.target.value)))}
-                  className="input h-7 w-12 px-1.5 text-center font-mono tabular-nums"
+                  className="input h-7 w-11 px-1 text-center font-mono tabular-nums"
                 />
               </label>
-              <label className="flex items-center gap-1.5 text-xs text-fg-subtle ml-1">
+              <label className="flex items-center gap-1 text-xs text-fg-subtle ml-1">
                 Mod.
                 <input
                   type="number"
                   value={diceMod}
                   onChange={(e) => setDiceMod(Number(e.target.value))}
-                  className="input h-7 w-12 px-1.5 text-center font-mono tabular-nums"
+                  className="input h-7 w-11 px-1 text-center font-mono tabular-nums"
                 />
               </label>
+              {diceLogs.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => void clearDiceLogs()}
+                  className="btn btn-danger-ghost btn-sm btn-icon h-7 w-7 ml-0.5"
+                  title="Limpar todas as rolagens"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
             </PanelHeader>
 
-            <div className="p-3 space-y-3">
+            <div className="p-3 space-y-2.5">
               <div className="grid grid-cols-7 gap-1">
                 {[4, 6, 8, 10, 12, 20, 100].map((sides) => (
                   <button
@@ -513,14 +463,21 @@ export const SessionCockpitModule: React.FC = () => {
               </div>
 
               {diceLogs.length > 0 && (
-                <ul className="max-h-28 overflow-y-auto rounded-md border border-line divide-y divide-line">
-                  {diceLogs.slice(0, 5).map((log) => (
+                <ul className="max-h-36 overflow-y-auto rounded-md border border-line divide-y divide-line">
+                  {diceLogs.slice(0, 20).map((log) => (
                     <li
                       key={log.id}
                       className="px-2.5 py-1.5 text-xs flex items-center justify-between gap-2"
                     >
                       <div className="truncate min-w-0">
-                        <span className="text-fg-subtle tabular-nums mr-2">{log.timestamp}</span>
+                        <span className="text-fg-subtle tabular-nums mr-1.5">
+                          {formatTime(log.timestamp)}
+                        </span>
+                        {log.isDmRoll ? (
+                          <span className="badge badge-warning mr-1.5">Mestre</span>
+                        ) : log.rollerName ? (
+                          <span className="font-medium text-fg mr-1">{log.rollerName}:</span>
+                        ) : null}
                         <span className="font-mono text-fg">{log.formula}</span>
                         <span className="font-mono text-fg-subtle ml-1.5">
                           [{log.rolls.join(', ')}]
@@ -536,6 +493,14 @@ export const SessionCockpitModule: React.FC = () => {
                         >
                           {log.total}
                         </span>
+                        <button
+                          type="button"
+                          onClick={() => void deleteDiceLog(log.id)}
+                          className="btn btn-danger-ghost btn-icon h-6 w-6"
+                          title="Excluir rolagem"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
                       </span>
                     </li>
                   ))}
@@ -761,84 +726,6 @@ export const SessionCockpitModule: React.FC = () => {
           </div>
         </section>
       </div>
-
-      {/* Mixer de áudio */}
-      <section className="card px-3 py-2 flex flex-wrap items-center gap-3 shrink-0">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => {
-              const nextMute = !isMasterMuted;
-              setIsMasterMuted(nextMute);
-              soundEngine.setMasterMute(nextMute);
-            }}
-            className={`btn btn-sm btn-icon ${
-              isMasterMuted ? 'btn-secondary text-danger' : 'btn-secondary'
-            }`}
-            title={isMasterMuted ? 'Reativar áudio' : 'Silenciar áudio'}
-            aria-pressed={isMasterMuted}
-          >
-            {isMasterMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-          </button>
-          <span className="text-[13px] font-medium text-fg-muted">Ambiência</span>
-        </div>
-
-        {/* Faixas */}
-        <div className="flex flex-wrap items-center gap-1.5 flex-1">
-          {AMBIENCE_TRACKS.map((tr) => {
-            const Icon = tr.icon;
-            const isPlaying = Boolean(activeTracks[tr.id]);
-            const vol = trackVolumes[tr.id] ?? tr.defaultVol;
-
-            return (
-              <div
-                key={tr.id}
-                className={`h-9 pl-1 pr-2.5 rounded-md border flex items-center gap-2 transition-colors ${
-                  isPlaying ? 'bg-accent-soft border-accent/40' : 'bg-surface border-line'
-                }`}
-              >
-                <button
-                  onClick={() => handleToggleTrack(tr.id)}
-                  className={`h-7 px-2 rounded inline-flex items-center gap-1.5 text-xs font-medium transition-colors ${
-                    isPlaying ? 'text-accent' : 'text-fg-muted hover:text-fg hover:bg-surface-2'
-                  }`}
-                  aria-pressed={isPlaying}
-                  title={isPlaying ? `Parar ${tr.label}` : `Tocar ${tr.label}`}
-                >
-                  <Icon className="w-4 h-4" />
-                  <span>{tr.label}</span>
-                </button>
-                <input
-                  type="range"
-                  min={0.05}
-                  max={1}
-                  step={0.05}
-                  value={vol}
-                  onChange={(e) => handleVolumeChange(tr.id, parseFloat(e.target.value))}
-                  aria-label={`Volume ${tr.label}`}
-                  className="w-16 h-1 accent-[rgb(var(--accent))] cursor-pointer"
-                />
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Efeitos */}
-        <div className="flex flex-wrap items-center gap-1">
-          {SFX_BUTTONS.map((sfx) => {
-            const Icon = sfx.icon;
-            return (
-              <button
-                key={sfx.id}
-                onClick={() => soundEngine.playOneShot(sfx.id)}
-                className="btn btn-ghost btn-sm"
-              >
-                <Icon className="w-4 h-4" />
-                <span>{sfx.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      </section>
     </div>
   );
 };

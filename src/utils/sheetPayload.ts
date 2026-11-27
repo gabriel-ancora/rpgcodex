@@ -37,7 +37,7 @@ const CONTENT_KEYS = [
   'baseStats', 'stats', 'proficiencies', 'originFeat', 'savingThrows', 'weaponMasteries',
   'classFeatures', 'classResources', 'spellSlots', 'spells', 'equipment', 'notes',
   'skillProficiencies', 'skillExpertise', 'toolProficiencies', 'languages', 'currency',
-  'heroicInspiration', 'initiativeBonus', 'build',
+  'heroicInspiration', 'initiativeBonus', 'build', 'pendingLevelUp',
 ] as const;
 
 type ContentKey = (typeof CONTENT_KEYS)[number];
@@ -114,6 +114,9 @@ export function sheetContentPayload(
     out.classResources = out.classResources.map((r) => ({ label: r.label || '', value: String(r.value ?? '') }));
   }
   if (out.build !== undefined) out.build = toConvexValue(out.build);
+  if (out.pendingLevelUp !== undefined) {
+    out.pendingLevelUp = toConvexValue(out.pendingLevelUp) as CharacterSheet['pendingLevelUp'];
+  }
   if (out.statGenerationMethod === undefined) delete out.statGenerationMethod;
   return out;
 }

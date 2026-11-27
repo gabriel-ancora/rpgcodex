@@ -12,12 +12,12 @@ import {
 } from "./lib/tenancy";
 import { defaultCalendar } from "./lib/defaults";
 
-const categoryValidator = v.union(
-  v.literal("historical"),
-  v.literal("session"),
-  v.literal("cataclysm"),
-  v.literal("intrigue")
-);
+const categoryValidator = v.string();
+
+const customTagValidator = v.object({
+  name: v.string(),
+  color: v.string(),
+});
 
 const monthValidator = v.object({
   id: v.string(),
@@ -55,6 +55,8 @@ export const update = mutation({
     currentDay: v.optional(v.number()),
     weekdays: v.optional(v.array(v.string())),
     availableEras: v.optional(v.array(v.string())),
+    customSeasons: v.optional(v.array(v.string())),
+    customTags: v.optional(v.array(customTagValidator)),
     months: v.optional(v.array(monthValidator)),
     moons: v.optional(v.array(moonValidator)),
   },
@@ -149,7 +151,11 @@ export const listEvents = query({
           a.year * 1000 + a.monthIndex * 40 + a.day - (b.year * 1000 + b.monthIndex * 40 + b.day)
         );
       })
-      .map((e) => ({ ...e, id: e._id }));
+      .map((e) => ({
+        ...e,
+        id: e._id,
+        gmSecretNote: role === "player" ? undefined : e.gmSecretNote,
+      }));
   },
 });
 
@@ -162,12 +168,19 @@ export const addEvent = mutation({
     monthIndex: v.number(),
     day: v.number(),
     epoch: v.string(),
+    endYear: v.optional(v.number()),
+    endMonthIndex: v.optional(v.number()),
+    endDay: v.optional(v.number()),
     category: categoryValidator,
     visualTag: v.optional(v.string()),
+    color: v.optional(v.string()),
+    importance: v.optional(v.string()),
+    locationHandle: v.optional(v.string()),
     linkedWikiHandles: v.optional(v.array(v.string())),
     sortOrder: v.optional(v.number()),
     sessionNumber: v.optional(v.number()),
     description: v.string(),
+    gmSecretNote: v.optional(v.string()),
     // Padrão: secreto e não revelado.
     isSecret: v.optional(v.boolean()),
     isRevealed: v.optional(v.boolean()),
@@ -193,10 +206,17 @@ export const updateEvent = mutation({
     monthIndex: v.optional(v.number()),
     day: v.optional(v.number()),
     epoch: v.optional(v.string()),
+    endYear: v.optional(v.number()),
+    endMonthIndex: v.optional(v.number()),
+    endDay: v.optional(v.number()),
     category: v.optional(categoryValidator),
     visualTag: v.optional(v.string()),
+    color: v.optional(v.string()),
+    importance: v.optional(v.string()),
+    locationHandle: v.optional(v.string()),
     sessionNumber: v.optional(v.number()),
     description: v.optional(v.string()),
+    gmSecretNote: v.optional(v.string()),
     linkedWikiHandles: v.optional(v.array(v.string())),
     isSecret: v.optional(v.boolean()),
     isRevealed: v.optional(v.boolean()),

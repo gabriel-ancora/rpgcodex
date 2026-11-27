@@ -30,6 +30,7 @@ export const JournalInventoryView: React.FC = () => {
   const activeCharacterId = useCampaignStore((s) => s.activeCharacterId);
 
   const addJournalEntry = useCampaignStore((s) => s.addJournalEntry);
+  const updateJournalEntry = useCampaignStore((s) => s.updateJournalEntry);
   const deleteJournalEntry = useCampaignStore((s) => s.deleteJournalEntry);
   const addPersonalJournalNote = useCampaignStore(
     (s) => s.addPersonalJournalNote
@@ -373,15 +374,39 @@ export const JournalInventoryView: React.FC = () => {
                         <h3 className="text-base font-semibold text-fg">{entry.title}</h3>
                       </div>
                       <div className="flex items-center gap-1.5">
+                        {!entry.isPublic && (
+                          <span className="badge badge-warning">Oculto</span>
+                        )}
                         <span className="badge">{entry.author}</span>
                         {viewRole === 'gm' && (
-                          <button
-                            onClick={() => deleteJournalEntry(entry.id)}
-                            className="btn btn-danger-ghost btn-sm btn-icon"
-                            title="Excluir registro"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          <>
+                            <button
+                              onClick={() =>
+                                void updateJournalEntry(entry.id, {
+                                  isPublic: !entry.isPublic,
+                                })
+                              }
+                              className="btn btn-ghost btn-sm btn-icon"
+                              title={
+                                entry.isPublic
+                                  ? 'Ocultar dos jogadores'
+                                  : 'Revelar aos jogadores'
+                              }
+                            >
+                              {entry.isPublic ? (
+                                <Eye className="w-4 h-4" />
+                              ) : (
+                                <EyeOff className="w-4 h-4" />
+                              )}
+                            </button>
+                            <button
+                              onClick={() => deleteJournalEntry(entry.id)}
+                              className="btn btn-danger-ghost btn-sm btn-icon"
+                              title="Excluir registro"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </>
                         )}
                       </div>
                     </div>

@@ -53,14 +53,21 @@ function combatantView(c: Doc<"combatants">, role: ViewerRole) {
     conditions: c.conditions,
     entityId: c.entityId,
     isHidden: c.isHidden ?? false,
-    healthState: healthStateOf(c.hp, c.maxHp),
   };
   if (role === "gm" || c.type === "pc") {
-    return { ...base, hp: c.hp as number | undefined, maxHp: c.maxHp as number | undefined, armorClass: c.armorClass as number | undefined, notes: c.notes as string | undefined };
+    return {
+      ...base,
+      healthState: healthStateOf(c.hp, c.maxHp) as HealthState | undefined,
+      hp: c.hp as number | undefined,
+      maxHp: c.maxHp as number | undefined,
+      armorClass: c.armorClass as number | undefined,
+      notes: c.notes as string | undefined,
+    };
   }
-  // Jogadores não recebem PV/CA/notas exatos de NPCs e monstros.
+  // Jogadores não recebem nenhuma informação de PV/vida/CA/notas de monstros e NPCs.
   return {
     ...base,
+    healthState: undefined as HealthState | undefined,
     hp: undefined as number | undefined,
     maxHp: undefined as number | undefined,
     armorClass: undefined as number | undefined,
@@ -278,10 +285,15 @@ export const clearCombatants = mutation({
 const MAX_STORED_ROLLS = 40;
 
 export const listDiceRolls = query({
-  args: { sessionToken: v.string(), campaignId: v.string() },
+  args: {
+    sessionToken: v.string(),
+    campaignId: v.string(),
+    viewerRole: v.optional(v.union(v.literal("gm"), v.literal("player"))),
+  },
   handler: async (ctx, args) => {
     const access = await memberOrNull(ctx, args.sessionToken, args.campaignId);
     if (!access) return [];
+    const role = effectiveRole(access, args.viewerRole);
     const rolls: Doc<"diceRolls">[] = [];
     for (const key of access.keys) {
       rolls.push(
@@ -289,19 +301,32 @@ export const listDiceRolls = query({
           .query("diceRolls")
           .withIndex("by_campaign", (q) => q.eq("campaignId", key))
           .order("desc")
-          .take(30))
+          .take(MAX_STORED_ROLLS + 20))
       );
     }
+    const isHiddenDmRoll = (r: Doc<"diceRolls">) =>
+      r.isDmRoll === true ||
+      (Boolean(r.rollerUserId) && r.rollerUserId === access.camp.dmUserId) ||
+      (r.isDmRoll === undefined &&
+        !r.rollerUserId &&
+        Boolean(access.camp.dmName) &&
+        r.rollerName === access.camp.dmName);
+
     return rolls
+      .filter((r) => role === "gm" || !isHiddenDmRoll(r))
       .sort((a, b) => b._creationTime - a._creationTime)
       .slice(0, 30)
-      .map((r) => ({ ...r, id: r._id }));
+      .map((r) => ({
+        ...r,
+        id: r._id,
+        isDmRoll: isHiddenDmRoll(r),
+      }));
   },
 });
 
 /**
- * Rola dados no servidor. Qualquer membro da campanha pode rolar; o nome de quem
- * rolou vem da sessão. Retorna a rolagem gravada.
+ * Rola dados no servidor. Qualquer membro da campanha pode rolar; rolagens do
+ * Mestre são marcadas como `isDmRoll: true` e ocultadas dos jogadores.
  */
 export const addDiceRoll = mutation({
   args: {
@@ -313,7 +338,7 @@ export const addDiceRoll = mutation({
     label: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { user, canonicalId, keys } = await requireMember(
+    const { user, isDm, canonicalId, keys } = await requireMember(
       ctx,
       args.sessionToken,
       args.campaignId
@@ -341,6 +366,8 @@ export const addDiceRoll = mutation({
     const doc = {
       campaignId: canonicalId,
       rollerName: user.name,
+      rollerUserId: user.id,
+      isDmRoll: isDm,
       formula: `${count}d${sides}${modStr}`,
       rolls,
       modifier,
@@ -364,6 +391,18 @@ export const addDiceRoll = mutation({
     }
 
     return { ...doc, id: insertedId as string };
+  },
+});
+
+export const removeDiceRoll = mutation({
+  args: {
+    sessionToken: v.string(),
+    id: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const roll = await getOrThrow(ctx, "diceRolls", args.id);
+    await requireDmOfRecord(ctx, args.sessionToken, roll.campaignId);
+    await ctx.db.delete(roll._id);
   },
 });
 

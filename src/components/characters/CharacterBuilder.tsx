@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, Info, Loader2, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Info, Loader2, Sparkles, X } from 'lucide-react';
 import { useCampaignStore } from '../../store/useCampaignStore';
 import type { CharacterSheet } from '../../types/campaign';
 import { createEmptyBuild, type CharacterBuild } from '../../rules/build';
 import { buildIssues, computeCharacter, normalizeBuild, type BuildStep } from '../../rules/engine';
+import { collectPendingProgressionChoices } from '../../rules/levelUp';
 import { useConfirm } from '../common/Modal';
 import { sheetFromBuild } from '../../rules/toSheet';
 import { buildFromSheet } from '../../rules/legacy';
@@ -149,6 +150,19 @@ export const CharacterBuilder: React.FC<{
           delete payload.campaignId;
           delete payload.campaignTitle;
         }
+        if (sheet.pendingLevelUp) {
+          const remaining = collectPendingProgressionChoices(cleanBuild, cleanComputed);
+          if (isOwner && remaining.length === 0) {
+            // O próprio jogador concluiu todas as escolhas pendentes do novo nível!
+            payload.pendingLevelUp = null;
+          } else {
+            payload.pendingLevelUp = {
+              ...sheet.pendingLevelUp,
+              toLevel: cleanComputed.level,
+              pendingChoices: remaining,
+            };
+          }
+        }
         const ok = await updateCharacterSheet(sheet.id, payload);
         if (ok) {
           onSaved?.(sheet.id);
@@ -234,6 +248,22 @@ export const CharacterBuilder: React.FC<{
           {/* Conteúdo */}
           <div className="flex-1 min-w-0 overflow-y-auto">
             <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+              {sheet?.pendingLevelUp && (
+                <div className="rounded-xl border border-accent/40 bg-accent-soft/40 p-4 space-y-2 text-[13px]">
+                  <div className="flex items-center gap-2 font-semibold text-fg">
+                    <Sparkles className="w-4 h-4 text-accent shrink-0" />
+                    <span>
+                      Subida para o Nível {sheet.pendingLevelUp.toLevel} — selecione suas novas opções abaixo e clique em Salvar alterações
+                    </span>
+                  </div>
+                  {sheet.pendingLevelUp.gains.length > 0 && (
+                    <div className="text-xs text-fg-muted">
+                      <strong>Ganhos deste nível:</strong>{' '}
+                      {sheet.pendingLevelUp.gains.map((g) => g.title).join(' · ')}
+                    </div>
+                  )}
+                </div>
+              )}
               {initial.inferred && step === 'class' && (
                 <div className="card-muted p-3 flex items-start gap-2 text-[13px] text-fg-muted">
                   <Info className="w-4 h-4 text-info shrink-0 mt-0.5" />

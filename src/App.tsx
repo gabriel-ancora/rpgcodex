@@ -10,7 +10,6 @@ import { PlayerPortalModule } from './components/portal/PlayerPortalModule';
 import { DedicatedPlayerView } from './components/portal/DedicatedPlayerView';
 import { LoginView } from './components/auth/LoginView';
 import { CampaignsHome } from './components/hubs/CampaignsHome';
-import { DmPartyInspectDrawer } from './components/characters/DmPartyInspectDrawer';
 import { SettingsModal } from './components/common/SettingsModal';
 import { MentionText } from './components/common/MentionText';
 import { ConvexSyncBridge } from './components/common/ConvexSyncBridge';
@@ -200,8 +199,7 @@ export function App() {
         )}
       </div>
 
-      {/* Modais e gavetas globais */}
-      <DmPartyInspectDrawer />
+      {/* Modais globais */}
       <SettingsModal />
 
       {/* Inspeção rápida ao clicar em uma @menção */}

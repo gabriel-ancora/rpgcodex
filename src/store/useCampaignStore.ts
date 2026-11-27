@@ -32,8 +32,8 @@ import { convexClient } from '../convexClient';
 import { api } from '../../convex/_generated/api';
 import { Id } from '../../convex/_generated/dataModel';
 import { sheetContentPayload } from '../utils/sheetPayload';
-import { soundEngine } from '../utils/audioEngine';
 import type { CodexBackupPayload } from '../utils/campaignBackup';
+import { buildLevelUpPatch } from '../rules/levelUp';
 import { runCampaignImport, ImportReport, describeImportReport } from './campaignImport';
 import {
   bindToast,
@@ -137,7 +137,7 @@ function writeSessionGeminiKey(key: string | null) {
 
 export type WorldSubTab = 'wiki' | 'graph' | 'maps' | 'timeline';
 export type PlotSubTab = 'fronts' | 'flowchart' | 'generators';
-export type PortalSubTab = 'secrets' | 'quests' | 'journal';
+export type PortalSubTab = 'party' | 'secrets' | 'quests' | 'journal';
 
 export interface ToastState {
   id: number;
@@ -307,6 +307,10 @@ interface CampaignState {
   /** Atualiza a ficha. Resolve true se o servidor confirmou a gravação. */
   updateCharacterSheet: (id: string, updates: Partial<CharacterSheet>) => Promise<boolean>;
   deleteCharacterSheet: (id: string) => Promise<void>;
+  /** Sobe um personagem específico de nível, registrando ganhos e pendências para o jogador. */
+  levelUpCharacter: (id: string, targetLevel?: number) => Promise<boolean>;
+  /** Sobe todos os personagens da campanha ativa em +1 nível. Retorna quantos subiram. */
+  levelUpParty: (campaignId?: string) => Promise<number>;
 
   // ---- Global ----
   setActiveModule: (mod: ActiveModule) => void;
@@ -472,14 +476,14 @@ interface CampaignState {
   clearCombatants: () => Ok;
   /** O resultado é do servidor. Resolve com a rolagem salva ou null. */
   rollDice: (sides: number, count?: number, modifier?: number, label?: string) => Promise<DiceRollLog | null>;
-  /** Disponível, ainda sem uso na interface. */
+  deleteDiceLog: (id: string) => Ok;
   clearDiceLogs: () => Ok;
 
   // ---- Portal ----
   toggleQuestObjective: (questId: string, objectiveId: string) => Ok;
   updateQuestStatus: (questId: string, status: Quest['status']) => Ok;
+  updateQuest: (questId: string, updates: Partial<Omit<Quest, 'id'>>) => Ok;
   addQuest: (q: Omit<Quest, 'id'>) => Promise<string | null>;
-  /** Disponível, ainda sem uso na interface. */
   deleteQuest: (questId: string) => Ok;
   addJournalEntry: (entry: Omit<SessionJournalEntry, 'id'>) => Promise<string | null>;
   /** Disponível, ainda sem uso na interface. title/content com debounce. */
@@ -777,7 +781,6 @@ export const useCampaignStore = create<CampaignState>()(
         void flushPendingWrites();
         discardPendingWrites();
         clearCreationTracking();
-        soundEngine.dispose();
         writeSessionGeminiKey(null);
         set({ ...getEmptyAuthState(), currentRoute: '/login', previewAsPlayer: false, viewRole: 'player' });
         pushUrl('/login');
@@ -847,7 +850,7 @@ export const useCampaignStore = create<CampaignState>()(
         activeModule: 'worldbuilding',
         worldSubTab: 'wiki',
         plotSubTab: 'fronts',
-        portalSubTab: 'secrets',
+        portalSubTab: 'party',
         toast: null,
 
         ...getEmptyCampaignScopedState(),
@@ -990,9 +993,9 @@ export const useCampaignStore = create<CampaignState>()(
           const isDm = found?.isDm === true;
           const target: AppRoute = targetRoute ?? (isDm ? '/campaign/session' : '/campaign/player-view');
           setActive(campaignId);
-          // O Mestre vê a mesa dos jogadores pela pré-visualização, nunca por outro papel.
+          // O Mestre entra na mesa com controle ativo por padrão (podendo alternar para simular jogador).
           set({
-            previewAsPlayer: isDm && target === '/campaign/player-view',
+            previewAsPlayer: false,
             currentRoute: !isDm && target === '/campaign/session' ? '/campaign/player-view' : target,
           });
           pushUrl(get().currentRoute);
@@ -1058,7 +1061,10 @@ export const useCampaignStore = create<CampaignState>()(
 
         setIsDmPartyDrawerOpen: (open, characterId = null) =>
           set((state) => ({
-            isDmPartyDrawerOpen: open,
+            isDmPartyDrawerOpen: false,
+            ...(open && state.currentRoute === '/campaign/session'
+              ? { activeModule: 'portal' as ActiveModule, portalSubTab: 'party' as PortalSubTab }
+              : {}),
             inspectingCharacterId:
               characterId || state.inspectingCharacterId || state.characterSheets[0]?.id || null,
           })),
@@ -1151,6 +1157,56 @@ export const useCampaignStore = create<CampaignState>()(
             },
             'Ficha removida.'
           );
+        },
+
+        levelUpCharacter: async (id, targetLevel) => {
+          const sheet = get().characterSheets.find((cs) => cs.id === id);
+          if (!sheet) return false;
+          if (sheet.level >= 20 && (!targetLevel || targetLevel >= 20)) {
+            get().showToast(`${sheet.name} já alcançou o nível máximo (20).`);
+            return false;
+          }
+          const dmName = get().currentUser?.name || 'Mestre';
+          const built = buildLevelUpPatch(sheet, dmName, targetLevel);
+          if (!built) return false;
+          const ok = await get().updateCharacterSheet(sheet.id, built.patch);
+          if (ok) {
+            const pendingCount = built.pendingLevelUp.pendingChoices.length;
+            get().showToast(
+              pendingCount > 0
+                ? `${sheet.name} subiu para o nível ${built.pendingLevelUp.toLevel}! (${pendingCount} escolha(s) pendente(s) para o jogador)`
+                : `${sheet.name} subiu para o nível ${built.pendingLevelUp.toLevel}!`,
+              'success'
+            );
+          }
+          return ok;
+        },
+
+        levelUpParty: async (campaignId) => {
+          const cid = campaignId || get().activeCampaignId;
+          if (!cid) return 0;
+          const dmName = get().currentUser?.name || 'Mestre';
+          const eligible = get().characterSheets.filter(
+            (cs) => cs.campaignId === cid && cs.level < 20
+          );
+          if (eligible.length === 0) {
+            get().showToast('Nenhum personagem elegível para subir de nível nesta campanha.');
+            return 0;
+          }
+          let count = 0;
+          for (const sheet of eligible) {
+            const built = buildLevelUpPatch(sheet, dmName, sheet.level + 1);
+            if (!built) continue;
+            const ok = await get().updateCharacterSheet(sheet.id, built.patch);
+            if (ok) count += 1;
+          }
+          if (count > 0) {
+            get().showToast(
+              `${count} personagem(ns) do grupo subiram de nível! Os ganhos e escolhas pendentes já foram enviados aos jogadores.`,
+              'success'
+            );
+          }
+          return count;
         },
 
         // ===================================================================
@@ -2559,10 +2615,20 @@ export const useCampaignStore = create<CampaignState>()(
           if (!result.ok) return null;
           // O resultado é o do servidor; a assinatura em tempo real traz a mesma rolagem (mesmo id).
           const roll = result.value as unknown as DiceRollLog;
-          if (get().activeCampaignId === campaignId) {
+          if (get().activeCampaignId === campaignId && (!get().previewAsPlayer || !roll.isDmRoll)) {
             set((s) => ({ diceLogs: [roll, ...s.diceLogs.filter((l) => l.id !== roll.id)].slice(0, 30) }));
           }
           return roll;
+        },
+
+        deleteDiceLog: async (id) => {
+          const { sessionToken } = sess();
+          const undo = snap('diceLogs');
+          set((state) => ({ diceLogs: state.diceLogs.filter((l) => l.id !== id) }));
+          return mutate('excluir a rolagem de dados', undo, async () => {
+            const rollId = await resolveId(id);
+            await convexClient.mutation(api.session.removeDiceRoll, { sessionToken, id: rollId });
+          });
         },
 
         clearDiceLogs: async () => {
@@ -2603,6 +2669,31 @@ export const useCampaignStore = create<CampaignState>()(
           return mutate('atualizar a missão', undo, async () => {
             const realQuest = await resolveId(questId);
             await convexClient.mutation(api.portal.updateQuestStatus, { sessionToken, questId: realQuest, status });
+          });
+        },
+
+        updateQuest: async (questId, updates) => {
+          const { sessionToken } = sess();
+          const undo = snap('quests');
+          set((state) => ({
+            quests: state.quests.map((q) => (q.id === questId ? { ...q, ...updates } : q)),
+          }));
+          return mutate('atualizar a missão', undo, async () => {
+            const realQuest = await resolveId(questId);
+            await convexClient.mutation(api.portal.updateQuest, {
+              sessionToken,
+              questId: realQuest,
+              title: updates.title,
+              subtitle: updates.subtitle,
+              giverHandle: updates.giverHandle,
+              locationHandle: updates.locationHandle,
+              status: updates.status,
+              isPublic: updates.isPublic,
+              description: updates.description,
+              gmSecretNote: updates.gmSecretNote,
+              reward: updates.reward,
+              objectives: updates.objectives,
+            });
           });
         },
 

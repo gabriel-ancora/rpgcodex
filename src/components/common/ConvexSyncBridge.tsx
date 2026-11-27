@@ -93,7 +93,7 @@ export const ConvexSyncBridge: React.FC = () => {
   const scenesData = useQuery(api.plots.listScenes, tenantArgs);
   const combatantsData = useQuery(api.session.listCombatants, tenantArgs);
   const combatStateData = useQuery(api.session.getCombatState, tenantArgs);
-  const diceRollsData = useQuery(api.session.listDiceRolls, campaignOnlyArgs);
+  const diceRollsData = useQuery(api.session.listDiceRolls, tenantArgs);
   const scratchpadData = useQuery(api.session.listScratchpad, tenantArgs);
   const questsData = useQuery(api.portal.listQuests, tenantArgs);
   const journalData = useQuery(api.portal.listJournal, tenantArgs);
@@ -252,6 +252,8 @@ export const ConvexSyncBridge: React.FC = () => {
         months: calendarData.months,
         moons: calendarData.moons,
         availableEras: calendarData.availableEras ?? state.calendar.availableEras,
+        customSeasons: calendarData.customSeasons ?? state.calendar.customSeasons,
+        customTags: calendarData.customTags ?? state.calendar.customTags,
       };
       return { calendar: withDraft(base, draftKey.calendar(campaignId)) };
     });

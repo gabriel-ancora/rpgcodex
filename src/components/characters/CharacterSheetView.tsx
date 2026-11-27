@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Edit3, Minus, Plus, Trash2, X, Shield, Heart, Star } from 'lucide-react';
+import { Edit3, Minus, Plus, Trash2, X, Shield, Heart, Star, Sparkles, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useCampaignStore } from '../../store/useCampaignStore';
 import type { CharacterSheet, CharacterEquipmentItem, CharacterCurrency } from '../../types/campaign';
+import { firstPendingStepForSheet } from '../../rules/levelUp';
 import {
   ABILITIES,
   SKILLS,
@@ -60,6 +61,8 @@ export const CharacterSheetView: React.FC<{
   canEdit: boolean;
 }> = ({ sheet, onClose, onEdit, canEdit }) => {
   const updateCharacterSheet = useCampaignStore((s) => s.updateCharacterSheet);
+  const currentUser = useCampaignStore((s) => s.currentUser);
+  const isSheetOwner = sheet.playerId === currentUser?.id;
   const [tab, setTab] = useState<Tab>('abilities');
   const build = useMemo(() => parseBuild(sheet.build), [sheet.build]);
   const pb = sheet.proficiencyBonus;
@@ -240,6 +243,91 @@ export const CharacterSheetView: React.FC<{
         </header>
 
         <div className="flex-1 min-h-0 overflow-y-auto">
+          {sheet.pendingLevelUp && (
+            <div className="mx-4 sm:mx-6 mt-4 rounded-xl border border-warning/40 bg-warning-soft/30 p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-warning shrink-0" />
+                  <span className="text-sm font-semibold text-fg">
+                    Novo nível desbloqueado: Nível {sheet.pendingLevelUp.fromLevel} → Nível {sheet.pendingLevelUp.toLevel}
+                  </span>
+                </div>
+
+                {isSheetOwner ? (
+                  sheet.pendingLevelUp.pendingChoices.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => onEdit(firstPendingStepForSheet(sheet))}
+                      className="btn btn-primary btn-sm"
+                    >
+                      Selecionar escolhas do Nível {sheet.pendingLevelUp.toLevel}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => save({ pendingLevelUp: null })}
+                      className="btn btn-primary btn-sm"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>Confirmar ganhos do Nível {sheet.pendingLevelUp.toLevel}</span>
+                    </button>
+                  )
+                ) : (
+                  <span className="badge badge-warning">
+                    Pendente até {sheet.playerName} concluir
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                <div className="space-y-1">
+                  <div className="font-semibold text-fg flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-success" />
+                    <span>O que este personagem ganhou:</span>
+                  </div>
+                  <ul className="space-y-1 text-fg-muted">
+                    {sheet.pendingLevelUp.gains.map((g, i) => (
+                      <li key={i}>
+                        <strong className="text-fg">{g.title}:</strong> {g.description}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="font-semibold text-fg flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5 text-warning" />
+                    <span>
+                      Escolhas pendentes ({sheet.pendingLevelUp.pendingChoices.length}):
+                    </span>
+                  </div>
+                  {sheet.pendingLevelUp.pendingChoices.length === 0 ? (
+                    <p className="text-fg-muted">
+                      Nenhuma escolha manual restante; basta o jogador revisar e confirmar.
+                    </p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {sheet.pendingLevelUp.pendingChoices.map((ch, i) => (
+                        <li key={i} className="flex items-center justify-between gap-2">
+                          <span className="text-fg">{ch.text}</span>
+                          {isSheetOwner && (
+                            <button
+                              type="button"
+                              onClick={() => onEdit(ch.step as BuildStep)}
+                              className="text-accent hover:underline shrink-0"
+                            >
+                              Escolher →
+                            </button>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Barra de estado */}
           <div className="px-4 sm:px-6 py-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 border-b border-line bg-surface-2/40">
             <div className="card px-3 py-2.5 col-span-2 sm:col-span-3 lg:col-span-2">

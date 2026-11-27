@@ -8,6 +8,7 @@ interface CharacterSheetModalProps {
   /** null = criar personagem novo */
   sheetId: string | null;
   defaultCampaignId?: string;
+  initialEditStep?: BuildStep;
   isOpen: boolean;
   onClose: () => void;
   /** mantido por compatibilidade; a permissão é calculada pela campanha */
@@ -21,6 +22,7 @@ interface CharacterSheetModalProps {
 export const CharacterSheetModal: React.FC<CharacterSheetModalProps> = ({
   sheetId,
   defaultCampaignId,
+  initialEditStep,
   isOpen,
   onClose,
 }) => {
@@ -28,14 +30,16 @@ export const CharacterSheetModal: React.FC<CharacterSheetModalProps> = ({
   const campaigns = useCampaignStore((s) => s.campaigns);
   const currentUser = useCampaignStore((s) => s.currentUser);
   const [currentId, setCurrentId] = useState<string | null>(sheetId);
-  const [editing, setEditing] = useState<{ step: BuildStep } | null>(null);
+  const [editing, setEditing] = useState<{ step: BuildStep } | null>(
+    initialEditStep ? { step: initialEditStep } : null
+  );
 
   useEffect(() => {
     if (isOpen) {
       setCurrentId(sheetId);
-      setEditing(null);
+      setEditing(initialEditStep ? { step: initialEditStep } : null);
     }
-  }, [isOpen, sheetId]);
+  }, [isOpen, sheetId, initialEditStep]);
 
   if (!isOpen) return null;
 

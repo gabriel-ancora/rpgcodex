@@ -346,6 +346,15 @@ export default defineSchema({
       })
     ),
     availableEras: v.optional(v.array(v.string())),
+    customSeasons: v.optional(v.array(v.string())),
+    customTags: v.optional(
+      v.array(
+        v.object({
+          name: v.string(),
+          color: v.string(),
+        })
+      )
+    ),
   }).index("by_campaign", ["campaignId"]),
 
   timelineEvents: defineTable({
@@ -355,17 +364,19 @@ export default defineSchema({
     monthIndex: v.number(),
     day: v.number(),
     epoch: v.string(),
-    category: v.union(
-      v.literal("historical"),
-      v.literal("session"),
-      v.literal("cataclysm"),
-      v.literal("intrigue")
-    ),
+    endYear: v.optional(v.number()),
+    endMonthIndex: v.optional(v.number()),
+    endDay: v.optional(v.number()),
+    category: v.string(),
     visualTag: v.optional(v.string()),
+    color: v.optional(v.string()),
+    importance: v.optional(v.string()),
+    locationHandle: v.optional(v.string()),
     linkedWikiHandles: v.optional(v.array(v.string())),
     sortOrder: v.optional(v.number()),
     sessionNumber: v.optional(v.number()),
     description: v.string(),
+    gmSecretNote: v.optional(v.string()),
     isSecret: v.boolean(),
     isRevealed: v.boolean(),
   }).index("by_campaign", ["campaignId"]),
@@ -377,12 +388,14 @@ export default defineSchema({
     subtitle: v.string(),
     associatedEntityHandle: v.string(),
     description: v.string(),
-    clockSegments: v.union(
-      v.literal(4),
-      v.literal(6),
-      v.literal(8),
-      v.literal(12)
-    ),
+    kind: v.optional(v.string()),
+    clockStyle: v.optional(v.string()),
+    color: v.optional(v.string()),
+    scale: v.optional(v.string()),
+    autoAdvance: v.optional(v.boolean()),
+    gmSecretNote: v.optional(v.string()),
+    tags: v.optional(v.array(v.string())),
+    clockSegments: v.number(),
     clockFilled: v.number(),
     impendingDoom: v.string(),
     ignoreConsequence: v.string(),
@@ -392,10 +405,12 @@ export default defineSchema({
         step: v.number(),
         text: v.string(),
         triggered: v.boolean(),
+        isSecret: v.optional(v.boolean()),
       })
     ),
     status: v.union(
       v.literal("active"),
+      v.literal("paused"),
       v.literal("triggered"),
       v.literal("resolved")
     ),
@@ -460,6 +475,8 @@ export default defineSchema({
   diceRolls: defineTable({
     campaignId: v.string(),
     rollerName: v.optional(v.string()),
+    rollerUserId: v.optional(v.string()),
+    isDmRoll: v.optional(v.boolean()),
     formula: v.string(),
     rolls: v.array(v.number()),
     modifier: v.number(),
